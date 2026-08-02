@@ -47,6 +47,8 @@ import numpy as np
 from scipy.io import wavfile
 from scipy.signal import stft
 
+from bank_contract import bank_fingerprint, sha256
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CATALOGUE = HERE / "sources.json"
@@ -388,6 +390,9 @@ def main() -> int:
         if not path.exists():
             print(f"  MISSING  {path}")
             continue
+        actual_source_digest = sha256(path)
+        if s.get("sha256") != actual_source_digest:
+            sys.exit(f"registered source identity does not match {path.name}; rerun sound/resolve.py")
         name = path.name
         print(f"  cutting  {name}")
         x = decode(path)
@@ -399,16 +404,27 @@ def main() -> int:
         sys.exit("no grains — every candidate was below the silence floor")
 
     grains.sort(key=lambda g: (g.kind, g.source, g.t0))
+    grain_rows = []
+    for grain in grains:
+        row = asdict(grain)
+        row["wav_sha256"] = sha256(args.out / f"{grain.id}.wav")
+        grain_rows.append(row)
     payload = {
         "schema": "danse.sound.bank.v1",
         "rate": SR,
-        "sources": [{"name": Path(s["path"]).name, "seconds": s["seconds"], "note": s["note"]} for s in rooms],
-        "grains": [asdict(g) for g in grains],
+        "sources": [
+            {
+                "name": Path(s["path"]).name,
+                "sha256": s.get("sha256"),
+                "seconds": s["seconds"],
+                "note": s["note"],
+            }
+            for s in rooms
+        ],
+        "grains": grain_rows,
     }
-    # A fingerprint of the index, so a rendered score can name the bank it was
-    # cut from and a re-cut that changes nothing is provably a no-op.
-    body = json.dumps(payload["grains"], sort_keys=True, separators=(",", ":"))
-    payload["fingerprint"] = hashlib.sha256(body.encode()).hexdigest()[:16]
+    # Bind the receipt to every index field and exact payload byte.
+    payload["fingerprint"] = bank_fingerprint(payload)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "bank.json").write_text(json.dumps(payload, indent=2) + "\n")
 

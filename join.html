@@ -103,7 +103,7 @@
         webcam.addEventListener("loadeddata", () => {
           overlay.width = webcam.videoWidth;
           overlay.height = webcam.videoHeight;
-          status.innerText = "Running... your pose now modulates the selection.";
+          status.innerText = "Pose study running — landmarks are visualized locally; engine modulation is not enabled.";
           predictWebcam();
         });
 
@@ -132,10 +132,6 @@
             ctx.fill();
           }
 
-          // Emit the event that `engine.js` would listen to.
-          // This maps physical posture directly to the generative query.
-          const event = new CustomEvent("danse:pose_query", { detail: { landmarks: results.landmarks[0] } });
-          window.dispatchEvent(event);
         }
       }
       requestAnimationFrame(predictWebcam);

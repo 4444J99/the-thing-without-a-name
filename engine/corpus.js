@@ -170,6 +170,11 @@ class Corpus {
     return this.get(gl, "mattes", id, want);
   }
 
+  /** Whether an exact requested-tier image decoded successfully. */
+  has(kind, tier, id) {
+    return this.images.has(`${kind}/${tier}/${id}`);
+  }
+
   /** Drop every uploaded texture so the next draw re-uploads under current
    *  settings. Only a measurement needs this; the live page never changes them. */
   invalidate() {

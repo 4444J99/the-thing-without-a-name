@@ -33,13 +33,17 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
+import yaml
+
 HERE = Path(__file__).resolve().parent
 CATALOGUE = HERE / "sources.json"
+REGISTER = HERE.parent / "submission/screendance-2027.yaml"
 
 # The shoot. Anything recorded near it is a candidate for having that room in it;
 # anything recorded IN the window is a candidate for being that room.
@@ -60,8 +64,6 @@ NEAR_DAYS = 120
 # an original filename, so matching on a stripped stem lets an unrelated asset
 # inherit a confirmation: `IMG_1920 (1).MOV` is a backyard, and it was licensed
 # into the bed by `IMG_1920.mov`'s name. Exact match, or nothing.
-CONFIRMED_ROOM = ("IMG_0226.MOV", "IMG_0227.MOV")
-
 # Looked at, and NOT confirmed — recorded here so the judgement survives instead
 # of being re-litigated every run. These stay out of the bed.
 #
@@ -149,6 +151,35 @@ def fingerprint(path: Path, limit: int = 1 << 20) -> str:
     with path.open("rb") as fh:
         h.update(fh.read(limit))
     return h.hexdigest()[:16]
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def registered_room_assets(register: Path) -> dict[str, str]:
+    data = yaml.safe_load(register.read_text()) or {}
+    audio = ((data.get("package") or {}).get("audio") or {})
+    names = audio.get("source_recordings") or []
+    digests = audio.get("source_sha256") or {}
+    out = {name: digests.get(name) for name in names}
+    invalid = [
+        name
+        for name, digest in out.items()
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest)
+    ]
+    if invalid:
+        raise SystemExit(f"missing registered source digest(s): {', '.join(invalid)}")
+    return {name: digest.lower() for name, digest in out.items()}
+
+
+def room_content_matches(path: Path, expected_digest: str | None) -> tuple[bool, str | None]:
+    digest = sha256_file(path) if expected_digest else None
+    return digest == expected_digest, digest
 
 
 def provenance(path: Path, when: date | None) -> tuple[str, str]:
@@ -305,17 +336,21 @@ def main() -> int:
     )
     ap.add_argument(
         "--room",
-        default=",".join(CONFIRMED_ROOM),
-        help="comma-separated FILENAMES (with extension) confirmed BY EYE to show the apartment. A date near "
-        "the shoot only "
-        "makes a recording a candidate; the room is confirmed by looking at a frame and seeing the wall.",
+        default="",
+        help="additional comma-separated NAME=SHA256 approvals; registered assets come from the submission register",
     )
+    ap.add_argument("--register", type=Path, default=REGISTER)
     args = ap.parse_args()
     if args.export:
         args.photos = True
 
     roots = [*DEFAULT_ROOTS, *args.root]
-    confirmed = {n.strip() for n in args.room.split(",") if n.strip()}
+    confirmed = registered_room_assets(args.register)
+    for atom in (value.strip() for value in args.room.split(",") if value.strip()):
+        name, separator, digest = atom.partition("=")
+        if not separator or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            ap.error("--room entries must be NAME=SHA256")
+        confirmed[name] = digest.lower()
     seen: dict[str, dict] = {}
 
     print("looking for the room\n")
@@ -376,15 +411,19 @@ def main() -> int:
         tier, why = provenance(path, when)
         # `room` is the only field that licenses a recording into the bed. It is
         # set by having LOOKED at the footage, not by arithmetic on a filename.
-        in_room = path.name in confirmed
+        expected_digest = confirmed.get(path.name)
+        in_room, content_digest = room_content_matches(path, expected_digest)
         if in_room:
-            tier, why = "room", "the apartment itself — confirmed by frame"
+            tier, why = "room", "the apartment itself — confirmed by frame and registered content digest"
+        elif expected_digest:
+            tier, why = "unconfirmed-room", "registered filename with different content digest"
         elif path.name in UNCONFIRMED_ROOM:
             tier, why = "unconfirmed-room", UNCONFIRMED_ROOM[path.name]
         seen[key] = {
             "id": key,
             "path": str(path),
             "room": in_room,
+            "sha256": content_digest if in_room else None,
             "also_at": [],
             "channel": channel,
             "created": when.isoformat() if when else None,

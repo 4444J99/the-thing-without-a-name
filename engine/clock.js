@@ -86,6 +86,7 @@ function programState(seed, t, program) {
 
   return {
     t,
+    riverSeed: seed,
     // `reveal` is only a legibility signal — it tells the grammar the room is
     // open. Under a program the cut is declared, so nothing infers it from here.
     reveal: divergence,
@@ -126,6 +127,7 @@ function freeState(seed, t) {
 
   return {
     t,
+    riverSeed: seed,
     reveal,
     // The camera leaves the projector's eye. This alone un-flattens the picture.
     divergence: reveal * range(0.55, 0.95, seed, 105),

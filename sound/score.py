@@ -110,6 +110,11 @@ from rng import pick, rand  # noqa: E402
 # ── the bank ───────────────────────────────────────────────────────────────────
 
 
+def original_level_gain(current_rms: float, target_rms: float) -> float:
+    """Undo bank peak-normalisation using the level measured before cutting."""
+    return target_rms / current_rms if current_rms > 0 else 1.0
+
+
 class Bank:
     """The grains, and the index that lets one be chosen without hearing it."""
 
@@ -135,6 +140,8 @@ class Bank:
         if got is None:
             _, got = wavfile.read(self.root / f"{grain['id']}.wav")
             got = got.astype(np.float64)
+            current_rms = float(np.sqrt(np.mean(got**2))) if len(got) else 0.0
+            got *= original_level_gain(current_rms, float(grain["rms"]))
             self._audio[grain["id"]] = got
         return got
 

@@ -14,7 +14,9 @@ import wave
 from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -34,6 +36,10 @@ DELIVER = load("danse_deliver_test", ROOT / "render/deliver.py")
 SCORE = load("danse_score_test", ROOT / "sound/score.py")
 CHECK = load("danse_submission_check_test", ROOT / "submission/check.py")
 BROWSER = load("danse_browser_test", ROOT / "render/browser.py")
+OFFLINE = load("danse_offline_test", ROOT / "render/render.py")
+BANK_CONTRACT = sys.modules["bank_contract"]
+CORPUS_CONTRACT = load("danse_corpus_contract_test", ROOT / "pipeline/corpus_contract.py")
+RESOLVE = load("danse_resolve_test", ROOT / "sound/resolve.py")
 SPAN = {
     "t0": 0.0,
     "t1": 312.54,
@@ -46,6 +52,125 @@ SPAN = {
 
 
 class DeliveryContractTest(unittest.TestCase):
+    def test_offline_url_preserves_zero_seed_and_every_capture_override(self) -> None:
+        args = SimpleNamespace(
+            window="passage",
+            start=120.25,
+            tier="film",
+            seed=0,
+            width=3840,
+            height=2160,
+            fps=24,
+        )
+        query = parse_qs(urlparse(OFFLINE.film_url("http://render.test", args)).query)
+        self.assertEqual(
+            query,
+            {
+                "capture": ["passage"],
+                "from": ["120.25"],
+                "tier": ["film"],
+                "s": ["0"],
+                "width": ["3840"],
+                "height": ["2160"],
+                "fps": ["24"],
+            },
+        )
+
+    def test_render_resume_receipt_binds_inputs_source_and_output_bytes(self) -> None:
+        args = SimpleNamespace(
+            window="passage",
+            start=0.0,
+            tier="film",
+            seed=0,
+            codec="prores",
+            width=3840,
+            height=2160,
+            fps=30,
+            segment_frames=900,
+        )
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            OFFLINE, "source_tree_sha256", return_value="source-tree"
+        ):
+            dest = Path(tmp) / "passage-0-seg-000.mov"
+            dest.write_bytes(b"encoded segment")
+            OFFLINE.write_segment_receipt(dest, args, 0, 30)
+            expected = OFFLINE.segment_identity(args, 0, 30)
+            probe = subprocess.CompletedProcess([], 0, stdout="30\n", stderr="")
+            with mock.patch.object(OFFLINE.subprocess, "run", return_value=probe):
+                self.assertTrue(OFFLINE.complete(dest, 30, expected))
+                args.start = 1.0
+                self.assertFalse(OFFLINE.complete(dest, 30, OFFLINE.segment_identity(args, 0, 30)))
+                args.start = 0.0
+                dest.write_bytes(b"different segment")
+                self.assertFalse(OFFLINE.complete(dest, 30, expected))
+
+    def test_query_and_exact_tier_contracts_fail_closed(self) -> None:
+        script = """
+          import { numericParam } from './engine/query.js';
+          import { requireTier } from './engine/tier.js';
+          const zero = numericParam(new URLSearchParams('s=0'), 's', 99, {integer:true,min:0});
+          let invalid = false;
+          try { numericParam(new URLSearchParams('s=nope'), 's', 99, {integer:true,min:0}); } catch { invalid = true; }
+          const corpus = {
+            ensure: async () => {},
+            has: (kind) => kind === 'plates',
+          };
+          let missingMatte = false;
+          try { await requireTier(corpus, 'film', ['IMG_1570']); } catch { missingMatte = true; }
+          console.log(JSON.stringify({zero, invalid, missingMatte}));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"zero": 0, "invalid": True, "missingMatte": True})
+
+    def test_closing_signature_names_reproducible_river_position(self) -> None:
+        script = """
+          import { signature } from './engine/engine.js';
+          const program = {signature:{format:'river 0x%RIVER_SEED% from %PASSAGE_T0%s passage %PASSAGE%'}};
+          console.log(signature(program, {riverSeed:0, passageSeed:123, passageT0:12.5, passage:4}));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "river 0x000000 from 12.500s passage 4")
+
+    def test_room_cache_identity_changes_with_same_count_source_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw, mask, pose = root / "raw.jpg", root / "mask.png", root / "pose.json"
+            raw.write_bytes(b"first original")
+            mask.write_bytes(b"first matte")
+            pose.write_text("{}")
+            items = [("IMG_1570", raw, mask, pose)]
+            first = CORPUS_CONTRACT.room_cache_key(items)
+            raw.write_bytes(b"corrected original")
+            self.assertNotEqual(first, CORPUS_CONTRACT.room_cache_key(items))
+
+    def test_registered_room_requires_content_identity_not_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "registered.MOV"
+            candidate.write_bytes(b"confirmed recording")
+            expected = RESOLVE.sha256_file(candidate)
+            self.assertEqual(RESOLVE.room_content_matches(candidate, expected), (True, expected))
+            candidate.write_bytes(b"different recording under the same name")
+            matched, actual = RESOLVE.room_content_matches(candidate, expected)
+            self.assertFalse(matched)
+            self.assertNotEqual(actual, expected)
+
+    def test_peak_normalised_grain_restores_original_level(self) -> None:
+        self.assertAlmostEqual(SCORE.original_level_gain(0.5, 0.125), 0.25)
+
     def test_span_queries_are_metadata_only(self) -> None:
         payload = {
             **SPAN,
@@ -341,6 +466,11 @@ class DeliveryContractTest(unittest.TestCase):
             grains = []
             kinds = ("bed", "sustained", "transient")
             sources = ["IMG_0226.MOV", "IMG_0227.MOV"]
+            source_rows = []
+            for source in sources:
+                source_file = bank_root / source
+                source_file.write_bytes(f"private source fixture: {source}".encode())
+                source_rows.append({"name": source, "sha256": BANK_CONTRACT.sha256(source_file)})
             for i in range(24):
                 grains.append(
                     {
@@ -353,20 +483,19 @@ class DeliveryContractTest(unittest.TestCase):
                         "decay": i + 1,
                         "attack": i + 1,
                         "zcr": i + 1,
+                        "rms": 0.125,
+                        "wav_sha256": source_rows[i % 2]["sha256"],
                     }
                 )
             index = bank_root / "bank.json"
-            index.write_text(
-                json.dumps(
-                    {
-                        "schema": "danse.sound.bank.v1",
-                        "rate": 48_000,
-                        "fingerprint": "bank-fingerprint",
-                        "sources": [{"name": source} for source in sources],
-                        "grains": grains,
-                    }
-                )
-            )
+            payload = {
+                "schema": "danse.sound.bank.v1",
+                "rate": 48_000,
+                "sources": source_rows,
+                "grains": grains,
+            }
+            payload["fingerprint"] = BANK_CONTRACT.bank_fingerprint(payload)
+            index.write_text(json.dumps(payload))
             missing = DELIVER.audit_bank(index, sources)
             self.assertEqual(len(missing.payload_errors), len(grains))
             for grain in grains:
@@ -375,6 +504,15 @@ class DeliveryContractTest(unittest.TestCase):
                     payload.setsampwidth(2)
                     payload.setframerate(48_000)
                     payload.writeframes(b"\0\0")
+                grain["wav_sha256"] = BANK_CONTRACT.sha256(bank_root / f"{grain['id']}.wav")
+            payload = {
+                "schema": "danse.sound.bank.v1",
+                "rate": 48_000,
+                "sources": source_rows,
+                "grains": grains,
+            }
+            payload["fingerprint"] = BANK_CONTRACT.bank_fingerprint(payload)
+            index.write_text(json.dumps(payload))
             self.assertTrue(DELIVER.audit_bank(index, sources).valid)
 
             bad_rate = bank_root / f"{grains[0]['id']}.wav"
@@ -384,6 +522,13 @@ class DeliveryContractTest(unittest.TestCase):
                 payload.setframerate(44_100)
                 payload.writeframes(b"\0\0")
             self.assertIn("sample rate 44100", DELIVER.audit_bank(index, sources).payload_errors[0])
+
+            with wave.open(str(bad_rate), "wb") as payload:
+                payload.setnchannels(1)
+                payload.setsampwidth(2)
+                payload.setframerate(48_000)
+                payload.writeframes(b"\1\0")
+            self.assertIn(f"changed {grains[0]['id']}.wav", DELIVER.audit_bank(index, sources).payload_errors)
 
     def test_malformed_cached_receipts_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -429,6 +574,51 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(statuses["master is one whole manifested passage"], CHECK.FAIL)
             self.assertEqual(statuses["master bytes match delivery manifest"], CHECK.FAIL)
 
+    def test_screener_directly_matches_manifested_passage_and_digest(self) -> None:
+        register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            screener = package / "screener.mov"
+            screener.write_bytes(b"complete screener")
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "duration": SPAN["duration"],
+                        "items": [{"name": screener.name, "sha256": CHECK.sha256(screener)}],
+                    }
+                )
+            )
+            info = {
+                "width": 1920,
+                "height": 1080,
+                "seconds": SPAN["duration"],
+                "vcodec": "h264",
+                "acodec": "aac",
+                "channels": 2,
+            }
+            with mock.patch.object(CHECK, "probe", return_value=info):
+                report = CHECK.Report()
+                CHECK.check_screener(register["package"]["screener"], package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["screener is one whole manifested passage"], CHECK.PASS)
+            self.assertEqual(statuses["screener bytes match delivery manifest"], CHECK.PASS)
+
+            with mock.patch.object(CHECK, "probe", return_value=None):
+                report = CHECK.Report()
+                CHECK.check_screener(register["package"]["screener"], package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["screener bytes match delivery manifest"], CHECK.PASS)
+            self.assertEqual(statuses["screener"], CHECK.OPEN)
+
+            screener.write_bytes(b"replacement screener")
+            info["seconds"] -= 1
+            with mock.patch.object(CHECK, "probe", return_value=info):
+                report = CHECK.Report()
+                CHECK.check_screener(register["package"]["screener"], package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["screener is one whole manifested passage"], CHECK.FAIL)
+            self.assertEqual(statuses["screener bytes match delivery manifest"], CHECK.FAIL)
+
     def test_audio_provenance_is_bound_to_each_artifact(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
         expected = register["package"]["audio"]["source_recordings"]
@@ -473,8 +663,8 @@ class DeliveryContractTest(unittest.TestCase):
         expected = register["package"]["audio"]["source_recordings"]
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)
-            master = package / "master.mov"
-            screener = package / "screener.mp4"
+            master = package / "master.mxf"
+            screener = package / "screener.mov"
             master.write_bytes(b"master")
             screener.write_bytes(b"screener")
             sound = {"bank_fingerprint": "bank", "sources": expected}
@@ -512,7 +702,7 @@ class DeliveryContractTest(unittest.TestCase):
                 CHECK.check_audio(register["package"]["audio"], package, report)
             row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
             self.assertEqual(row[2], CHECK.FAIL)
-            self.assertIn("screener.mp4 (digest)", row[3])
+            self.assertIn("screener.mov (digest)", row[3])
 
             write_manifest()
             with (

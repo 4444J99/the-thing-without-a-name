@@ -59,5 +59,7 @@ export function signature(program, state) {
   if (!sig) return hex(seed);
   return sig.format
     .replace("%SEED%", hex(seed).replace(/^0x/, ""))
+    .replace("%RIVER_SEED%", hex(state?.riverSeed ?? 0).replace(/^0x/, ""))
+    .replace("%PASSAGE_T0%", Number(state?.passageT0 ?? 0).toFixed(3))
     .replace("%PASSAGE%", String(state?.passage ?? 0));
 }

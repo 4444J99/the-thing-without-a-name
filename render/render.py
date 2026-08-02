@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import math
 import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from browser import browser, serve  # noqa: E402
@@ -53,6 +55,83 @@ CODECS = {
     "preview": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p"],
 }
 SUFFIX = {"prores": ".mov", "h264": ".mp4", "preview": ".mp4"}
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def source_tree_sha256(args) -> str:
+    """Identity of every source byte that can change an offline segment."""
+    cached = getattr(args, "_source_tree_sha256", None)
+    if cached:
+        return cached
+    roots = [
+        APP / "film.html",
+        APP / "render/program.json",
+        APP / "render/render.py",
+        APP / "render/browser.py",
+        APP / "corpus/manifest.json",
+        APP / "corpus/room.webp",
+        APP / "corpus/score-2017.json",
+    ]
+    local = APP / "corpus/manifest.local.json"
+    if local.is_file():
+        roots.append(local)
+    roots.extend(sorted((APP / "engine").glob("*.js")))
+    for kind in ("plates", "mattes"):
+        roots.extend(sorted((APP / "corpus" / kind / args.tier).glob("*.webp")))
+    h = hashlib.sha256()
+    for path in roots:
+        if not path.is_file():
+            continue
+        h.update(str(path.relative_to(APP)).encode())
+        h.update(bytes.fromhex(file_sha256(path)))
+    args._source_tree_sha256 = h.hexdigest()
+    return args._source_tree_sha256
+
+
+def film_url(base: str, args) -> str:
+    """The one URL used by planning and rendering, including seed zero."""
+    params = {"capture": args.window, "from": args.start, "tier": args.tier}
+    for key, value in (("s", args.seed), ("width", args.width), ("height", args.height), ("fps", args.fps)):
+        if value is not None:
+            params[key] = value
+    return f"{base}/film.html?{urlencode(params)}"
+
+
+def segment_identity(args, segment: int, frames: int) -> dict:
+    return {
+        "schema": "danse.render.segment.v1",
+        "segment": segment,
+        "frames": frames,
+        "inputs": {
+            "window": args.window,
+            "start": args.start,
+            "tier": args.tier,
+            "seed": args.seed,
+            "codec": args.codec,
+            "width": args.width,
+            "height": args.height,
+            "fps": args.fps,
+            "segment_frames": args.segment_frames,
+            "source_tree_sha256": source_tree_sha256(args),
+        },
+    }
+
+
+def segment_receipt_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".receipt.json")
+
+
+def write_segment_receipt(dest: Path, args, segment: int, frames: int) -> None:
+    payload = segment_identity(args, segment, frames)
+    payload["file_sha256"] = file_sha256(dest)
+    segment_receipt_path(dest).write_text(json.dumps(payload, indent=2) + "\n")
 
 # Read the frame off the GPU without stalling the pipeline on it.
 CAPTURE_JS = """
@@ -129,10 +208,7 @@ def render_segment(args, segment: int, dest: Path) -> dict:
     with serve(sink=slot) as base:
         # The window's format unless overridden; the page is asked for exactly
         # this size so the drawing buffer IS the delivery format.
-        page_url = (
-            f"{base}/film.html?s={args.seed or ''}&capture={args.window}&from={args.start}"
-            f"&tier={args.tier}&width={args.width or ''}&height={args.height or ''}"
-        )
+        page_url = film_url(base, args)
         with browser(headless=not args.headed, width=320, height=240) as page:
             page.goto(page_url, wait_until="load")
             page.wait_for_function("() => window.danseFilmReady === true", timeout=300_000)
@@ -203,7 +279,7 @@ def expected_frames(segment: int, total: int, per_segment: int) -> int:
     return max(0, min(per_segment, total - segment * per_segment))
 
 
-def complete(dest: Path, want: int) -> bool:
+def complete(dest: Path, want: int, expected: dict) -> bool:
     """Does this segment already hold every frame it is supposed to?
 
     Segmenting was built so a FAILURE costs one segment rather than one film, but
@@ -211,7 +287,18 @@ def complete(dest: Path, want: int) -> bool:
     segments and half an hour. Frame count, not file existence: a segment killed
     mid-write leaves a perfectly plausible file with half the frames in it.
     """
-    if want <= 0 or not dest.is_file() or dest.stat().st_size == 0:
+    receipt_path = segment_receipt_path(dest)
+    if want <= 0 or not dest.is_file() or dest.stat().st_size == 0 or not receipt_path.is_file():
+        return False
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    if receipt.get("schema") != expected["schema"] or receipt.get("segment") != expected["segment"]:
+        return False
+    if receipt.get("frames") != want or receipt.get("inputs") != expected["inputs"]:
+        return False
+    if receipt.get("file_sha256") != file_sha256(dest):
         return False
     out = subprocess.run(
         # fmt: off
@@ -285,7 +372,8 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    stem = args.out / f"{args.window}-{args.seed or 'default'}"
+    stem_seed = args.seed if args.seed is not None else "default"
+    stem = args.out / f"{args.window}-{stem_seed}"
     if args.concat:
         concat(stem, args.codec)
         return 0
@@ -312,7 +400,7 @@ def main() -> int:
     if segments is None:
         # Ask the page for the window length rather than assuming it here.
         with serve() as base, browser(headless=True, width=320, height=240) as page:
-            page.goto(f"{base}/film.html?capture={args.window}&tier={args.tier}&from={args.start}", wait_until="load")
+            page.goto(film_url(base, args), wait_until="load")
             page.wait_for_function("() => window.danseFilmReady === true", timeout=300_000)
             w = page.evaluate("() => ({ ...window.danseFilm.window, passage: window.danseFilm.passage })")
         fps = args.fps or w["fps"]
@@ -322,12 +410,15 @@ def main() -> int:
 
     for seg in segments:
         dest = stem.parent / f"{stem.name}-seg-{seg:03d}{SUFFIX[args.codec]}"
-        if args.resume and total is not None and complete(dest, expected_frames(seg, total, args.segment_frames)):
+        want = expected_frames(seg, total, args.segment_frames) if total is not None else 0
+        expected = segment_identity(args, seg, want) if total is not None else {}
+        if args.resume and total is not None and complete(dest, want, expected):
             print(f"  {dest.name} · already complete, kept")
             continue
         r = render_segment(args, seg, dest)
         if r.get("skipped"):
             continue
+        write_segment_receipt(dest, args, seg, r["frames"])
         note = f" · {r['missing']} MISSING PLATES" if r["missing"] else ""
         print(
             f"  {dest.name} · {r['frames']} frames · {r['size']} @{r['fps']} · "

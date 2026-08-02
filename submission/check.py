@@ -389,6 +389,16 @@ def check_screener(spec: dict, root: Path, rep: Report) -> None:
     if not path:
         rep.add("package", "screener", FAIL, "no unique screener.<mov|mp4> in package")
         return
+    manifest = read_manifest(root)
+    item = manifest_items(root).get(path.name) or {}
+    actual_digest = sha256(path)
+    digest_matches = item.get("sha256") == actual_digest
+    rep.add(
+        "package",
+        "screener bytes match delivery manifest",
+        PASS if digest_matches else FAIL,
+        f"{actual_digest[:16]}…" + ("" if digest_matches else " — missing or stale manifest digest"),
+    )
     info = probe(path)
     if not info:
         rep.add("package", "screener", OPEN, f"{path.name} present; ffprobe unavailable")
@@ -413,6 +423,14 @@ def check_screener(spec: dict, root: Path, rep: Report) -> None:
         "screener audio stream",
         PASS if ok_audio else FAIL,
         f"{info['acodec']} · {info['channels']} channels",
+    )
+    expected_seconds = manifest.get("duration")
+    duration_matches = isinstance(expected_seconds, (int, float)) and abs(info["seconds"] - expected_seconds) <= 0.1
+    rep.add(
+        "package",
+        "screener is one whole manifested passage",
+        PASS if duration_matches else FAIL,
+        f"{info['seconds']:.3f}s staged vs {expected_seconds!r}s manifested",
     )
 
 
@@ -540,11 +558,7 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
     )
 
     items = manifest_items(root)
-    audio_paths = [
-        path
-        for name in ("master.mov", "midnight-moment.mov", "trailer.mp4", "screener.mp4", "reel.mp4")
-        if (path := root / name).is_file()
-    ]
+    audio_paths = [path for stem in ("master", "midnight-moment", "trailer", "screener", "reel") if (path := find_one(root, stem))]
     stale: list[str] = []
     fingerprints: set[str] = set()
     for path in audio_paths:
@@ -558,7 +572,7 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
             fingerprints.add(fingerprint)
         if item.get("sha256") != sha256(path):
             errors.append("digest")
-        if path.name == "screener.mp4":
+        if path.stem == "screener":
             info = probe(path)
             passage_seconds = manifest.get("duration")
             duration_matches = bool(

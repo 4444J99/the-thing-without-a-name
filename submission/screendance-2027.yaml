@@ -181,6 +181,9 @@ package:
     tolerance_lu: 0.5
     max_true_peak_dbtp: -1.0
     source_recordings: [IMG_0226.MOV, IMG_0227.MOV]
+    source_sha256:
+      IMG_0226.MOV: "01bc6e147166061fe886b498a5dbd9e3c3f8fb9abb91f651f64bc9878f21e84b"
+      IMG_0227.MOV: "64203a17367688b4b643bf6a1251ad2e37d63f49238cb6c9db7214ef6595f430"
   stills:
     required: true
     count_min: 6

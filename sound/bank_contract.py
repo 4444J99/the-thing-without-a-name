@@ -9,7 +9,9 @@ the same question without importing NumPy or SciPy.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import struct
 from collections import Counter
 from dataclasses import dataclass
@@ -19,6 +21,26 @@ SCHEMA = "danse.sound.bank.v1"
 RATE = 48_000
 KINDS = ("bed", "sustained", "transient")
 AXES = ("centroid", "brightness", "flatness", "decay", "attack", "zcr")
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def bank_fingerprint(data: dict) -> str:
+    """Identity of source declarations, grain metadata, and exact WAV bytes."""
+    identity = {
+        "schema": data.get("schema"),
+        "rate": data.get("rate"),
+        "sources": data.get("sources"),
+        "grains": data.get("grains"),
+    }
+    body = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
 
 
 def wav_contract(path: Path) -> str | None:
@@ -114,6 +136,13 @@ def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None
     )
     if len(sources) != len(source_rows) or len(set(sources)) != len(sources):
         provenance.append("source names are missing or duplicated")
+    if any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("sha256"), str)
+        or not re.fullmatch(r"[0-9a-fA-F]{64}", row["sha256"])
+        for row in source_rows
+    ):
+        provenance.append("source content digests are missing or malformed")
     if expected_sources is not None and sorted(sources) != sorted(expected_sources):
         provenance.append("bank sources do not match the submission register")
 
@@ -148,6 +177,8 @@ def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None
                 payload.append(f"missing {grain_id}.wav")
             elif error := wav_contract(grain_path):
                 payload.append(f"invalid {grain_id}.wav: {error}")
+            elif grain.get("wav_sha256") != sha256(grain_path):
+                payload.append(f"changed {grain_id}.wav")
         if not isinstance(source, str) or source not in sources:
             stray_sources.add(str(source))
         if isinstance(kind, str):
@@ -160,6 +191,9 @@ def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None
                 values[axis].add(float(value))
             else:
                 malformed += 1
+        rms = grain.get("rms")
+        if not isinstance(rms, (int, float)) or isinstance(rms, bool) or rms <= 0:
+            malformed += 1
 
     if malformed:
         structural.append(f"{malformed} malformed grain field(s)")
@@ -177,6 +211,8 @@ def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None
         structural.append("descriptor spread too small: " + ", ".join(flat))
     if stray_sources:
         provenance.append("unregistered grain source(s): " + ", ".join(sorted(stray_sources)))
+    if fingerprint is not None and fingerprint != bank_fingerprint(data):
+        structural.append("fingerprint does not match grain metadata and WAV payload digests")
 
     return BankAudit(
         sources=sources,

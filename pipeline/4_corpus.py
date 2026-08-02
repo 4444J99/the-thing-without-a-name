@@ -46,6 +46,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from corpus_contract import room_cache_key
+
 HERE = Path(__file__).resolve().parent
 WORK = Path(__file__).resolve().parent / ".work"
 OUT = HERE.parent / "corpus"
@@ -96,11 +98,11 @@ def room_plate(items, width: int, cache: Path, strip_rows: int = 64) -> Image.Im
     height = round(width * 3 / 4)
     n = len(items)
     cache.mkdir(parents=True, exist_ok=True)
-    # Keyed on the frame COUNT as well as the width: a --limit smoke run and a
-    # full run must never share a cache file, or the second silently medians the
-    # wrong stack.
-    plates_npy = cache / f"room-plates-{width}-{n}.npy"
-    her_npy = cache / f"room-mattes-{width}-{n}.npy"
+    # The count distinguishes smoke/full runs; the content identity also catches
+    # corrected mattes, replaced originals, and a changed same-sized corpus.
+    identity = room_cache_key(items)
+    plates_npy = cache / f"room-plates-{width}-{n}-{identity}.npy"
+    her_npy = cache / f"room-mattes-{width}-{n}-{identity}.npy"
 
     # Decode each original EXACTLY once. The naive strip loop re-opens every
     # 3264×2448 JPEG for every strip — 162 frames × 16 strips is 2,592 full
