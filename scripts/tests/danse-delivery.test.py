@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -298,7 +299,7 @@ class DeliveryContractTest(unittest.TestCase):
             forbidden = mock.Mock(side_effect=AssertionError("render dependency invoked"))
             with (
                 mock.patch.object(sys, "argv", argv),
-                mock.patch.object(DELIVER, "query_capture_span", return_value=SPAN),
+                mock.patch.object(DELIVER, "query_capture_span", forbidden),
                 mock.patch.object(DELIVER, "passage_picture", forbidden),
                 mock.patch.object(DELIVER, "passage_sound", forbidden),
                 mock.patch.object(DELIVER, "probe", return_value=None),
@@ -322,7 +323,7 @@ class DeliveryContractTest(unittest.TestCase):
             with (
                 mock.patch.object(sys, "argv", argv),
                 mock.patch.object(DELIVER, "registered_origin", return_value=source),
-                mock.patch.object(DELIVER, "query_capture_span", return_value=SPAN),
+                mock.patch.object(DELIVER, "query_capture_span", forbidden),
                 mock.patch.object(DELIVER, "passage_picture", forbidden),
                 mock.patch.object(DELIVER, "passage_sound", forbidden),
                 mock.patch.object(DELIVER, "probe", return_value=None),
@@ -346,11 +347,19 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(DELIVER.registered_origin(), Path(tmp) / "raw/IMG_1594.JPG")
 
     def test_attestation_template_survives_unowned_manual_requirement(self) -> None:
-        register = {"requirements": [{"id": "later", "rule": "declare ownership", "check": "manual"}]}
+        register = {
+            "requirements": [
+                {"id": "later", "rule": "declare ownership", "check": "manual"},
+                {"rule": "has no identifier", "check": "manual"},
+                {"id": "without-rule", "check": "manual"},
+            ]
+        }
         with mock.patch.object(DELIVER.yaml, "safe_load", return_value=register):
             text = DELIVER.attestation_template()
         self.assertIn("[UNOWNED]", text)
         self.assertIn("later: null", text)
+        self.assertIn("without-rule: null", text)
+        self.assertNotIn("has no identifier", text)
 
     def test_text_preflight_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,6 +371,20 @@ class DeliveryContractTest(unittest.TestCase):
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(DELIVER.main(), 0)
+            self.assertFalse(out.exists())
+
+    def test_preflight_reports_failed_capture_query_without_aborting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "absent"
+            argv = ["deliver.py", "--preflight", "--only", "master", "--out", str(out)]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(DELIVER, "query_capture_span", side_effect=SystemExit("node query failed")),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(DELIVER.main(), 1)
+            self.assertIn("node query failed", output.getvalue())
+            self.assertIn("NOT READY", output.getvalue())
             self.assertFalse(out.exists())
 
     def test_preflight_reuses_a_provenanced_cached_score(self) -> None:
@@ -474,7 +497,11 @@ class DeliveryContractTest(unittest.TestCase):
             with (
                 mock.patch.object(sys, "argv", ["deliver.py", "--only", "text", "--out", str(out)]),
                 mock.patch.object(DELIVER, "BANK", current_bank),
-                mock.patch.object(DELIVER, "query_capture_span", return_value=SPAN),
+                mock.patch.object(
+                    DELIVER,
+                    "query_capture_span",
+                    side_effect=AssertionError("text-only update queried passage metadata"),
+                ),
                 mock.patch.object(DELIVER, "probe", return_value=None),
                 redirect_stdout(io.StringIO()),
             ):
@@ -509,6 +536,11 @@ class DeliveryContractTest(unittest.TestCase):
                     ["deliver.py", "--only", "master", "--out", str(root / "render"), "--package", str(package)],
                 ),
                 mock.patch.object(DELIVER, "query_capture_span", return_value=SPAN),
+                mock.patch.object(
+                    DELIVER,
+                    "passage_sound",
+                    return_value=(root / "passage-score.wav", {"score_sha256": "score"}, False),
+                ),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(DELIVER.main(), 0)
@@ -527,7 +559,10 @@ class DeliveryContractTest(unittest.TestCase):
                 "sources": ["IMG_0226.MOV", "IMG_0227.MOV"],
             }
             DELIVER.write_score_receipt(score, SPAN, provenance)
-            self.assertEqual(DELIVER.score_provenance(score, SPAN), provenance)
+            self.assertEqual(
+                DELIVER.score_provenance(score, SPAN),
+                {**provenance, "score_sha256": DELIVER.digest(score)},
+            )
             score.write_bytes(b"changed-audio")
             self.assertIsNone(DELIVER.score_provenance(score, SPAN))
 
@@ -537,6 +572,35 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertTrue(DELIVER.package_provenance_matches(package, SPAN))
             (package / "master.mov").write_bytes(b"unowned media")
             self.assertFalse(DELIVER.package_provenance_matches(package, SPAN))
+
+    def test_passage_independent_manifests_do_not_claim_or_require_a_span(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            (package / "manifest.json").write_text(
+                json.dumps({"items": [{"name": "text/synopsis_short.txt"}]})
+            )
+            self.assertTrue(DELIVER.package_provenance_matches(package, SPAN, start=120.0))
+            (package / "master.mov").write_bytes(b"unmanifested passage")
+            self.assertFalse(DELIVER.package_provenance_matches(package, SPAN, start=120.0))
+
+    def test_fixed_window_package_receipts_bind_the_selected_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "passage_seed": DELIVER.hexseed(SPAN["seed"]),
+                        "passage": SPAN["passage"],
+                        "start": 120.0,
+                        "t0": SPAN["t0"],
+                        "t1": SPAN["t1"],
+                        "duration": SPAN["duration"],
+                        "items": [{"name": "trailer.mp4"}],
+                    }
+                )
+            )
+            self.assertTrue(DELIVER.package_provenance_matches(package, SPAN, start=120.0))
+            self.assertFalse(DELIVER.package_provenance_matches(package, SPAN, start=121.0))
 
     def test_forced_score_rebuilds_every_selected_audio_derivative(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
@@ -549,6 +613,45 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertTrue(work["master"])
         self.assertEqual(work["derived"], set(DELIVER.DERIVED))
         self.assertTrue(work["reel"])
+
+    def test_rebuilt_score_invalidates_every_selected_audio_artifact(self) -> None:
+        work = {"master": False, "derived": set(), "reel": False, "stills": False}
+        DELIVER.expand_rebuilt_score_dependents(work, {"master", "derived", "reel"})
+        self.assertTrue(work["master"])
+        self.assertEqual(work["derived"], set(DELIVER.DERIVED))
+        self.assertTrue(work["reel"])
+
+    def test_reel_renderer_receives_the_resolved_capture_start(self) -> None:
+        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 170.0, "duration": 30.0}
+        passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "render"
+            package = root / "package"
+            out.mkdir()
+            package.mkdir()
+
+            def query(name: str, start: float = 0.0) -> dict:
+                return reel_span if name == "reel" else passage_span
+
+            def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
+                (out / "reel-default.mp4").write_bytes(b"rendered reel")
+                return subprocess.CompletedProcess(command, 0)
+
+            def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
+                dest.write_bytes(b"muxed reel")
+
+            with (
+                mock.patch.object(DELIVER, "OUT", out),
+                mock.patch.object(DELIVER, "PACKAGE", package),
+                mock.patch.object(DELIVER, "query_capture_span", side_effect=query),
+                mock.patch.object(DELIVER.subprocess, "run", side_effect=render) as run,
+                mock.patch.object(DELIVER, "cut_audio"),
+                mock.patch.object(DELIVER, "mux", side_effect=mux_reel),
+            ):
+                DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--start") + 1], "140.0")
 
     def test_capture_overrun_is_rejected_before_render(self) -> None:
         overrun = {**SPAN, "t0": 300.0, "t1": 470.0, "duration": 170.0, "capture": "midnight-moment"}
@@ -637,12 +740,33 @@ class DeliveryContractTest(unittest.TestCase):
             root = Path(tmp)
             score = root / "passage-score.wav"
             score.write_bytes(b"score")
-            score.with_suffix(".json").write_text('{"schema":"danse.score.receipt.v1","t0":"bad"}')
+            DELIVER.score_receipt_path(score).write_text("[]")
+            self.assertIsNone(DELIVER.score_provenance(score, SPAN))
+            DELIVER.score_receipt_path(score).write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.score.receipt.v1",
+                        "sha256": DELIVER.digest(score),
+                        "bank_fingerprint": "bank",
+                        "sources": [],
+                        "t0": "bad",
+                    }
+                )
+            )
             self.assertIsNone(DELIVER.score_provenance(score, SPAN))
 
             package = root / "package"
             package.mkdir()
-            (package / "manifest.json").write_text('{"passage_seed":"0xAF6B7BE5","t0":"bad"}')
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "passage_seed": DELIVER.hexseed(SPAN["seed"]),
+                        "passage": SPAN["passage"],
+                        "t0": "bad",
+                        "items": [{"name": "master.mov"}],
+                    }
+                )
+            )
             self.assertFalse(DELIVER.package_provenance_matches(package, SPAN))
 
     def test_master_must_match_manifested_passage_and_digest(self) -> None:
@@ -675,6 +799,14 @@ class DeliveryContractTest(unittest.TestCase):
             statuses = {name: status for _, name, status, _ in report.rows}
             self.assertEqual(statuses["master is one whole manifested passage"], CHECK.FAIL)
             self.assertEqual(statuses["master bytes match delivery manifest"], CHECK.FAIL)
+
+            info["seconds"] = 312.54
+            info["fps"] = 0.0
+            with mock.patch.object(CHECK, "probe", return_value=info):
+                report = CHECK.Report()
+                CHECK.check_master(register["package"]["master"], register, package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["master is one whole manifested passage"], CHECK.FAIL)
 
     def test_screener_directly_matches_manifested_passage_and_digest(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
@@ -761,8 +893,8 @@ class DeliveryContractTest(unittest.TestCase):
             package = Path(tmp)
             for name in ("master.mov", "screener.mp4"):
                 (package / name).touch()
-            current = {"bank_fingerprint": "current", "sources": expected}
-            stale = {"bank_fingerprint": "stale", "sources": expected}
+            current = {"bank_fingerprint": "current", "sources": expected, "score_sha256": "score-current"}
+            stale = {"bank_fingerprint": "stale", "sources": expected, "score_sha256": "score-current"}
             (package / "manifest.json").write_text(
                 json.dumps(
                     {
@@ -793,6 +925,32 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(row[2], CHECK.FAIL)
             self.assertIn("mixed bank fingerprints", row[3])
 
+            manifest = json.loads((package / "manifest.json").read_text())
+            manifest["items"][1]["sound"] = {
+                "bank_fingerprint": "current",
+                "sources": expected,
+                "score_sha256": "score-stale",
+            }
+            (package / "manifest.json").write_text(json.dumps(manifest))
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            self.assertEqual(row[2], CHECK.FAIL)
+            self.assertIn("mixed score digests", row[3])
+
+    def test_empty_audio_package_reports_its_actual_cause(self) -> None:
+        register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            report = CHECK.Report()
+            CHECK.check_audio(register["package"]["audio"], Path(tmp), report)
+        row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+        self.assertEqual(row[2], CHECK.FAIL)
+        self.assertEqual(row[3], "no audio artifact staged")
+
     def test_audio_receipts_bind_screener_bytes_and_passage_duration(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
         expected = register["package"]["audio"]["source_recordings"]
@@ -802,7 +960,7 @@ class DeliveryContractTest(unittest.TestCase):
             screener = package / "screener.mov"
             master.write_bytes(b"master")
             screener.write_bytes(b"screener")
-            sound = {"bank_fingerprint": "bank", "sources": expected}
+            sound = {"bank_fingerprint": "bank", "sources": expected, "score_sha256": "score-current"}
 
             def write_manifest() -> None:
                 (package / "manifest.json").write_text(
@@ -914,6 +1072,8 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertEqual(info["width"], 1920)
 
     def test_control_rejects_non_numeric_start(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("node is not installed")
         done = subprocess.run(
             ["node", str(ROOT / "sound/control.mjs"), "--from", "not-a-number", "--rate", "0"],
             capture_output=True,

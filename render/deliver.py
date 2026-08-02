@@ -84,6 +84,8 @@ AUDIO_ITEMS = {
     "screener.mp4",
     "reel.mp4",
 }
+PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
+FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", "reel.mp4"}
 
 
 def sh(cmd: list, **kw) -> subprocess.CompletedProcess:
@@ -240,12 +242,13 @@ def score_provenance(score: Path, span: dict) -> dict | None:
         data = json.loads(receipt.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+    if not isinstance(data, dict):
+        return None
     sources = data.get("sources") or []
     fingerprint = data.get("bank_fingerprint")
     try:
         valid = (
-            isinstance(data, dict)
-            and data.get("schema") == "danse.score.receipt.v1"
+            data.get("schema") == "danse.score.receipt.v1"
             and isinstance(fingerprint, str)
             and bool(fingerprint)
             and all(isinstance(source, str) for source in sources)
@@ -258,7 +261,7 @@ def score_provenance(score: Path, span: dict) -> dict | None:
         return None
     if not valid:
         return None
-    return {"bank_fingerprint": fingerprint, "sources": sources}
+    return {"bank_fingerprint": fingerprint, "sources": sources, "score_sha256": data["sha256"]}
 
 
 def write_score_receipt(score: Path, span: dict, provenance: dict) -> None:
@@ -293,7 +296,7 @@ def recognized_package_media(package: Path) -> list[Path]:
     return sorted({path for path in paths if path.is_file()})
 
 
-def package_provenance_matches(package: Path, span: dict) -> bool:
+def package_provenance_matches(package: Path, span: dict, start: float | None = None) -> bool:
     manifest = package / "manifest.json"
     if not manifest.is_file():
         return not recognized_package_media(package)
@@ -303,14 +306,32 @@ def package_provenance_matches(package: Path, span: dict) -> bool:
         return False
     if not isinstance(data, dict):
         return False
+    items = data.get("items", [])
+    if not isinstance(items, list):
+        return False
+    item_names = {
+        item.get("name") for item in items if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    passage_items = {name for name in item_names if name in AUDIO_ITEMS or name.startswith("stills/seed-")}
+    if not passage_items:
+        unmanifested_passage_media = [
+            path
+            for path in recognized_package_media(package)
+            if path.name != "origin-2017.jpg"
+        ]
+        return not unmanifested_passage_media
     try:
-        return (
+        passage_matches = (
             data.get("passage_seed") == hexseed(span["seed"])
             and data.get("passage") == span["passage"]
             and abs(float(data.get("t0", -1)) - span["t0"]) < 1e-9
             and abs(float(data.get("t1", -1)) - span["t1"]) < 1e-9
             and abs(float(data.get("duration", -1)) - span["duration"]) < 1e-3
         )
+        start_matches = not (passage_items & FIXED_WINDOW_ITEMS) or (
+            start is not None and abs(float(data.get("start", -1)) - start) < 1e-9
+        )
+        return passage_matches and start_matches
     except (TypeError, ValueError):
         return False
 
@@ -348,6 +369,16 @@ def pending(program: dict, only: set[str], force: set[str], package: Path) -> di
     }
 
 
+def expand_rebuilt_score_dependents(work: dict, only: set[str]) -> None:
+    """A new score invalidates every selected artifact that embeds its bytes."""
+    if "master" in only:
+        work["master"] = True
+    if "derived" in only:
+        work["derived"] = set(DERIVED)
+    if "reel" in only:
+        work["reel"] = True
+
+
 def capture_span_error(name: str, passage_span: dict, start: float) -> str | None:
     """Explain when a fixed capture would overrun its selected passage."""
     span = query_capture_span(name, start=start)
@@ -361,7 +392,7 @@ def capture_span_error(name: str, passage_span: dict, start: float) -> str | Non
 
 def preflight(
     program: dict,
-    span: dict,
+    span: dict | None,
     only: set[str],
     force: set[str],
     tier: str,
@@ -369,6 +400,8 @@ def preflight(
     package: Path,
     origin: Path | None,
     start: float = 0.0,
+    span_error: str | None = None,
+    passage_requested: bool = True,
 ) -> int:
     """Validate a delivery invocation without creating a directory or rendering."""
     rows: list[tuple[bool, str, str]] = []
@@ -377,18 +410,31 @@ def preflight(
         rows.append((ok, name, detail))
 
     add(program.get("schema") == "danse.program.v2", "program", str(program.get("schema")))
-    add(span["duration"] > 0, "capture span", f"{span['duration']:.3f}s from {span['t0']:.3f}s")
-    add(shutil.which("node") is not None, "node", shutil.which("node") or "missing")
     add(
-        package_provenance_matches(package, span),
+        not passage_requested or (span is not None and span["duration"] > 0),
+        "capture span",
+        "not needed for passage-independent outputs"
+        if not passage_requested
+        else (f"{span['duration']:.3f}s from {span['t0']:.3f}s" if span else span_error or "unavailable"),
+    )
+    node = shutil.which("node")
+    add(not passage_requested or node is not None, "node", node or ("not needed" if not passage_requested else "missing"))
+    add(
+        not passage_requested or (span is not None and package_provenance_matches(package, span, start)),
         "package passage provenance",
-        str(package / "manifest.json"),
+        "preserved" if not passage_requested else str(package / "manifest.json"),
     )
 
     work = pending(program, only, force, package)
     span_names = sorted(work["derived"] | ({"reel"} if work["reel"] else set()))
     for name in span_names:
-        error = capture_span_error(name, span, start)
+        if span is None:
+            add(False, f"{name} fits selected passage", span_error or "capture span unavailable")
+            continue
+        try:
+            error = capture_span_error(name, span, start)
+        except SystemExit as exc:
+            error = str(exc)
         add(error is None, f"{name} fits selected passage", error or f"within {span['duration']:.3f}s passage")
     need_picture = work["master"] or bool(work["derived"])
     need_score = need_picture or work["reel"]
@@ -398,7 +444,8 @@ def preflight(
     picture_info = probe(picture)
     cap = captures(program)["passage"]
     picture_ready = bool(
-        picture_info
+        span
+        and picture_info
         and abs(picture_info.get("seconds", 0) * cap.get("fps", 30) - span["duration"] * cap.get("fps", 30)) < 2
         and not is_forced(force, "master")
     )
@@ -407,7 +454,8 @@ def preflight(
     score = render_root / "passage-score.wav"
     score_info = probe(score)
     score_ready = bool(
-        score_info
+        span
+        and score_info
         and abs(score_info.get("seconds", 0) - span["duration"]) < 0.1
         and score_provenance(score, span)
         and not is_forced(force, "master")
@@ -527,16 +575,23 @@ def passage_picture(program: dict, tier: str, force: bool, start: float = 0.0) -
     return dest
 
 
-def passage_sound(force: bool, start: float = 0.0) -> tuple[Path, dict]:
+def passage_sound(force: bool, start: float = 0.0) -> tuple[Path, dict, bool]:
     """One score for the passage recording. Every derived capture is cut from it."""
     dest = OUT / "passage-score.wav"
     span = query_capture_span("passage", start=start)
     if not force:
         got = probe_required(dest) if dest.is_file() else None
         provenance = score_provenance(dest, span) if got else None
-        if got and provenance and provenance == bank_provenance() and abs(got["seconds"] - span["duration"]) < 0.1:
+        current_bank = bank_provenance() if provenance else None
+        bank_matches = bool(
+            provenance
+            and current_bank
+            and provenance.get("bank_fingerprint") == current_bank.get("bank_fingerprint")
+            and provenance.get("sources") == current_bank.get("sources")
+        )
+        if got and provenance and bank_matches and abs(got["seconds"] - span["duration"]) < 0.1:
             print(f"  passage score · kept · {got['seconds']:.1f}s")
-            return dest, provenance
+            return dest, provenance, False
     provenance = bank_provenance()
     if provenance is None:
         raise SystemExit(f"{BANK} must contain only the recordings declared by {REGISTER.name}")
@@ -548,7 +603,7 @@ def passage_sound(force: bool, start: float = 0.0) -> tuple[Path, dict]:
     if done.returncode != 0 or not dest.is_file():
         raise SystemExit("the score would not render")
     write_score_receipt(dest, span, provenance)
-    return dest, provenance
+    return dest, {**provenance, "score_sha256": digest(dest)}, True
 
 
 def mux(video: Path, audio: Path, dest: Path, acodec: str, vcopy: bool = True, vfilter: str | None = None) -> None:
@@ -654,7 +709,7 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             "--capture",
             "reel",
             "--start",
-            str(start),
+            str(span["t0"]),
             "--tier",
             tier,
             "--codec",
@@ -776,8 +831,9 @@ def attestation_template() -> str:
         "# performed or verified an act may set its value to true.",
         "# check.py reads only the cumulative requirements owned by --phase.",
     ]
+    requirements = [item for item in requirements if item.get("id")]
     for item in requirements:
-        lines.append(f"#   {item['id']:<30} [{item.get('phase', 'UNOWNED')}] {item['rule']}")
+        lines.append(f"#   {item['id']:<30} [{item.get('phase', 'UNOWNED')}] {item.get('rule', '')}")
     lines.extend(f"{item['id']}: null" for item in requirements)
     return "\n".join(lines) + "\n"
 
@@ -799,22 +855,48 @@ def main() -> int:
     program = json.loads(PROGRAM.read_text())
     only = set(args.only or SELECTORS)
     force = set(args.force)
-    span = query_capture_span("passage", start=args.start)
-    origin = registered_origin() if "origin" in only else None
-    render_root = capture_root(args.out, span, span["t0"])
     package = args.package or (args.out / "package")
+    origin = registered_origin() if "origin" in only else None
+    passage_requested = bool(only & PASSAGE_SELECTORS)
+    span_error = None
+    span = None
+    if passage_requested:
+        try:
+            span = query_capture_span("passage", start=args.start)
+        except SystemExit as exc:
+            if not args.preflight:
+                raise
+            span_error = str(exc)
+    render_root = capture_root(args.out, span, span["t0"]) if span else args.out
     if args.preflight:
-        return preflight(program, span, only, force, args.tier, render_root, package, origin, args.start)
-    if not package_provenance_matches(package, span):
+        return preflight(
+            program,
+            span,
+            only,
+            force,
+            args.tier,
+            render_root,
+            package,
+            origin,
+            args.start,
+            span_error,
+            passage_requested,
+        )
+    if passage_requested and not package_provenance_matches(package, span, args.start):
         raise SystemExit(f"{package}/manifest.json belongs to a different passage; choose a fresh --package root")
 
     work = pending(program, only, force, package)
-    for name in sorted(work["derived"] | ({"reel"} if work["reel"] else set())):
+    selected_fixed_windows = {
+        name for name in DERIVED if "derived" in only
+    } | ({"reel"} if "reel" in only else set())
+    for name in sorted(selected_fixed_windows):
+        assert span is not None
         error = capture_span_error(name, span, args.start)
         if error:
             raise SystemExit(error)
-    media_pending = work["master"] or work["derived"] or work["reel"] or work["stills"]
-    if media_pending and shutil.which("ffprobe") is None:
+    audio_selected = bool(only & {"master", "derived", "reel"})
+    media_pending = bool(work["master"] or work["derived"] or work["reel"] or work["stills"])
+    if (media_pending or audio_selected) and shutil.which("ffprobe") is None:
         raise SystemExit("ffprobe is required for media delivery; run deliver.py --preflight")
 
     OUT = render_root
@@ -822,16 +904,22 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     PACKAGE.mkdir(parents=True, exist_ok=True)
 
-    print(
-        f"{program['title']} · seed {hexseed(program['seed'])} · passage seed {hexseed(span['seed'])} · "
-        f"{span['duration']:.1f}s (start at {args.start:.1f}s)\n"
-    )
+    if span:
+        print(
+            f"{program['title']} · seed {hexseed(program['seed'])} · passage seed {hexseed(span['seed'])} · "
+            f"{span['duration']:.1f}s (start at {args.start:.1f}s)\n"
+        )
+    else:
+        print(f"{program['title']} · passage-independent package update\n")
 
-    need_picture = work["master"] or bool(work["derived"])
-    need_sound = need_picture or work["reel"]
     score_forced = "master" in force
+    sound, sound_provenance, score_rebuilt = (
+        passage_sound(score_forced, start=args.start) if audio_selected else (None, None, False)
+    )
+    if score_rebuilt:
+        expand_rebuilt_score_dependents(work, only)
+    need_picture = work["master"] or bool(work["derived"])
     picture = passage_picture(program, args.tier, score_forced, start=args.start) if need_picture else None
-    sound, sound_provenance = passage_sound(score_forced, start=args.start) if need_sound else (None, None)
     made: list[Path] = []
 
     if "master" in only and work["master"]:
@@ -885,14 +973,20 @@ def main() -> int:
         "schema": "danse.delivery.manifest.v1",
         "title": program["title"],
         "seed": hexseed(program["seed"]),
-        "passage_seed": hexseed(span["seed"]),
-        "passage": span["passage"],
-        "start": args.start,
-        "t0": span["t0"],
-        "t1": span["t1"],
-        "duration": span["duration"],
         "items": [],
     }
+    passage_fields = ("passage_seed", "passage", "start", "t0", "t1", "duration")
+    if span:
+        manifest |= {
+            "passage_seed": hexseed(span["seed"]),
+            "passage": span["passage"],
+            "start": args.start,
+            "t0": span["t0"],
+            "t1": span["t1"],
+            "duration": span["duration"],
+        }
+    else:
+        manifest |= {key: previous[key] for key in passage_fields if key in previous}
     for path in made:
         if not path.is_file():
             continue

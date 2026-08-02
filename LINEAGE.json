@@ -30,7 +30,7 @@
   },
   "verification": {
     "portable_invariants": 40,
-    "delivery_regressions": 43,
+    "delivery_regressions": 49,
     "machine_predicates": [
       "Apple Metal renderer",
       "31.60 dB reproduction",

@@ -356,7 +356,12 @@ def check_master(spec: dict, reg: dict, root: Path, rep: Report) -> None:
     manifest = read_manifest(root)
     item = manifest_items(root).get(path.name) or {}
     expected_seconds = manifest.get("duration")
-    duration_matches = isinstance(expected_seconds, (int, float)) and abs(secs - expected_seconds) * fps <= 2
+    duration_matches = (
+        isinstance(expected_seconds, (int, float))
+        and not isinstance(expected_seconds, bool)
+        and fps > 0
+        and abs(secs - expected_seconds) * fps <= 2
+    )
     rep.add(
         "package",
         "master is one whole manifested passage",
@@ -536,10 +541,10 @@ def check_trailer(spec: dict, root: Path, rep: Report) -> None:
 
 def check_audio(spec: dict, root: Path, rep: Report) -> None:
     master = find_one(root, "master")
-    if not master:
-        return
-    measured = loudness(master)
-    if measured is None:
+    measured = loudness(master) if master else None
+    if master is None:
+        rep.add("audio", "loudness", OPEN, "master audio artifact not staged")
+    elif measured is None:
         rep.add("audio", "loudness", OPEN, "ffmpeg loudnorm measurement unavailable")
     else:
         delta = abs(measured["lufs"] - spec["target_lufs"])
@@ -570,15 +575,24 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
     audio_paths = [path for stem in ("master", "midnight-moment", "trailer", "screener", "reel") if (path := find_one(root, stem))]
     stale: list[str] = []
     fingerprints: set[str] = set()
+    score_digests: set[str] = set()
     for path in audio_paths:
         item = items.get(path.name) or {}
         sound = item.get("sound") if isinstance(item.get("sound"), dict) else {}
         fingerprint = sound.get("bank_fingerprint")
+        score_digest = sound.get("score_sha256")
         errors: list[str] = []
-        if set(sound.get("sources") or []) != expected or not isinstance(fingerprint, str) or not fingerprint:
+        if (
+            set(sound.get("sources") or []) != expected
+            or not isinstance(fingerprint, str)
+            or not fingerprint
+            or not isinstance(score_digest, str)
+            or not score_digest
+        ):
             errors.append("score receipt")
         else:
             fingerprints.add(fingerprint)
+            score_digests.add(score_digest)
         if item.get("sha256") != sha256(path):
             errors.append("digest")
         if path.stem == "screener":
@@ -593,12 +607,18 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
                 errors.append("passage duration")
         if errors:
             stale.append(f"{path.name} ({', '.join(errors)})")
-    consistent = not stale and len(fingerprints) == 1 and bool(audio_paths)
-    detail = (
-        f"{len(audio_paths)} artifact(s) · bank {next(iter(fingerprints))}"
-        if consistent
-        else f"missing/stale: {', '.join(stale) or 'mixed bank fingerprints'}"
-    )
+    consistent = not stale and len(fingerprints) == 1 and len(score_digests) == 1 and bool(audio_paths)
+    if consistent:
+        detail = f"{len(audio_paths)} artifact(s) · bank {next(iter(fingerprints))}"
+    elif not audio_paths:
+        detail = "no audio artifact staged"
+    else:
+        conflicts = []
+        if len(fingerprints) != 1:
+            conflicts.append("mixed bank fingerprints")
+        if len(score_digests) != 1:
+            conflicts.append("mixed score digests")
+        detail = f"missing/stale: {', '.join(stale + conflicts)}"
     rep.add("audio", "per-artifact score provenance", PASS if consistent else FAIL, detail)
 
 

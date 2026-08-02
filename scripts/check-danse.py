@@ -734,9 +734,16 @@ def check_bank() -> None:
         import yaml
 
         register = yaml.safe_load(REGISTER.read_text()) or {}
-        audio = ((register.get("package") or {}).get("audio") or {})
-        expected = {name: (audio.get("source_sha256") or {}).get(name, "") for name in audio.get("source_recordings") or []}
+        if isinstance(register, dict):
+            package = register.get("package") if isinstance(register.get("package"), dict) else {}
+            audio = package.get("audio") if isinstance(package.get("audio"), dict) else {}
+            recordings = audio.get("source_recordings") or []
+            source_digests = audio.get("source_sha256") if isinstance(audio.get("source_sha256"), dict) else {}
+            if isinstance(recordings, list) and recordings and all(isinstance(name, str) for name in recordings):
+                expected = {name: source_digests.get(name, "") for name in recordings}
     except (ImportError, OSError):
+        pass
+    except yaml.YAMLError:
         pass
     audit = audit_bank(index, expected)
 
