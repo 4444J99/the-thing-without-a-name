@@ -446,7 +446,13 @@ def preflight(
         add(not audit.payload_errors, "grain payloads", "; ".join(audit.payload_errors[:4]) or "every indexed WAV exists")
 
     if "origin" in only:
-        add(origin is not None and origin.is_file(), "unaltered origin photograph", str(origin or "unresolved"))
+        origin_dest = package / "stills" / "origin-2017.jpg"
+        need_origin_source = is_forced(force, "origin") or not origin_dest.is_file()
+        add(
+            not need_origin_source or (origin is not None and origin.is_file()),
+            "unaltered origin photograph",
+            str(origin if need_origin_source else origin_dest),
+        )
     if "text" in only:
         text_root = DANSE / "submission" / "text"
         names = {
@@ -673,7 +679,6 @@ def deliver_stills(program: dict, tier: str, force: bool, start: float = 0.0) ->
         still_span = query_capture_span("passage", seed=seed, start=span["t0"])
         t = still_span["duration"] * fraction
         if dest.is_file() and not force:
-            made.append(dest)
             continue
         frame = int(round(t * fps))
         print(f"  {dest.name} · t={t:.0f}s")
@@ -738,7 +743,7 @@ def deliver_text() -> list[Path]:
 def deliver_origin(origin: Path, force: bool) -> Path | None:
     dest = PACKAGE / "stills" / "origin-2017.jpg"
     if dest.is_file() and not force:
-        return dest
+        return None
     if not origin.is_file():
         print(f"  origin-2017.jpg · MISSING SOURCE at {origin}")
         return None
@@ -819,29 +824,24 @@ def main() -> int:
     sound, sound_provenance = passage_sound(score_forced, start=args.start) if need_sound else (None, None)
     made: list[Path] = []
 
-    if "master" in only:
-        made.append(deliver_passage(picture, sound, score_forced) if work["master"] else PACKAGE / "master.mov")
+    if "master" in only and work["master"]:
+        made.append(deliver_passage(picture, sound, score_forced))
     if "derived" in only:
         for name, spec in DERIVED.items():
-            made.append(
-                deliver_derived(
-                    name,
-                    spec,
-                    program,
-                    picture,
-                    sound,
-                    score_forced or is_forced(force, name, "derived"),
-                    start=args.start,
+            if name in work["derived"]:
+                made.append(
+                    deliver_derived(
+                        name,
+                        spec,
+                        program,
+                        picture,
+                        sound,
+                        score_forced or is_forced(force, name, "derived"),
+                        start=args.start,
+                    )
                 )
-                if name in work["derived"]
-                else PACKAGE / f"{name}{spec['suffix']}"
-            )
-    if "reel" in only:
-        made.append(
-            deliver_reel(program, sound, args.tier, score_forced or "reel" in force, start=args.start)
-            if work["reel"]
-            else PACKAGE / "reel.mp4"
-        )
+    if "reel" in only and work["reel"]:
+        made.append(deliver_reel(program, sound, args.tier, score_forced or "reel" in force, start=args.start))
     if "stills" in only:
         made += deliver_stills(program, args.tier, "stills" in force, start=args.start)
     if "text" in only:

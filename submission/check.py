@@ -551,10 +551,25 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
         item = items.get(path.name) or {}
         sound = item.get("sound") if isinstance(item.get("sound"), dict) else {}
         fingerprint = sound.get("bank_fingerprint")
+        errors: list[str] = []
         if set(sound.get("sources") or []) != expected or not isinstance(fingerprint, str) or not fingerprint:
-            stale.append(path.name)
-            continue
-        fingerprints.add(fingerprint)
+            errors.append("score receipt")
+        else:
+            fingerprints.add(fingerprint)
+        if item.get("sha256") != sha256(path):
+            errors.append("digest")
+        if path.name == "screener.mp4":
+            info = probe(path)
+            passage_seconds = manifest.get("duration")
+            duration_matches = bool(
+                info
+                and isinstance(passage_seconds, (int, float))
+                and abs(info.get("seconds", -1) - passage_seconds) <= 0.1
+            )
+            if not duration_matches:
+                errors.append("passage duration")
+        if errors:
+            stale.append(f"{path.name} ({', '.join(errors)})")
     consistent = not stale and len(fingerprints) == 1 and bool(audio_paths)
     detail = (
         f"{len(audio_paths)} artifact(s) · bank {next(iter(fingerprints))}"

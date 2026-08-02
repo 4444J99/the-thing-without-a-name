@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -187,6 +188,40 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertNotIn("Python module numpy", output.getvalue())
             self.assertNotIn("grain bank", output.getvalue())
 
+    def test_preflight_reuses_manifested_origin_without_raw_source(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            origin_copy = package / "stills/origin-2017.jpg"
+            origin_copy.parent.mkdir(parents=True)
+            origin_copy.write_bytes(b"preserved origin")
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "passage_seed": DELIVER.hexseed(SPAN["seed"]),
+                        "passage": SPAN["passage"],
+                        "t0": SPAN["t0"],
+                        "t1": SPAN["t1"],
+                        "duration": SPAN["duration"],
+                        "items": [{"name": "stills/origin-2017.jpg", "sha256": DELIVER.digest(origin_copy)}],
+                    }
+                )
+            )
+            missing_raw = root / "unmounted/IMG_1594.JPG"
+            with (
+                mock.patch.object(DELIVER.shutil, "which", return_value="/tools/node"),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(
+                    DELIVER.preflight(program, SPAN, {"origin"}, set(), "film", root, package, missing_raw),
+                    0,
+                )
+                self.assertEqual(
+                    DELIVER.preflight(program, SPAN, {"origin"}, {"origin"}, "film", root, package, missing_raw),
+                    1,
+                )
+
     def test_text_only_preserves_existing_sound_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -226,6 +261,42 @@ class DeliveryContractTest(unittest.TestCase):
                 self.assertEqual(DELIVER.main(), 0)
             manifest = json.loads((package / "manifest.json").read_text())
             self.assertEqual(manifest["sound"], old_sound)
+
+    def test_reused_media_preserves_prior_digest_for_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            package.mkdir()
+            master = package / "master.mov"
+            master.write_bytes(b"modified after packaging")
+            trusted_digest = hashlib.sha256(b"original packaged bytes").hexdigest()
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "passage_seed": DELIVER.hexseed(SPAN["seed"]),
+                        "passage": SPAN["passage"],
+                        "t0": SPAN["t0"],
+                        "t1": SPAN["t1"],
+                        "duration": SPAN["duration"],
+                        "items": [{"name": "master.mov", "bytes": 23, "sha256": trusted_digest}],
+                    }
+                )
+            )
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    ["deliver.py", "--only", "master", "--out", str(root / "render"), "--package", str(package)],
+                ),
+                mock.patch.object(DELIVER, "query_capture_span", return_value=SPAN),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(DELIVER.main(), 0)
+            receipt = next(
+                item for item in json.loads((package / "manifest.json").read_text())["items"] if item["name"] == "master.mov"
+            )
+            self.assertEqual(receipt["sha256"], trusted_digest)
+            self.assertNotEqual(receipt["sha256"], DELIVER.digest(master))
 
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -371,20 +442,89 @@ class DeliveryContractTest(unittest.TestCase):
             (package / "manifest.json").write_text(
                 json.dumps(
                     {
+                        "duration": SPAN["duration"],
                         "sound": current,
                         "items": [
-                            {"name": "master.mov", "sound": current},
-                            {"name": "screener.mp4", "sound": stale},
+                            {
+                                "name": "master.mov",
+                                "sha256": CHECK.sha256(package / "master.mov"),
+                                "sound": current,
+                            },
+                            {
+                                "name": "screener.mp4",
+                                "sha256": CHECK.sha256(package / "screener.mp4"),
+                                "sound": stale,
+                            },
                         ],
                     }
                 )
             )
             report = CHECK.Report()
-            with mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}):
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
                 CHECK.check_audio(register["package"]["audio"], package, report)
             row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
             self.assertEqual(row[2], CHECK.FAIL)
             self.assertIn("mixed bank fingerprints", row[3])
+
+    def test_audio_receipts_bind_screener_bytes_and_passage_duration(self) -> None:
+        register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        expected = register["package"]["audio"]["source_recordings"]
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            master = package / "master.mov"
+            screener = package / "screener.mp4"
+            master.write_bytes(b"master")
+            screener.write_bytes(b"screener")
+            sound = {"bank_fingerprint": "bank", "sources": expected}
+
+            def write_manifest() -> None:
+                (package / "manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "duration": SPAN["duration"],
+                            "sound": sound,
+                            "items": [
+                                {"name": master.name, "sha256": CHECK.sha256(master), "sound": sound},
+                                {"name": screener.name, "sha256": CHECK.sha256(screener), "sound": sound},
+                            ],
+                        }
+                    )
+                )
+
+            write_manifest()
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            self.assertEqual(row[2], CHECK.PASS)
+
+            screener.write_bytes(b"replaced screener")
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            self.assertEqual(row[2], CHECK.FAIL)
+            self.assertIn("screener.mp4 (digest)", row[3])
+
+            write_manifest()
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"] - 10}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            self.assertEqual(row[2], CHECK.FAIL)
+            self.assertIn("passage duration", row[3])
 
     def test_attestations_are_cumulative_by_owned_phase(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
