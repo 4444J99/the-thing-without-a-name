@@ -541,6 +541,7 @@ class DeliveryContractTest(unittest.TestCase):
                     "passage_sound",
                     return_value=(root / "passage-score.wav", {"score_sha256": "score"}, False),
                 ),
+                mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(DELIVER.main(), 0)
