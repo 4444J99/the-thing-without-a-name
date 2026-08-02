@@ -329,19 +329,61 @@ def complete(dest: Path, want: int, expected: dict) -> bool:
     return out.returncode == 0 and out.stdout.strip().isdigit() and int(out.stdout.strip()) == want
 
 
-def concat(stem: Path, codec: str) -> Path:
-    """Stitch the segments without re-encoding. They are the same stream."""
-    parts = sorted(stem.parent.glob(f"{stem.name}-seg-*{SUFFIX[codec]}"))
+def segment_paths(stem: Path, codec: str, segments: list[int]) -> list[Path]:
+    return [stem.parent / f"{stem.name}-seg-{segment:03d}{SUFFIX[codec]}" for segment in segments]
+
+
+def concat_receipt_path(dest: Path) -> Path:
+    return dest.with_name(dest.name + ".receipt.json")
+
+
+def concat_identity(args, parts: list[Path]) -> dict:
+    return {
+        "schema": "danse.render.concat.v1",
+        "codec": args.codec,
+        "segments": [
+            {"name": part.name, "receipt_sha256": file_sha256(segment_receipt_path(part))} for part in parts
+        ],
+    }
+
+
+def concat_complete(stem: Path, args, parts: list[Path]) -> bool:
+    dest = stem.with_suffix(SUFFIX[args.codec])
+    receipt_path = concat_receipt_path(dest)
+    if not dest.is_file() or not receipt_path.is_file():
+        return False
+    try:
+        receipt = json.loads(receipt_path.read_text())
+        expected = concat_identity(args, parts)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        {key: receipt.get(key) for key in expected} == expected
+        and receipt.get("file_sha256") == file_sha256(dest)
+    )
+
+
+def concat(stem: Path, args, parts: list[Path]) -> Path:
+    """Stitch exactly the planned segments without re-encoding."""
     if not parts:
-        raise SystemExit(f"no segments at {stem}-seg-*{SUFFIX[codec]}")
+        raise SystemExit(f"no planned segments at {stem}")
+    missing = [part.name for part in parts if not part.is_file()]
+    if missing:
+        raise SystemExit("missing planned segment(s): " + ", ".join(missing))
+    extras = sorted(set(stem.parent.glob(f"{stem.name}-seg-*{SUFFIX[args.codec]}")) - set(parts))
+    if extras:
+        print(f"  ignoring {len(extras)} surplus segment(s) outside the current plan")
     listing = stem.parent / f"{stem.name}-segments.txt"
     listing.write_text("".join(f"file '{p.name}'\n" for p in parts))
-    dest = stem.with_suffix(SUFFIX[codec])
+    dest = stem.with_suffix(SUFFIX[args.codec])
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
          "-i", str(listing), "-c", "copy", str(dest)],
         check=True,
     )  # fmt: skip
+    receipt = concat_identity(args, parts)
+    receipt["file_sha256"] = file_sha256(dest)
+    concat_receipt_path(dest).write_text(json.dumps(receipt, indent=2) + "\n")
     print(f"  {dest.name} ← {len(parts)} segments")
     return dest
 
@@ -366,6 +408,7 @@ def main() -> int:
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--quiet", dest="progress", action="store_false")
     ap.add_argument("--concat", action="store_true", help="stitch existing segments and exit")
+    ap.add_argument("--check-concat", action="store_true", help="validate the planned segments and concatenated receipt")
     ap.add_argument(
         "--resume",
         action="store_true",
@@ -383,9 +426,8 @@ def main() -> int:
     stem_seed = args.seed if args.seed is not None else "default"
     stream_suffix = f"-stream-{args.stream}" if args.stream else ""
     stem = args.out / f"{args.window}-{stem_seed}{stream_suffix}"
-    if args.concat:
-        concat(stem, args.codec)
-        return 0
+    if (args.concat or args.check_concat) and args.segment is not None:
+        ap.error("--concat/--check-concat cannot be combined with --segment")
 
     if args.determinism:
         seg = args.segment if args.segment is not None else 3
@@ -417,8 +459,23 @@ def main() -> int:
         segments = list(range(math.ceil(total / args.segment_frames)))
         print(f"{args.window}: {total} frames at {fps} fps → {len(segments)} segments\n")
 
-    for seg in segments:
-        dest = stem.parent / f"{stem.name}-seg-{seg:03d}{SUFFIX[args.codec]}"
+    parts = segment_paths(stem, args.codec, segments)
+    if args.concat or args.check_concat:
+        assert total is not None
+        invalid = []
+        for segment, part in zip(segments, parts, strict=True):
+            want = expected_frames(segment, total, args.segment_frames)
+            if not complete(part, want, segment_identity(args, segment, want)):
+                invalid.append(part.name)
+        if invalid:
+            print("invalid planned segment(s): " + ", ".join(invalid), file=sys.stderr)
+            return 1
+        if args.check_concat:
+            return 0 if concat_complete(stem, args, parts) else 1
+        concat(stem, args, parts)
+        return 0
+
+    for seg, dest in zip(segments, parts, strict=True):
         want = expected_frames(seg, total, args.segment_frames) if total is not None else 0
         expected = segment_identity(args, seg, want) if total is not None else {}
         if args.resume and total is not None and complete(dest, want, expected):
@@ -435,7 +492,7 @@ def main() -> int:
         )
 
     if len(segments) > 1:
-        concat(stem, args.codec)
+        concat(stem, args, parts)
     return 0
 
 

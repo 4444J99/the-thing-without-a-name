@@ -193,9 +193,14 @@ export function arrive(fragment = globalThis.location?.hash ?? "") {
  *   href(river, { at })      a moment, cited — the frame that reproduces exactly
  *                            what you saw, wherever they open it
  */
-export function href(river, { at = null } = {}) {
+export function href(river, { at = null, mode = null } = {}) {
   const base = (globalThis.location?.href ?? "").split("#")[0];
-  return at === null
+  const link = at === null
     ? `${base}#s=${river.seed}&e=${river.epoch}&u=${river.stream ?? 0}`
     : `${base}#s=${river.seed}&t=${at.toFixed(2)}&u=${river.stream ?? 0}`;
+  return mode === "free" ? `${link}&p=free` : link;
+}
+
+export function modeOf(fragment = globalThis.location?.hash ?? "") {
+  return new URLSearchParams(fragment.replace(/^#/, "")).get("p") === "free" ? "free" : "program";
 }

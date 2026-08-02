@@ -401,7 +401,7 @@ ARRIVAL = APP / "arrival.js"
 # and can be held to the same standard as the engine.
 ARRIVAL_PROBE = """
 import { readFileSync } from "node:fs";
-import { arrive, href, mint, now, platform, riverOf, streamOf } from "%(arrival)s";
+import { arrive, href, mint, modeOf, now, platform, riverOf, streamOf } from "%(arrival)s";
 import { passageAt } from "%(program)s";
 import { state } from "%(clock)s";
 
@@ -424,7 +424,8 @@ const links =
   cited.seed === 42 && Math.abs(now(cited) - 10) < 1e-9 && cited.shifted &&
   bare.seed === 42 && Math.abs(now(bare)) < 1e-9 &&
   fresh.minted && fresh.seed === riverOf(0xabcdef01, CLOCK) &&
-  citedFresh.stream === fresh.stream && Math.abs(now(citedFresh) - 10) < 1e-9;
+  citedFresh.stream === fresh.stream && Math.abs(now(citedFresh) - 10) < 1e-9 &&
+  modeOf(href(fresh, {mode: "free"})) === "free";
 
 // ── a named river ─────────────────────────────────────────────────────────────
 // `#name=` is the cheap slice of "put yourself into it": the seed comes from
@@ -733,7 +734,8 @@ def check_bank() -> None:
         import yaml
 
         register = yaml.safe_load(REGISTER.read_text()) or {}
-        expected = (((register.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
+        audio = ((register.get("package") or {}).get("audio") or {})
+        expected = {name: (audio.get("source_sha256") or {}).get(name, "") for name in audio.get("source_recordings") or []}
     except (ImportError, OSError):
         pass
     audit = audit_bank(index, expected)

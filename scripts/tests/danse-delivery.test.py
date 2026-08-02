@@ -107,6 +107,29 @@ class DeliveryContractTest(unittest.TestCase):
                 dest.write_bytes(b"different segment")
                 self.assertFalse(OFFLINE.complete(dest, 30, expected))
 
+    def test_concat_uses_only_explicitly_planned_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stem = root / "passage-default"
+            args = SimpleNamespace(codec="prores")
+            parts = OFFLINE.segment_paths(stem, args.codec, [0, 1])
+            for part in [*parts, root / "passage-default-seg-002.mov"]:
+                part.write_bytes(part.name.encode())
+                OFFLINE.segment_receipt_path(part).write_text(json.dumps({"name": part.name}))
+
+            def fake_concat(*_args, **_kwargs):
+                stem.with_suffix(".mov").write_bytes(b"planned concat")
+                return subprocess.CompletedProcess([], 0)
+
+            with mock.patch.object(OFFLINE.subprocess, "run", side_effect=fake_concat):
+                OFFLINE.concat(stem, args, parts)
+            listing = (root / "passage-default-segments.txt").read_text()
+            self.assertIn(parts[0].name, listing)
+            self.assertIn(parts[1].name, listing)
+            self.assertNotIn("seg-002", listing)
+            receipt = json.loads(OFFLINE.concat_receipt_path(stem.with_suffix(".mov")).read_text())
+            self.assertEqual([item["name"] for item in receipt["segments"]], [part.name for part in parts])
+
     def test_query_and_exact_tier_contracts_fail_closed(self) -> None:
         script = """
           import { numericParam } from './engine/query.js';
@@ -157,8 +180,10 @@ class DeliveryContractTest(unittest.TestCase):
             pose.write_text("{}")
             items = [("IMG_1570", raw, mask, pose)]
             first = CORPUS_CONTRACT.room_cache_key(items)
+            source_receipt = CORPUS_CONTRACT.source_set_receipt([raw])
             raw.write_bytes(b"corrected original")
             self.assertNotEqual(first, CORPUS_CONTRACT.room_cache_key(items))
+            self.assertNotEqual(source_receipt, CORPUS_CONTRACT.source_set_receipt([raw]))
 
     def test_pipeline_inputs_fail_closed_before_partial_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -365,6 +390,24 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertNotIn("Python module numpy", output.getvalue())
             self.assertNotIn("grain bank", output.getvalue())
 
+    def test_cached_passage_picture_requires_current_concat_receipt(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        span = {**SPAN, "duration": 300.0, "t0": 0.0}
+        info = {"seconds": 300.0, "width": 3840, "height": 2160, "fps": 30}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(DELIVER, "OUT", Path(tmp)):
+            dest = Path(tmp) / "passage-default.mov"
+            dest.write_bytes(b"cached picture")
+            completed = subprocess.CompletedProcess([], 0)
+            stale = subprocess.CompletedProcess([], 1)
+            with (
+                mock.patch.object(DELIVER, "query_capture_span", return_value=span),
+                mock.patch.object(DELIVER, "probe_required", return_value=info),
+                mock.patch.object(DELIVER.subprocess, "run", side_effect=[stale, completed]) as run,
+            ):
+                self.assertEqual(DELIVER.passage_picture(program, "film", False), dest)
+            self.assertIn("--check-concat", run.call_args_list[0].args[0])
+            self.assertIn("--resume", run.call_args_list[1].args[0])
+
     def test_preflight_reuses_manifested_origin_without_raw_source(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
@@ -549,7 +592,8 @@ class DeliveryContractTest(unittest.TestCase):
             }
             payload["fingerprint"] = BANK_CONTRACT.bank_fingerprint(payload)
             index.write_text(json.dumps(payload))
-            missing = DELIVER.audit_bank(index, sources)
+            expected_source_digests = {row["name"]: row["sha256"] for row in source_rows}
+            missing = DELIVER.audit_bank(index, expected_source_digests)
             self.assertEqual(len(missing.payload_errors), len(grains))
             for grain in grains:
                 with wave.open(str(bank_root / f"{grain['id']}.wav"), "wb") as payload:
@@ -566,7 +610,9 @@ class DeliveryContractTest(unittest.TestCase):
             }
             payload["fingerprint"] = BANK_CONTRACT.bank_fingerprint(payload)
             index.write_text(json.dumps(payload))
-            self.assertTrue(DELIVER.audit_bank(index, sources).valid)
+            self.assertTrue(DELIVER.audit_bank(index, expected_source_digests).valid)
+            stale_register = {**expected_source_digests, sources[0]: source_rows[1]["sha256"]}
+            self.assertIn("do not match", DELIVER.audit_bank(index, stale_register).provenance_errors[-1])
 
             bad_rate = bank_root / f"{grains[0]['id']}.wav"
             with wave.open(str(bad_rate), "wb") as payload:
@@ -574,14 +620,17 @@ class DeliveryContractTest(unittest.TestCase):
                 payload.setsampwidth(2)
                 payload.setframerate(44_100)
                 payload.writeframes(b"\0\0")
-            self.assertIn("sample rate 44100", DELIVER.audit_bank(index, sources).payload_errors[0])
+            self.assertIn("sample rate 44100", DELIVER.audit_bank(index, expected_source_digests).payload_errors[0])
 
             with wave.open(str(bad_rate), "wb") as payload:
                 payload.setnchannels(1)
                 payload.setsampwidth(2)
                 payload.setframerate(48_000)
                 payload.writeframes(b"\1\0")
-            self.assertIn(f"changed {grains[0]['id']}.wav", DELIVER.audit_bank(index, sources).payload_errors)
+            self.assertIn(
+                f"changed {grains[0]['id']}.wav",
+                DELIVER.audit_bank(index, expected_source_digests).payload_errors,
+            )
 
     def test_malformed_cached_receipts_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

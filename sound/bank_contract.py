@@ -100,7 +100,7 @@ class BankAudit:
         return "; ".join(errors[:4]) if errors else f"{self.grain_count} grains from {len(self.sources)} sources"
 
 
-def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None = None) -> BankAudit:
+def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | dict[str, str] | None = None) -> BankAudit:
     """Return every structural, provenance, and payload failure in one pass."""
     if not index.is_file():
         return BankAudit(index_errors=(f"missing {index}",))
@@ -143,8 +143,19 @@ def audit_bank(index: Path, expected_sources: list[str] | tuple[str, ...] | None
         for row in source_rows
     ):
         provenance.append("source content digests are missing or malformed")
-    if expected_sources is not None and sorted(sources) != sorted(expected_sources):
-        provenance.append("bank sources do not match the submission register")
+    if expected_sources is not None:
+        expected_names = list(expected_sources)
+        if sorted(sources) != sorted(expected_names):
+            provenance.append("bank sources do not match the submission register")
+        if isinstance(expected_sources, dict):
+            source_digests = {
+                row.get("name"): str(row.get("sha256", "")).lower() for row in source_rows if isinstance(row, dict)
+            }
+            stale = [
+                name for name, digest in expected_sources.items() if source_digests.get(name) != str(digest).lower()
+            ]
+            if stale:
+                provenance.append("bank source digest(s) do not match the submission register: " + ", ".join(stale))
 
     grains = data.get("grains")
     if not isinstance(grains, list) or not grains:

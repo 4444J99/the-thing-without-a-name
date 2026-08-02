@@ -66,10 +66,9 @@ import { Renderer } from "./engine/renderer.js";
 //
 // There is no `t` variable in this file. Every navigation — hold, jump, cite —
 // is a freeze or an epoch shift, so the page has no clock of its own to drift.
-const params = new URLSearchParams(location.hash.slice(1));
 let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
-let program = params.get("p") === "free" ? null : await Program.load();
+let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
 
 const canvas = document.getElementById("stage");
 const el = (id) => document.getElementById(id);
@@ -128,7 +127,7 @@ requestAnimationFrame(frame);
 // all: a position reached for debugging must not overwrite the river you keep.
 setInterval(() => {
   if (shifted) return;
-  history.replaceState(null, "", Arrival.href(river) + (program ? "" : "&p=free"));
+  history.replaceState(null, "", Arrival.href(river, { mode: program ? null : "free" }));
 }, 1000);
 
 // Someone pasted a river into the address bar of a page that is already open.
@@ -136,8 +135,11 @@ setInterval(() => {
 // so without this the link would silently do nothing, which is the one way a
 // shared river can fail while looking like it worked. `replaceState` above does
 // not fire this event, so the page cannot chase its own tail.
-addEventListener("hashchange", () => {
+addEventListener("hashchange", async () => {
   river = Arrival.arrive(location.hash);
+  const mode = Arrival.modeOf(location.hash);
+  if (mode === "free") program = null;
+  else if (!program) program = await Program.load();
   shifted = river.shifted;
   heldAt = null;
 });
@@ -165,7 +167,7 @@ addEventListener("keydown", async (e) => {
   // Hand someone your river. They land in the same water, in sync, having
   // exchanged nothing with you but the river identity in the link.
   if (e.key === "s") {
-    const link = Arrival.href(river);
+    const link = Arrival.href(river, { mode: program ? null : "free" });
     try {
       await navigator.clipboard.writeText(link);
       flash(`copied — ${hex(river.seed)} · your river, live`);

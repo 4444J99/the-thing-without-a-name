@@ -46,6 +46,10 @@ def source_digest(path: Path) -> bytes:
     return h.digest()
 
 
+def source_set_receipt(paths) -> list[dict[str, str]]:
+    return [{"name": path.name, "sha256": source_digest(path).hex()} for path in paths]
+
+
 def room_cache_key(items) -> str:
     """Bind the decoded stack to every original and matte byte."""
     h = hashlib.sha256()

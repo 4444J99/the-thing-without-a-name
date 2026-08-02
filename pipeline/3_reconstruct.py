@@ -53,7 +53,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from corpus_contract import block_shape_error
+from corpus_contract import block_shape_error, source_set_receipt
 
 # Block edge in composite pixels. This is the granularity of the cut SEARCH; it is not the
 # final edge precision, because REFINE moves every chosen cut to the exact pixel.
@@ -76,18 +76,24 @@ def load_stack(frames_dir: Path, size: tuple[int, int], cache: Path) -> tuple[np
     Cached to disk: decoding 162 eight-megapixel JPEGs is the slowest step, and this script
     is meant to be re-run while tuning, so paying it once matters.
     """
-    names = sorted(p.name for p in frames_dir.iterdir() if p.suffix.upper() in {".JPG", ".JPEG", ".PNG"})
+    paths = sorted(p for p in frames_dir.iterdir() if p.suffix.upper() in {".JPG", ".JPEG", ".PNG"})
+    names = [path.name for path in paths]
+    sources = source_set_receipt(paths)
+    receipt = cache.with_suffix(".sources.json")
     if cache.exists():
-        blob = np.load(cache, allow_pickle=False)
-        cached = list(np.load(cache.with_suffix(".names.npy"), allow_pickle=True))
-        if cached == names and blob.shape[1:3] == (size[1], size[0]):
-            return blob, names
+        try:
+            blob = np.load(cache, allow_pickle=False)
+            cached = json.loads(receipt.read_text())
+            if cached == sources and blob.shape[1:3] == (size[1], size[0]):
+                return blob, names
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
 
     w, h = size
     out = np.empty((len(names), h, w, 3), dtype=np.uint8)
     t0 = time.time()
-    for i, n in enumerate(names):
-        im = Image.open(frames_dir / n).convert("RGB")
+    for i, path in enumerate(paths):
+        im = Image.open(path).convert("RGB")
         if im.size != size:
             im = im.resize(size, Image.LANCZOS)
         out[i] = np.asarray(im)
@@ -95,7 +101,7 @@ def load_stack(frames_dir: Path, size: tuple[int, int], cache: Path) -> tuple[np
             print(f"  decoded {i + 1}/{len(names)}  ({time.time() - t0:.0f}s)", file=sys.stderr)
     cache.parent.mkdir(parents=True, exist_ok=True)
     np.save(cache, out)
-    np.save(cache.with_suffix(".names.npy"), np.array(names, dtype=object))
+    receipt.write_text(json.dumps(sources, indent=2) + "\n")
     return out, names
 
 

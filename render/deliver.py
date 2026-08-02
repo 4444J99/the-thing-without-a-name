@@ -212,9 +212,16 @@ def registered_audio_sources() -> list[str]:
     return list((((register.get("package") or {}).get("audio") or {}).get("source_recordings") or []))
 
 
+def registered_audio_source_digests() -> dict[str, str]:
+    register = yaml.safe_load(REGISTER.read_text()) or {}
+    audio = ((register.get("package") or {}).get("audio") or {})
+    declared = audio.get("source_sha256") or {}
+    return {name: declared.get(name, "") for name in audio.get("source_recordings") or []}
+
+
 def bank_provenance() -> dict | None:
     """Current usable grain-bank identity, bound to the registered sources."""
-    audit = audit_bank(BANK, registered_audio_sources())
+    audit = audit_bank(BANK, registered_audio_source_digests())
     if not audit.valid or audit.fingerprint is None:
         return None
     return {"bank_fingerprint": audit.fingerprint, "sources": list(audit.sources)}
@@ -435,7 +442,7 @@ def preflight(
     if need_bank:
         for module in ("numpy", "scipy"):
             add(importlib.util.find_spec(module) is not None, f"Python module {module}", "score dependency")
-        declared = registered_audio_sources()
+        declared = registered_audio_source_digests()
         audit = audit_bank(BANK, declared)
         add(BANK.is_file(), "grain bank", str(BANK))
         add(
@@ -488,31 +495,31 @@ def passage_picture(program: dict, tier: str, force: bool, start: float = 0.0) -
     cap = captures(program)["passage"]
     fps = cap.get("fps", 30)
     want = int(round(span["duration"] * fps))
+    render_command = [
+        sys.executable,
+        str(RENDER),
+        "--capture",
+        "passage",
+        "--start",
+        str(span["t0"]),
+        "--tier",
+        tier,
+        "--codec",
+        "prores",
+        "--quiet",
+        "--out",
+        str(OUT),
+    ]
     if not force:
         got = probe_required(dest) if dest.is_file() else None
         if got and abs(got["seconds"] * fps - want) < 2:
-            print(f"  passage picture · kept · {got['width']}×{got['height']} @{got['fps']} · {got['seconds']:.1f}s")
-            return dest
+            checked = subprocess.run([*render_command, "--check-concat"], capture_output=True, text=True, check=False)
+            if checked.returncode == 0:
+                print(f"  passage picture · kept · {got['width']}×{got['height']} @{got['fps']} · {got['seconds']:.1f}s")
+                return dest
     print("  passage picture · rendering (this is the long one)")
     done = subprocess.run(
-        # fmt: off
-        [
-            sys.executable,
-            str(RENDER),
-            "--capture",
-            "passage",
-            "--start",
-            str(span["t0"]),
-            "--tier",
-            tier,
-            "--codec",
-            "prores",
-            "--resume",
-            "--quiet",
-            "--out",
-            str(OUT),
-        ],
-        # fmt: on
+        [*render_command, "--resume"],
         check=False,
     )
     if done.returncode != 0 or not dest.is_file():
@@ -527,7 +534,7 @@ def passage_sound(force: bool, start: float = 0.0) -> tuple[Path, dict]:
     if not force:
         got = probe_required(dest) if dest.is_file() else None
         provenance = score_provenance(dest, span) if got else None
-        if got and provenance and abs(got["seconds"] - span["duration"]) < 0.1:
+        if got and provenance and provenance == bank_provenance() and abs(got["seconds"] - span["duration"]) < 0.1:
             print(f"  passage score · kept · {got['seconds']:.1f}s")
             return dest, provenance
     provenance = bank_provenance()
