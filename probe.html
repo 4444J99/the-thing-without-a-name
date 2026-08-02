@@ -1,0 +1,425 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>danse — projection probe</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<!--
+  The go/no-go.
+
+  One claim carries the entire design: that a photograph can be hung on planes at
+  unrelated angles and depths and still read as ONE room, because every fragment
+  fetches its pixels through a single shared projector matrix rather than through
+  its own surface.
+
+  If that is false, the piece is a pile of floating cutouts and the architecture has
+  to change before anything else is built. So it is tested first, against the real
+  256-rectangle score solved from the 2017 composite — not a toy.
+
+  The photographs are not wired in yet (tier encode is a later stage), so the
+  projector casts a stand-in plate built from the room's MEASURED architecture: the
+  poster rail at 0.489 and the carpet line at 0.802 of frame height, taken from
+  IMG_1570, the one frame of 162 with no dancer in it. Those two lines are the
+  entire experiment — if they stay straight across 256 tumbling rectangles, the
+  claim holds.
+-->
+<style>
+  :root { color-scheme: dark; --ink: #e8e6e1; --dim: #8b8781; --rule: #2a2724; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: #0b0a09; color: var(--ink);
+    font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+  body { display: grid; grid-template-columns: 1fr 268px; }
+  #stage { width: 100%; height: 100%; display: block; background: #000; }
+  aside { border-left: 1px solid var(--rule); padding: 18px 16px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  p  { margin: 0; color: var(--dim); font-size: 11.5px; }
+  label { display: block; }
+  .row { display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .row b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; margin: 4px 0 0; accent-color: #d8cfc0; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink); background: #16140f; border: 1px solid var(--rule);
+    padding: 5px 9px; border-radius: 3px; cursor: pointer; }
+  button[aria-pressed=true] { background: #d8cfc0; color: #0b0a09; border-color: #d8cfc0; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 2px 0; width: 100%; }
+  #verdict { padding: 9px 10px; border-radius: 3px; border: 1px solid var(--rule);
+    font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+  #verdict.pass { border-color: #2f6b3f; background: #101c14; color: #a6e6b8; }
+  #verdict.fail { border-color: #7a2f2f; background: #1c1010; color: #f0a8a8; }
+</style>
+
+<canvas id="stage"></canvas>
+<aside>
+  <h1>Projection probe</h1>
+  <p>256 rectangles solved from the 2017 composite, cast through one projector standing
+     where the camera stood. The stand-in plate carries the room's measured lines.</p>
+  <hr />
+
+  <label>
+    <span class="row">Camera divergence <b id="v-div">0.00</b></span>
+    <input type="range" id="divergence" min="0" max="1" step="0.001" value="0" />
+  </label>
+  <p>0 = standing exactly where the camera stood in 2017. The composite returns
+     <em>whatever</em> the planes are doing.</p>
+
+  <label>
+    <span class="row">Orbit <b id="v-az">0°</b></span>
+    <input type="range" id="azimuth" min="-80" max="80" step="0.5" value="34" />
+  </label>
+  <label>
+    <span class="row">Elevation <b id="v-el">0°</b></span>
+    <input type="range" id="elevation" min="-45" max="45" step="0.5" value="12" />
+  </label>
+  <hr />
+
+  <label>
+    <span class="row">Spread <b id="v-spread">0.00</b></span>
+    <input type="range" id="spread" min="0" max="1" step="0.001" value="0" />
+  </label>
+  <p>0 = the flat picture plane. Up = the arrangement: angles, depths,
+     transparencies.</p>
+
+  <label>
+    <span class="row">projK <b id="v-projk">0.00</b></span>
+    <input type="range" id="projk" min="0" max="1" step="0.001" value="0" />
+  </label>
+  <p>0 = each plane is a <em>window</em> onto the room. 1 = each plane <em>carries</em>
+     its assigned crop. At home the two are identical — that is the self-test.</p>
+  <hr />
+
+  <div class="toggles">
+    <button id="t-rulers" aria-pressed="false">Rulers</button>
+    <button id="t-prov" aria-pressed="false">Provenance</button>
+    <button id="t-treat" aria-pressed="true">2017 treatment</button>
+    <button id="t-spin" aria-pressed="false">Drift</button>
+  </div>
+  <button id="home">Return to 1&nbsp;·&nbsp;the 2017 state</button>
+  <hr />
+  <div id="verdict">running self-test…</div>
+</aside>
+
+<script type="module">
+import * as GL from "./engine/gl.js";
+import { perspective, multiply, compose } from "./engine/mat4.js";
+import * as Room from "./engine/room.js";
+import { hash } from "./engine/rng.js";
+
+const SEED = 20170620;
+
+// ── the stand-in plate ──────────────────────────────────────────────────────
+// Not artwork and not a texture atlas — an instrument. It contains the room's two
+// measured horizontals and nothing that could fake continuity. Deliberately no
+// figure: this project synthesises no imagery, and a fabricated dancer would be a
+// bad precedent even in a test harness.
+function roomPlate(rulers) {
+  const W = 1024, H = 768;
+  const c = Object.assign(document.createElement("canvas"), { width: W, height: H });
+  const g = c.getContext("2d");
+  const top = Room.POSTER_TOP * H, bottom = Room.POSTER_BOTTOM * H;
+
+  const wall = g.createLinearGradient(0, 0, 0, top);
+  wall.addColorStop(0, "#f2efe9"); wall.addColorStop(1, "#ddd8ce");
+  g.fillStyle = wall; g.fillRect(0, 0, W, top);
+
+  g.fillStyle = "#6b5f52"; g.fillRect(0, bottom, W, H - bottom);   // carpet
+  g.fillStyle = "#3a332c"; g.fillRect(0, top, W, bottom - top);    // poster shadow
+
+  // A row of framed posters standing on the carpet — the vertical structure that
+  // makes horizontal continuity checkable in both axes at once.
+  const n = 5, pad = 14, w = (W - pad * (n + 1)) / n;
+  for (let i = 0; i < n; i++) {
+    const x = pad + i * (w + pad), y = top + 10, h = bottom - top - 18;
+    g.fillStyle = "#161310"; g.fillRect(x, y, w, h);
+    g.fillStyle = "#c8bda8"; g.fillRect(x + 7, y + 7, w - 14, h - 14);
+    g.fillStyle = ["#7d2b24", "#2b4a6b", "#6b5a24", "#3d2b52", "#255245"][i];
+    g.fillRect(x + 18, y + 18, w - 36, h - 46);
+    g.fillStyle = "#efe9dc"; g.fillRect(x + 18, y + h - 24, w - 36, 8);
+  }
+
+  // Wall tooth, so a plane sampling flat colour can't hide a seam.
+  const px = g.getImageData(0, 0, W, top | 0);
+  for (let i = 0; i < px.data.length; i += 4) {
+    const n2 = (hash(i, 7) % 255) / 255 - 0.5;
+    px.data[i] += n2 * 9; px.data[i + 1] += n2 * 9; px.data[i + 2] += n2 * 9;
+  }
+  g.putImageData(px, 0, 0);
+
+  if (rulers) {
+    // The measuring instrument: full-width and full-height lines at known
+    // fractions. Any break in one is a failure of the projection, visible to the
+    // pixel — this is what turns "looks right" into "is right".
+    g.lineWidth = 1.5;
+    g.strokeStyle = "rgba(0,229,255,.85)";
+    for (const f of [Room.POSTER_TOP, Room.POSTER_BOTTOM]) {
+      g.beginPath(); g.moveTo(0, f * H); g.lineTo(W, f * H); g.stroke();
+    }
+    g.strokeStyle = "rgba(255,64,160,.7)";
+    for (const f of [0.25, 0.5, 0.75]) {
+      g.beginPath(); g.moveTo(f * W, 0); g.lineTo(f * W, H); g.stroke();
+    }
+  }
+  return c;
+}
+
+// ── shaders ─────────────────────────────────────────────────────────────────
+const VERT = `#version 300 es
+layout(location = 0) in vec2 aPos;
+uniform mat4 uModel, uViewProj, uProjectorVP;
+uniform vec4 uRectUV;
+out vec4 vProjClip;
+out vec2 vLocalUV;
+void main() {
+  vec4 world = uModel * vec4(aPos, 0.0, 1.0);
+  gl_Position  = uViewProj * world;
+  vProjClip    = uProjectorVP * world;              // the shared address space
+  vLocalUV     = mix(uRectUV.xy, uRectUV.zw, aPos * 0.5 + 0.5);
+}`;
+
+const FRAG = `#version 300 es
+precision highp float;
+in vec4 vProjClip;
+in vec2 vLocalUV;
+uniform sampler2D uPlate;
+uniform vec3  uGain0, uGain1, uLift, uProv;
+uniform float uProjK, uOpacity, uLayers, uTreat, uProvK;
+out vec4 fragColor;
+
+void main() {
+  // Behind the projector the perspective divide mirrors the image back through the
+  // origin. Without this guard, a plane that swings past the projector plane
+  // acquires a reversed ghost of the room.
+  if (vProjClip.w <= 0.0) discard;
+
+  vec2 projUV  = (vProjClip.xy / vProjClip.w) * 0.5 + 0.5;
+  vec2 uv      = mix(projUV, vLocalUV, uProjK);
+
+  // A window shows nothing where the room isn't. Softened over a few thousandths so
+  // the boundary is a fade rather than a stair.
+  vec2 edge  = smoothstep(0.0, 0.004, uv) * smoothstep(0.0, 0.004, 1.0 - uv);
+  float mask = edge.x * edge.y;
+  if (mask <= 0.0) discard;
+
+  vec3 c = uGain0 * texture(uPlate, uv).rgb;
+  if (uLayers > 1.5) c += uGain1 * texture(uPlate, uv).rgb;   // the second frame
+  c += uLift;
+
+  // Untreated view: undo the score's gain/lift so the raw room is visible.
+  vec3 raw = texture(uPlate, uv).rgb;
+  c = mix(raw, c, uTreat);
+  c = mix(c, uProv, uProvK);
+
+  fragColor = vec4(c, uOpacity * mask);
+}`;
+
+// ── setup ───────────────────────────────────────────────────────────────────
+const canvas = document.getElementById("stage");
+const gl = GL.context(canvas);
+const prog = GL.program(gl, VERT, FRAG);
+const u = GL.uniforms(gl, prog);
+const vao = GL.unitQuad(gl);
+
+const score = await fetch("./corpus/score-2017.json").then((r) => r.json());
+const tiles = score.tiles.map((t) => ({
+  id: t.id,
+  rect: t.rect,
+  uv: Room.rectUV(t.rect),
+  gain0: t.layers[0].gain,
+  gain1: t.layers[1] ? t.layers[1].gain : [0, 0, 0],
+  layers: t.layers.length,
+  lift: t.lift,
+  // Golden-ratio hue per source frame — the same colouring as the provenance map,
+  // so this view and that PNG are the same statement in two media.
+  prov: hsl(((t.layers[0].src_index * 0.6180339887) % 1) * 360, 0.62, 0.55),
+}));
+
+function hsl(h, s, l) {
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(Math.min(k - 3, 9 - k), 1));
+  };
+  return [f(0), f(8), f(4)];
+}
+
+let plate = GL.texture(gl, roomPlate(false));
+const PROJ = Room.projector();
+
+const ui = {
+  divergence: 0, azimuth: 34, elevation: 12, spread: 0, projk: 0,
+  rulers: false, prov: false, treat: true, spin: false,
+};
+
+for (const id of ["divergence", "azimuth", "elevation", "spread", "projk"]) {
+  const el = document.getElementById(id);
+  el.addEventListener("input", () => { ui[id] = +el.value; sync(); });
+}
+const toggle = (id, key, after) => {
+  const b = document.getElementById(id);
+  b.addEventListener("click", () => {
+    ui[key] = !ui[key];
+    b.setAttribute("aria-pressed", String(ui[key]));
+    if (after) after();
+  });
+};
+toggle("t-rulers", "rulers", () => { gl.deleteTexture(plate); plate = GL.texture(gl, roomPlate(ui.rulers)); });
+toggle("t-prov", "prov");
+toggle("t-treat", "treat");
+toggle("t-spin", "spin");
+document.getElementById("home").addEventListener("click", () => {
+  for (const [id, key, v] of [["divergence","divergence",0],["spread","spread",0],["projk","projk",0]]) {
+    document.getElementById(id).value = v; ui[key] = v;
+  }
+  ui.spin = false; document.getElementById("t-spin").setAttribute("aria-pressed", "false");
+  sync();
+});
+
+function sync() {
+  document.getElementById("v-div").textContent = ui.divergence.toFixed(2);
+  document.getElementById("v-az").textContent = ui.azimuth.toFixed(0) + "°";
+  document.getElementById("v-el").textContent = ui.elevation.toFixed(0) + "°";
+  document.getElementById("v-spread").textContent = ui.spread.toFixed(2);
+  document.getElementById("v-projk").textContent = ui.projk.toFixed(2);
+}
+sync();
+
+// ── draw ────────────────────────────────────────────────────────────────────
+/** Letterbox to 4:3 so divergence 0 reproduces the composite at its true framing
+ *  rather than a crop of it. Final delivery aspect is a later decision. */
+function viewportBox() {
+  const { width: W, height: H } = canvas;
+  const w = Math.min(W, H * Room.HALF_W / Room.HALF_H);
+  const h = w * Room.HALF_H / Room.HALF_W;
+  return [Math.round((W - w) / 2), Math.round((H - h) / 2), Math.round(w), Math.round(h)];
+}
+
+function draw(t = 0) {
+  GL.resize(gl, canvas);
+  const [vx, vy, vw, vh] = viewportBox();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.043, 0.039, 0.035, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.viewport(vx, vy, vw, vh);
+
+  const az = (ui.azimuth * Math.PI) / 180 + (ui.spin ? Math.sin(t * 0.00013) * 0.35 : 0);
+  const el = (ui.elevation * Math.PI) / 180;
+  const cam = Room.camera(ui.divergence, az, el);
+  const viewProj = multiply(perspective(PROJ.fovy, PROJ.aspect, cam.near, cam.far), cam.view);
+
+  gl.useProgram(prog);
+  gl.bindVertexArray(vao);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, plate);
+  gl.uniform1i(u.uPlate, 0);
+  gl.uniformMatrix4fv(u.uViewProj, false, viewProj);
+  gl.uniformMatrix4fv(u.uProjectorVP, false, PROJ.viewProj);
+  gl.uniform1f(u.uProjK, ui.projk);
+  gl.uniform1f(u.uTreat, ui.treat ? 1 : 0);
+  gl.uniform1f(u.uProvK, ui.prov ? 0.85 : 0);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(false);              // translucent planes must not occlude each other
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  // Back-to-front, because alpha blending is order-dependent and the whole point of
+  // the arrangement is that you see through the near planes to the far ones.
+  const placed = tiles.map((tile) => {
+    const p = Room.scatter(tile.rect, tile.id, SEED, ui.spread);
+    const [x, y, z] = p.position;
+    return { tile, p, zv: cam.view[2] * x + cam.view[6] * y + cam.view[10] * z + cam.view[14] };
+  });
+  placed.sort((a, b) => a.zv - b.zv);
+
+  for (const { tile, p } of placed) {
+    gl.uniformMatrix4fv(u.uModel, false, compose(p.position, p.rotation, p.scale));
+    gl.uniform4fv(u.uRectUV, tile.uv);
+    gl.uniform3fv(u.uGain0, tile.gain0);
+    gl.uniform3fv(u.uGain1, tile.gain1);
+    gl.uniform3fv(u.uLift, tile.lift);
+    gl.uniform3fv(u.uProv, tile.prov);
+    gl.uniform1f(u.uLayers, tile.layers);
+    gl.uniform1f(u.uOpacity, p.opacity);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  gl.depthMask(true);
+  requestAnimationFrame(draw);
+}
+
+// ── the self-test ───────────────────────────────────────────────────────────
+// The architecture makes a falsifiable numerical claim: at the home position, the
+// WINDOW path and the CARRIED-PICTURE path resolve to the same texture coordinate,
+// because a tile's rect IS its share of the projector frustum. So sweeping projK at
+// spread 0 must change nothing. If it does, the placement maths and the projector
+// disagree, and every downstream continuity guarantee is void.
+function selfTest() {
+  const saved = { ...ui };
+  Object.assign(ui, { divergence: 0, spread: 0, rulers: false, prov: false, spin: false });
+  const [vx, vy, vw, vh] = viewportBox();
+  const grab = (k) => {
+    ui.projk = k;
+    drawOnce();
+    const px = new Uint8Array(vw * vh * 4);
+    gl.readPixels(vx, vy, vw, vh, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return px;
+  };
+  const a = grab(0), b = grab(1);
+  let worst = 0, differing = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = Math.abs(a[i] - b[i]);
+    if (d > 0) differing++;
+    if (d > worst) worst = d;
+  }
+  Object.assign(ui, saved);
+
+  const el = document.getElementById("verdict");
+  // One 8-bit level of slack: the two paths reach the same coordinate by different
+  // float routes, and the divide is not bit-exact.
+  const pass = worst <= 1;
+  el.className = pass ? "pass" : "fail";
+  el.textContent = pass
+    ? `SELF-TEST PASS\nwindow ≡ carried picture at home\n${tiles.length} tiles · max Δ ${worst}/255 · ${(100 * differing / a.length).toFixed(2)}% of samples differ at all\n\nThe home state is the 2017 composite by construction, not by tuning.`
+    : `SELF-TEST FAIL\nmax Δ ${worst}/255 across ${tiles.length} tiles\nplacement and projector disagree — continuity is not guaranteed`;
+  return pass;
+}
+
+function drawOnce() {
+  GL.resize(gl, canvas);
+  const [vx, vy, vw, vh] = viewportBox();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.043, 0.039, 0.035, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.viewport(vx, vy, vw, vh);
+  const cam = Room.camera(0, 0, 0);
+  const viewProj = multiply(perspective(PROJ.fovy, PROJ.aspect, cam.near, cam.far), cam.view);
+  gl.useProgram(prog);
+  gl.bindVertexArray(vao);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, plate);
+  gl.uniform1i(u.uPlate, 0);
+  gl.uniformMatrix4fv(u.uViewProj, false, viewProj);
+  gl.uniformMatrix4fv(u.uProjectorVP, false, PROJ.viewProj);
+  gl.uniform1f(u.uProjK, ui.projk);
+  gl.uniform1f(u.uTreat, ui.treat ? 1 : 0);
+  gl.uniform1f(u.uProvK, 0);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(false);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  for (const tile of tiles) {
+    const p = Room.scatter(tile.rect, tile.id, SEED, 0);
+    gl.uniformMatrix4fv(u.uModel, false, compose(p.position, p.rotation, p.scale));
+    gl.uniform4fv(u.uRectUV, tile.uv);
+    gl.uniform3fv(u.uGain0, tile.gain0);
+    gl.uniform3fv(u.uGain1, tile.gain1);
+    gl.uniform3fv(u.uLift, tile.lift);
+    gl.uniform3fv(u.uProv, tile.prov);
+    gl.uniform1f(u.uLayers, tile.layers);
+    gl.uniform1f(u.uOpacity, p.opacity);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  gl.depthMask(true);
+  gl.finish();
+}
+
+selfTest();
+requestAnimationFrame(draw);
+window.danse = { tiles, score, selfTest, ui, Room };
+</script>

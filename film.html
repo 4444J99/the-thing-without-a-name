@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>danse · film</title>
+<style>
+  /* No layout, no chrome, no transitions. The canvas is laid out at its exact
+     pixel size so the drawing buffer is the delivery format and nothing is
+     resampled between the engine and the file. */
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<script type="module">
+/* The film harness. Deliberately NOT the live page.
+ *
+ * There is no requestAnimationFrame anywhere in this file, and that is a hard
+ * requirement rather than a preference: the offline renderer drives it one frame
+ * at a time over CDP, and `Runtime.evaluate` times out at 45 seconds against a
+ * page that is also running an animation loop. verify.html learned this the
+ * expensive way.
+ *
+ * Every frame BLOCKS until the plates it needs have arrived at the requested
+ * tier. The live page deliberately draws with the best texture it has right now
+ * and upgrades in the background; a film that did that would render differently
+ * depending on how fast the disk was that minute, which is the one thing the
+ * whole architecture exists to prevent.
+ *
+ *   film.html?s=20170620&window=master&tier=film
+ */
+import * as Corpus from "./engine/corpus.js";
+import * as Program from "./engine/program.js";
+import { frameAt, hex, signature, step } from "./engine/engine.js";
+
+const q = new URLSearchParams(location.search);
+const program = await Program.load(q.get("program") ?? "render/program.json");
+const cap = Program.captureOf(program, q.get("capture") ?? q.get("window") ?? "passage");
+const seed = Number(q.get("s")) || program.seed;
+const tier = q.get("tier") ?? "screen";
+const width = Number(q.get("width")) || cap.w;
+const height = Number(q.get("height")) || cap.h;
+
+/** Where in the river to record, and for how long.
+ *
+ * A capture asks for one of two genuinely different things. `seconds` is a fixed
+ * length — Times Square wants exactly 170 and does not care where it starts.
+ * `passages` is a whole number of passages, which has NO fixed length: it snaps
+ * to a passage boundary and runs to the end of the last one, so the recording
+ * begins where a passage begins and carries its closing signature.
+ */
+const from = Number(q.get("from")) || 0;
+const span = (() => {
+  const fps = Number(q.get("fps")) || cap.fps;
+  if (cap.seconds > 0) return { t0: from, t1: from + cap.seconds, fps };
+  let at = Program.passageAt(program, seed, from);
+  const t0 = at.t0;
+  let t1 = at.t0;
+  for (let k = 0; k < cap.passages; k++) {
+    at = Program.passageAt(program, seed, t1 + 1e-6);
+    t1 = at.t0 + at.seconds;
+  }
+  return { t0, t1, fps };
+})();
+
+const canvas = document.getElementById("stage");
+canvas.style.width = `${width}px`;
+canvas.style.height = `${height}px`;
+
+const corpus = await Corpus.load();
+if (!corpus.manifest.tiers[tier]) {
+  throw new Error(
+    `no "${tier}" tier in the corpus — have ${Object.keys(corpus.manifest.tiers).join(", ")}. ` +
+      `Build it with: pipeline/4_corpus.py --tiers ${tier} --skip-room`,
+  );
+}
+const { Renderer } = await import("./engine/renderer.js");
+const renderer = new Renderer(canvas, corpus);
+await corpus.prime(renderer.gl);
+
+let drawn = 0;
+let missing = 0;
+
+/** Render exactly the frame at t and leave it on the canvas. Resolves only once
+ *  the GPU is done, so the caller may read pixels the instant it returns. */
+async function renderAt(t) {
+  // What this frame will ask for — fetched and decoded BEFORE anything is drawn,
+  // so the frame does not depend on what happened to be cached.
+  const { cast } = step(corpus, seed, t, program);
+  const ids = cast.flatMap((c) => c.layers.map((l) => l.frame)).filter(Boolean);
+  if (ids.length) await corpus.ensure("plates", tier, ids);
+
+  // `cover`, always. A 16:9 master that letterboxes a 4:3 source is a 4:3 film in
+  // a 16:9 container, and a vertical Reel that does it is unwatchable on a phone.
+  const r = frameAt(renderer, corpus, seed, t, program, { quantise: 0, tier, pixelRatio: 1, fit: "cover" });
+  renderer.gl.finish();
+  drawn++;
+  missing += r.missing;
+  return { t, movement: r.state.movement, cut: r.state.cut, planes: r.planes, missing: r.missing };
+}
+
+// What this recording caught. The river has no name; a PASSAGE of it does, and
+// that is what a capture is named by — so a file on disk can be traced back to
+// the exact stretch of the piece it recorded and to nothing else.
+const opening = Program.passageAt(program, seed, span.t0);
+
+window.danseFilm = {
+  program,
+  capture: cap.name,
+  window: span,
+  seed,
+  seedHex: hex(seed),
+  passage: opening.index,
+  passageSeed: opening.seed,
+  passageHex: hex(opening.seed),
+  signature: signature(program, { passageSeed: opening.seed, passage: opening.index }),
+  tier,
+  width,
+  height,
+  renderAt,
+  get stats() {
+    return { drawn, missing };
+  },
+};
+// The renderer polls for this rather than racing the module graph.
+window.danseFilmReady = true;
+</script>
+</body>
+</html>

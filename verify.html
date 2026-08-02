@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>danse — does the flat state reproduce 2017?</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0e0e10; color: #b9b9c4;
+         font: 13px/1.6 ui-monospace, "SF Mono", Menlo, monospace; padding: 22px; }
+  h1 { font: 300 20px/1 ui-serif, Georgia, serif; letter-spacing: .18em; color: #e8e8ee; margin-bottom: 4px; }
+  p.sub { color: #62626e; margin-bottom: 18px; max-width: 62ch; }
+  #verdict { padding: 10px 14px; border-left: 2px solid #2a2a33; margin: 16px 0; white-space: pre-wrap; max-width: 78ch; }
+  #verdict.pass { border-color: #4ea36b; color: #cfe8d8; }
+  #verdict.fail { border-color: #b5544e; color: #f0d3d1; }
+  table { border-collapse: collapse; margin-top: 12px; }
+  th { text-align: left; color: #4d4d57; font-weight: 400; padding: 0 18px 4px 0; }
+  td { padding: 2px 18px 2px 0; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.best td { color: #cfe8d8; }
+  .sheet { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+  figure { margin: 0; width: 340px; }
+  figcaption { color: #62626e; padding: 5px 0; }
+  img, #diff { width: 100%; background: #000; display: block; }
+  /* The measurement canvas is laid out at the composite's native size — the
+     renderer sizes its drawing buffer from the ELEMENT, so a thumbnail here would
+     make this a comparison of thumbnails. Scaled for display only. */
+  #mine { width: 1024px; height: 768px; transform: scale(0.332); transform-origin: 0 0; }
+  #mineBox { width: 340px; height: 255px; overflow: hidden; }
+</style>
+</head>
+<body>
+<h1>the flat state</h1>
+<p class="sub">At <code>divergence = 0</code> the engine must not approximate the 25 July 2017 composite — it must be it. The score itself solves to 32.27&nbsp;dB, so that is the ceiling, not a target to beat.</p>
+
+<div id="verdict">measuring…</div>
+<table id="sweep"></table>
+<table id="numbers"></table>
+
+<div class="sheet">
+  <figure><div id="mineBox"><canvas id="mine" width="1024" height="768"></canvas></div><figcaption>engine · seed 20170620 · t = 0</figcaption></figure>
+  <figure><img id="target" alt="the 2017 composite"><figcaption>T-2017-full.png · 25 July 2017</figcaption></figure>
+  <figure><canvas id="diff"></canvas><figcaption>|difference| × 6</figcaption></figure>
+</div>
+
+<script type="module">
+import * as Corpus from "./engine/corpus.js";
+import { cells } from "./engine/grammar.js";
+import { state } from "./engine/clock.js";
+import { Renderer } from "./engine/renderer.js";
+
+const SEED = 20170620;
+const el = (id) => document.getElementById(id);
+
+// No requestAnimationFrame anywhere in this file. One draw, one read, one verdict
+// per variant — which is why it can be driven by CDP or a headless renderer
+// without competing with a live loop for the GPU.
+const corpus = await Corpus.load();
+const renderer = new Renderer(el("mine"), corpus);
+await corpus.prime(renderer.gl);
+
+const s = state(SEED, 0);
+const flat = cells(corpus, SEED, 0, { reveal: s.reveal });
+
+// The screen tier is lazy by design — the live page starts on 512px plates and
+// upgrades in place. A measurement must not race that.
+await corpus.ensure("plates", "screen", flat.flatMap((c) => c.layers.map((l) => l.frame)));
+
+const img = await new Promise((res, rej) => {
+  const i = new Image();
+  i.onload = () => res(i); i.onerror = () => rej(new Error("reference/T-2017-full.png missing"));
+  i.src = "reference/T-2017-full.png";
+});
+el("target").src = img.src;
+
+let tgt = null, TW = 0, TH = 0;
+function targetAt(W, H) {
+  if (tgt && TW === W && TH === H) return tgt;
+  const ref = document.createElement("canvas");
+  ref.width = W; ref.height = H;
+  const ctx = ref.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, W, H);
+  tgt = ctx.getImageData(0, 0, W, H).data; TW = W; TH = H;
+  return tgt;
+}
+
+/** Draw one variant and score it against the composite. `paint` writes the
+ *  difference image, which is only wanted for the winner. */
+function measure({ mipmap = true, edge, showRoom = true, paint = false }) {
+  if (corpus.mipmap !== mipmap) { corpus.mipmap = mipmap; corpus.invalidate(); }
+  renderer.draw(flat, s, { seed: SEED, tier: "screen", showRoom, edge, pixelRatio: 1 });
+
+  const gl = renderer.gl;
+  const W = el("mine").width, H = el("mine").height;
+  const mine = new Uint8Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, mine);
+  const ref = targetAt(W, H);
+
+  let dctx = null, dImg = null;
+  if (paint) {
+    el("diff").width = W; el("diff").height = H;
+    dctx = el("diff").getContext("2d");
+    dImg = dctx.createImageData(W, H);
+  }
+
+  // readPixels is bottom-up; getImageData is top-down. Walk both once, in step.
+  let se = 0, ae = 0, n = 0, over8 = 0;
+  for (let y = 0; y < H; y++) {
+    const rowA = (H - 1 - y) * W * 4, rowB = y * W * 4;
+    for (let x = 0; x < W; x++) {
+      const a = rowA + x * 4, b = rowB + x * 4;
+      let m = 0;
+      for (let k = 0; k < 3; k++) {
+        const e = mine[a + k] - ref[b + k];
+        se += e * e; ae += Math.abs(e); n++; m += Math.abs(e);
+      }
+      if (m / 3 > 8) over8++;
+      if (paint) {
+        const v = Math.min(255, (m / 3) * 6);
+        dImg.data[b] = dImg.data[b + 1] = dImg.data[b + 2] = v;
+        dImg.data[b + 3] = 255;
+      }
+    }
+  }
+  if (paint) dctx.putImageData(dImg, 0, 0);
+  return { psnr: 10 * Math.log10(255 * 255 / (se / n)), mae: ae / n / 255, over8, px: W * H };
+}
+
+// Each variant isolates one suspect. Reported together, because a single number
+// says "wrong" and a sweep says WHICH.
+const VARIANTS = [
+  ["live-page defaults (edge fade derived from spread)", { mipmap: true }],
+  ["edge fade forced on, as it was", { mipmap: true, edge: 0.004 }],
+  ["no mipmaps", { mipmap: false, edge: 0.004 }],
+  ["edge fade forced off", { mipmap: true, edge: 0 }],
+  ["no mipmaps, no edge fade", { mipmap: false, edge: 0 }],
+  ["no mipmaps, no edge fade, no room behind", { mipmap: false, edge: 0, showRoom: false }],
+];
+
+const runs = VARIANTS.map(([label, opts]) => ({ label, opts, ...measure(opts) }));
+const best = runs.reduce((a, b) => (b.psnr > a.psnr ? b : a));
+measure({ ...best.opts, paint: true });
+
+el("sweep").innerHTML =
+  "<tr><th>variant</th><th>PSNR</th><th>MAE</th><th>pixels off &gt; 8/255</th></tr>" +
+  runs.map((r) => `<tr class="${r === best ? "best" : ""}"><td>${r.label}</td>` +
+    `<td class="n">${r.psnr.toFixed(2)} dB</td><td class="n">${r.mae.toFixed(4)}</td>` +
+    `<td class="n">${(100 * r.over8 / r.px).toFixed(2)}%</td></tr>`).join("");
+
+const ceiling = corpus.score.residual.psnr;
+
+// The engine draws the SHIPPED WebP plates, not the camera originals. Rebuilding
+// the composite from those same plates in numpy — no GPU, no shader — reaches
+// 31.61 dB, so that, not 32.27, is what a correct render path can achieve here.
+// The 0.66 dB between them is WebP q82, measured at 37 dB per plate.
+const PLATE_CEILING = 31.61;
+const live = runs[0];
+const pass = live.psnr >= PLATE_CEILING - 0.15;
+
+el("numbers").innerHTML = [
+  ["the score's own solve, from originals", `${ceiling.toFixed(2)} dB`],
+  ["the same score, from the shipped WebP plates", `${PLATE_CEILING.toFixed(2)} dB — what this can reach`],
+  ["cost of WebP q82", `${(ceiling - PLATE_CEILING).toFixed(2)} dB`],
+  ["rectangles drawn", `${flat.length} (${corpus.score.slivers} are 1px solver tail)`],
+  ["two-layer rectangles", flat.filter((c) => c.layers.length > 1).length],
+  ["distinct frames on screen", new Set(flat.flatMap((c) => c.layers.map((l) => l.frame))).size],
+].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+
+el("verdict").className = pass ? "pass" : "fail";
+el("verdict").textContent = pass
+  ? `REPRODUCTION HOLDS\nThe live path reaches ${live.psnr.toFixed(2)} dB against the 25 July 2017 composite. Rebuilding the same score from the same plates in numpy — no GPU involved — reaches ${PLATE_CEILING.toFixed(2)} dB, so the render path is arithmetically exact to ${Math.abs(live.psnr - PLATE_CEILING).toFixed(2)} dB and the only remaining loss is WebP compression. The engine is not approximating the piece; it is replaying it.`
+  : `REPRODUCTION FAILS\nThe live path reaches ${live.psnr.toFixed(2)} dB where the same plates allow ${PLATE_CEILING.toFixed(2)} dB. The sweep above says which stage is losing it.`;
+
+window.danseVerify = { live: live.psnr, plateCeiling: PLATE_CEILING, runs: runs.map(({ label, psnr, mae, over8 }) => ({ label, psnr, mae, over8 })), best: best.label, ceiling, pass };
+</script>
+</body>
+</html>

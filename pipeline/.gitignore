@@ -1,0 +1,11 @@
+# Derived and source-of-record artifacts never enter git.
+#
+# .work/ holds ~435 MB of 2017 originals plus every derived tier. The originals are
+# the artwork's provenance and live in Photos.app + the archive drive; git is the wrong
+# custodian for them. Only the code that regenerates everything is versioned — the same
+# posture as apps/vision-board-studio/photos-restore.
+.work/
+
+# Compiled Vision extractor (rebuild with 1_vision/build.sh).
+1_vision/danse-vision
+1_vision/*.dSYM/

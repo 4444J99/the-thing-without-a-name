@@ -1,0 +1,310 @@
+{
+  "schema": "danse.program.v2",
+  "_doc": "The RIVER, as declared data. Not a film: there is no duration and no end. This declares a PHRASE — an order of movements and how the camera behaves through them — and the engine traverses it forever. Each traversal is a PASSAGE with its own seed, its own material and its own durations, and a passage that has gone by does not come back. Movements declare a `share` of the passage, normalised to fit, so the no-gaps/no-overlaps partition the 2017 score obeys over the frame is true here over time BY CONSTRUCTION. `vary` is why it is a river and not a loop: a fixed phrase length is a clock, and a viewer who can anchor to it is watching a loop with the fill changed.",
+  "title": "THE THING WITHOUT A NAME",
+  "author": "Anthony J. Padavano",
+  "year": 2026,
+  "seed": 20170620,
+  "passage": {
+    "_doc": "The nominal phrase, and how far each passage may stray from it. Never rendered as a fixed length.",
+    "seconds": 390,
+    "vary": 0.22
+  },
+  "signature": {
+    "_doc": "The last seconds of every passage. White on black, one line: the seed of the passage that just went by. It is the receipt — proof that what was seen existed once and will not recur.",
+    "format": "seed 0x%SEED%   passage %PASSAGE%",
+    "color": "#f2f2f4",
+    "background": "#000000"
+  },
+  "captures": {
+    "_doc": "Presets for RECORDING the river — never for defining it. A capture has a length and a format; where it starts is a choice made at capture time, and what it caught is named by the passage seed. Frame rates are held to submission/screendance-2027.yaml's `fps_allowed` by check-danse.py.",
+    "passage": {
+      "passages": 1,
+      "w": 3840,
+      "h": 2160,
+      "fps": 30,
+      "note": "One whole passage at 4K — the ScreenDance Miami submission, honest about being one of them"
+    },
+    "screener": {
+      "passages": 1,
+      "w": 1920,
+      "h": 1080,
+      "fps": 30,
+      "note": "H.264, Vimeo, password + download enabled"
+    },
+    "midnight-moment": {
+      "seconds": 170,
+      "w": 3840,
+      "h": 2160,
+      "fps": 30,
+      "note": "Times Square Arts — EXACTLY 170s horizontal, rolling"
+    },
+    "trailer": {
+      "seconds": 42,
+      "w": 1920,
+      "h": 1080,
+      "fps": 30,
+      "note": "42s — under the 45s ceiling"
+    },
+    "reel": {
+      "seconds": 15,
+      "w": 1080,
+      "h": 1920,
+      "fps": 30,
+      "note": "15s vertical, one continuous move, loop-safe, silent-legible"
+    }
+  },
+  "movements": [
+    {
+      "id": "ONE",
+      "title": "one photograph, whole",
+      "share": 40,
+      "vary": 0.45,
+      "cut": "solo",
+      "ease": "smooth",
+      "divergence": [
+        0.0,
+        0.05
+      ],
+      "spread": [
+        0.0,
+        0.0
+      ],
+      "azimuth": [
+        0.0,
+        0.09
+      ],
+      "elevation": [
+        0.0,
+        0.03
+      ],
+      "projK": [
+        0.0,
+        0.0
+      ],
+      "turnover": [
+        0.0,
+        0.0
+      ],
+      "wander": 0.0,
+      "reseeds": [],
+      "note": "An unaltered 2017 photograph, untreated, barely moving. Provenance first: before the machine does anything, the viewer sees what was actually photographed. Room and floor line established here and never contradicted."
+    },
+    {
+      "id": "ASSEMBLY",
+      "title": "the 2017 composite",
+      "share": 25,
+      "vary": 0.22,
+      "cut": "score",
+      "ease": "smooth",
+      "divergence": [
+        0.0,
+        0.0
+      ],
+      "spread": [
+        0.0,
+        0.0
+      ],
+      "azimuth": [
+        0.09,
+        0.0
+      ],
+      "elevation": [
+        0.03,
+        0.0
+      ],
+      "projK": [
+        0.0,
+        0.0
+      ],
+      "turnover": [
+        0.0,
+        0.0
+      ],
+      "wander": 0.0,
+      "reseeds": [],
+      "note": "The photograph divides into the hand-cut composite he made in 2017, and holds it flat. This is the actual artifact on screen — verify.html proves it renders at 31.60 dB against the original. The credibility floor of the whole piece: the concept predates the technology by nine years."
+    },
+    {
+      "id": "DIVISION",
+      "title": "the composite comes apart",
+      "share": 55,
+      "vary": 0.35,
+      "cut": "score",
+      "ease": "smooth",
+      "divergence": [
+        0.0,
+        0.78
+      ],
+      "spread": [
+        0.0,
+        0.62
+      ],
+      "azimuth": [
+        0.0,
+        0.55
+      ],
+      "elevation": [
+        0.0,
+        0.18
+      ],
+      "projK": [
+        0.0,
+        0.0
+      ],
+      "turnover": [
+        0.0,
+        0.22
+      ],
+      "wander": 0.04,
+      "reseeds": [],
+      "note": "What flies apart is literally the 2017 composite, not a generated approximation of it. The camera leaves the projector's eye — that alone un-flattens the picture, which is the probe's third result. They learn the space is impossible while the floor line still holds."
+    },
+    {
+      "id": "PHRASE",
+      "title": "the engine, countable",
+      "share": 105,
+      "vary": 0.4,
+      "cut": "grid",
+      "ease": "linear",
+      "divergence": [
+        0.78,
+        0.86
+      ],
+      "spread": [
+        0.62,
+        0.9
+      ],
+      "azimuth": [
+        0.55,
+        -0.7
+      ],
+      "elevation": [
+        0.18,
+        -0.12
+      ],
+      "projK": [
+        0.0,
+        0.35
+      ],
+      "turnover": [
+        0.22,
+        1.0
+      ],
+      "wander": 0.09,
+      "reseeds": [],
+      "note": "Full engine. Limbs arrive from different photographs on a pulse. Must have accents, a repeat and a variation so a dance-literate viewer can COUNT it. Do not let this become texture — texture is the failure mode of the whole form."
+    },
+    {
+      "id": "STILLNESS",
+      "title": "a body that never existed",
+      "share": 60,
+      "vary": 0.45,
+      "cut": "figure",
+      "ease": "out",
+      "divergence": [
+        0.86,
+        0.2
+      ],
+      "spread": [
+        0.9,
+        0.14
+      ],
+      "azimuth": [
+        -0.7,
+        -0.05
+      ],
+      "elevation": [
+        -0.12,
+        0.0
+      ],
+      "projK": [
+        0.35,
+        0.0
+      ],
+      "turnover": [
+        1.0,
+        0.04
+      ],
+      "wander": 0.01,
+      "reseeds": [],
+      "note": "Resolves to near-stasis. One near-complete figure assembles out of many photographs and holds — a body that never existed, in a room that never existed. Hold it longer than is comfortable."
+    },
+    {
+      "id": "RESEED",
+      "title": "again, and again, faster",
+      "share": 101,
+      "vary": 0.35,
+      "cut": "bands",
+      "ease": "in",
+      "divergence": [
+        0.2,
+        0.92
+      ],
+      "spread": [
+        0.14,
+        1.0
+      ],
+      "azimuth": [
+        -0.05,
+        0.8
+      ],
+      "elevation": [
+        0.0,
+        0.22
+      ],
+      "projK": [
+        0.0,
+        0.55
+      ],
+      "turnover": [
+        0.04,
+        1.6
+      ],
+      "wander": 0.12,
+      "reseeds": [
+        0.0,
+        0.42,
+        0.71,
+        0.88,
+        0.97
+      ],
+      "note": "The engine visibly restarts — same structural moves, entirely different material — then again, faster, then again. The gaps shorten: 0.42, 0.29, 0.17, 0.09. THE INFINITUDE IS DELIVERED BY THAT COMPRESSION, NOT ASSERTED. Cut to black mid-phrase."
+    },
+    {
+      "id": "SIGNATURE",
+      "title": "the only name it has",
+      "share": 4,
+      "vary": 0.08,
+      "cut": "black",
+      "ease": "linear",
+      "divergence": [
+        0.0,
+        0.0
+      ],
+      "spread": [
+        0.0,
+        0.0
+      ],
+      "azimuth": [
+        0.0,
+        0.0
+      ],
+      "elevation": [
+        0.0,
+        0.0
+      ],
+      "projK": [
+        0.0,
+        0.0
+      ],
+      "turnover": [
+        0.0,
+        0.0
+      ],
+      "wander": 0.0,
+      "reseeds": [],
+      "note": "Four seconds. One line of white text: the seed of the version they just watched. The thing they watched has no name — only a number — which is the title, restated as a fact."
+    }
+  ]
+}
