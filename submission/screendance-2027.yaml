@@ -1,0 +1,212 @@
+# ScreenDance Miami 2027 — the submission register.
+#
+# Every fact about this call lives here, once, with its source and the date it was
+# checked. Nothing about the deadline or the specs is carried in prose, in a plan,
+# or in anyone's head — those drift silently (this register exists because a stale
+# "11:00pm" and a page reading "11:59pm" coexisted for a week without either being
+# wrong enough to notice).
+#
+# Two statuses, and the distinction is the whole point:
+#   verified   the call states it; `source` and `checked` say where and when
+#   unstated   the call is silent; `resolve` says how to find out, `assume` says
+#              what we build meanwhile, `blocking` says whether shipping without
+#              the answer is a real risk
+#
+# `check.py` reads this file and validates a staged package against it. Manual
+# requirements declare the first phase that owns them; later phases are
+# cumulative. A package cannot be asked to prove an upload or portal act that
+# has not happened yet.
+
+schema: danse.submission.v2
+call: ScreenDance Miami Festival 2027
+presenter: Miami Light Project
+portal: https://miamilightproject.submittable.com/submit
+program_page: https://miamilightproject.com/program/screen-dance-2027/
+phone: "305.576.4350"
+
+deadline:
+  status: verified
+  stated: "Monday, August 31, 2026 at 11:00 PM EST"
+  source: submittable
+  checked: 2026-07-30
+  # The trap: on 31 August, Miami is on EDT (UTC-4), not EST (UTC-5). If the portal
+  # is configured to a literal EST the cutoff lands at 22:00 local. We treat 22:00
+  # America/New_York as the hard wall and never test the ambiguity.
+  hard_wall: "2026-08-31T22:00:00-04:00"
+  target_file_date: "2026-08-20"   # file in the 20–24 Aug window, not on the wall
+
+decision:
+  notification: "end of October 2026"
+  screening: "20–24 January 2027, venues across Miami-Dade"
+  status: verified
+  source: submittable
+  checked: 2026-07-30
+
+eligibility:
+  status: verified
+  scope: worldwide
+  who: "choreographers, directors, movers, and filmmakers"
+  # No geography, age, or residency gate. Where the artist lives is not a factor in
+  # this call and must not be reasoned about as if it were.
+  source: submittable
+  checked: 2026-07-30
+
+# ── Hard requirements. These are the ones that reject a package outright. ────────
+
+requirements:
+  - id: final-cut-only
+    phase: package
+    status: verified
+    rule: "Final versions only — works-in-progress are not accepted."
+    source: submittable
+    checked: 2026-07-30
+    check: manual   # a human asserts this; no script can know a cut is final
+
+  - id: link-password-protected
+    phase: uploaded
+    status: verified
+    rule: "The video link must be password-protected."
+    source: submittable
+    checked: 2026-07-30
+    check: manual
+
+  - id: link-downloadable
+    phase: uploaded
+    status: verified
+    rule: "The video link must have download enabled."
+    source: submittable
+    checked: 2026-07-30
+    # The single most-missed requirement in this call: Vimeo ships with download
+    # OFF by default, so a correct-looking link fails the panel silently.
+    check: manual
+
+  - id: submitted-via-submittable
+    phase: submitted
+    status: verified
+    rule: "Electronic submission through the Submittable portal only."
+    source: submittable
+    checked: 2026-07-30
+    check: manual
+
+# Internal artist approvals are package gates, not claims made by the call. They
+# live here because they govern the same staged attest.yaml and must not be
+# inferred from the existence of tracked prose.
+approvals:
+  - id: bio-approved
+    phase: package
+    status: internal
+    rule: "The artist has verified the staged biographical claims."
+    source: artist
+    check: manual
+
+  - id: rights-declaration-approved
+    phase: package
+    status: internal
+    rule: "The artist has verified the staged authorship and rights claims."
+    source: artist
+    check: manual
+
+# ── Unpublished. The call does not state these; one phone call closes all four. ──
+
+unstated:
+  - id: runtime-cap
+    resolve: "Call 305.576.4350 — ask the maximum accepted runtime."
+    assume_max_seconds: 480        # the ceiling of the declared passage range
+    # Raised from 390 on 2026-07-31. 390 was the duration of a fixed cut, and the
+    # work no longer has one: it is a river with no end, and a capture of one
+    # whole passage runs 5:07–7:56 depending on which passage it caught. 480 is
+    # the top of the range `check-danse.py` holds the program to, so the number
+    # here and the number the engine can produce cannot drift apart.
+    #
+    # De-blocked by evidence, not by assumption: the 2026 festival programmed
+    # "17 short films and three feature-length films". A festival that seats
+    # features does not reject eight minutes on length.
+    evidence: "2026 program: 17 shorts + 3 feature-length, 24 films / 6 countries"
+    evidence_source: https://miamilightproject.com/program/screendance-miami-festival-2026/
+    checked: 2026-07-30
+    blocking: false
+
+  - id: codec-and-master-format
+    resolve: "Call — ask deliverable spec for selected films (ProRes? H.264? DCP?)."
+    assume_master: "ProRes 422 HQ"
+    assume_screener: "H.264, 1080p or 2160p"
+    blocking: false                # a re-export is cheap; the cut is unaffected
+
+  - id: aspect-ratio
+    resolve: "Call — ask preferred aspect, and whether the Soundscape wall projection differs."
+    assume: "16:9"
+    blocking: false
+
+  - id: premiere-status
+    resolve: "Call — ask whether prior online/festival exhibition disqualifies."
+    # Was blocking because the plan contemplates a European premiere (Mignolo,
+    # 13 Oct 2026) landing BEFORE the Miami notification at end of October.
+    # De-blocked: the 2026 open call seated "Florida, U.S., and world premieres"
+    # — a Florida-premiere tier exists, so prior exhibition elsewhere re-tiers the
+    # premiere rather than disqualifying the film.
+    evidence: "2026 open-call selections spanned Florida, U.S., and world premieres"
+    evidence_source: https://miamilightproject.com/program/screendance-miami-festival-2026/
+    checked: 2026-07-30
+    blocking: false
+
+  - id: entry-fee
+    resolve: "Confirm at the Submittable payment step when filing."
+    assume: "none"
+    evidence: "Miami Light Project states ScreenDance Miami accepts submissions for no charge"
+    checked: 2026-07-30
+    blocking: false
+
+# ── The package. What check.py validates on disk. ───────────────────────────────
+
+package:
+  master:
+    required: true
+    min_width: 3840
+    min_height: 2160
+    fps_allowed: [24, 30]
+    aspect: "16:9"
+    video_codec: prores
+    video_profile: HQ
+    audio_codec: pcm_s24le
+    audio_channels: 2
+  screener:
+    required: true
+    min_width: 1920
+    min_height: 1080
+    video_codec: h264
+    audio_codec: aac
+    audio_channels: 2
+  audio:
+    target_lufs: -16.0
+    tolerance_lu: 0.5
+    max_true_peak_dbtp: -1.0
+    source_recordings: [IMG_0226.MOV, IMG_0227.MOV]
+    source_sha256:
+      IMG_0226.MOV: "01bc6e147166061fe886b498a5dbd9e3c3f8fb9abb91f651f64bc9878f21e84b"
+      IMG_0227.MOV: "64203a17367688b4b643bf6a1251ad2e37d63f49238cb6c9db7214ef6595f430"
+  stills:
+    required: true
+    count_min: 6
+    min_width: 3840
+    min_height: 2160
+    # One still per distinct seed, with the seed in the filename, so the generative
+    # claim is material before the panel presses play.
+    filename_pattern: "^seed-0x[0-9A-Fa-f]{4,}\\.(jpg|jpeg|png)$"
+    distinct_seeds: true
+  origin_still:
+    required: true
+    # One unaltered 2017 photograph, so the corpus is visible as photography.
+    filename: "origin-2017.jpg"
+    source_filename: "IMG_1594.JPG"
+    copy_mode: byte-identical
+  trailer:
+    required: false
+    max_seconds: 45
+    note: "One unbroken camera move through one seed. No cuts."
+  text:
+    synopsis_short: { required: true, words_min: 35, words_max: 60 }
+    synopsis_long:  { required: true, words_min: 150, words_max: 250 }
+    artist_statement: { required: true, words_min: 100, words_max: 500 }
+    bio: { required: true, words_min: 50, words_max: 200 }
+    technical_note: { required: true, words_min: 30, words_max: 300 }
+    rights_declaration: { required: true, words_min: 20, words_max: 300 }

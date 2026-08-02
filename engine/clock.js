@@ -1,0 +1,180 @@
+/** Where the piece is at time t. Pure, seeded, and with no memory.
+ *
+ * Everything the renderer needs for a frame is `state(seed, t)`. Nothing
+ * accumulates, so seeking to 4:31 costs the same as seeking to 0:01, an offline
+ * renderer and a browser tab agree exactly, and two projectors driven from the
+ * same seed stay in lock without talking to each other.
+ *
+ * The dramaturgy comes out of the probe's third result — that the flattening is
+ * the CAMERA, not the arrangement. Stand where the camera stood on 20 June 2017
+ * and the picture collapses back into the 2017 composite no matter how far the
+ * planes have swung apart. So `divergence` is the whole reveal, and it is built
+ * to RETURN to zero rather than to rise once:
+ *
+ *   divergence  0 ─╮      ╭──────╮      ╭─  the still is not a beginning, it is
+ *                  ╰──────╯      ╰──────╯   a recurring event in the animation
+ *
+ * At every trough the room folds back into the photograph he made. The piece
+ * keeps arriving at its own origin and leaving again.
+ */
+
+import { channel, epochAt, movementAt } from "./program.js";
+import { hash, range } from "./rng.js";
+
+/** Seconds for one full departure-and-return. Long enough that the return reads
+ *  as recognition rather than as a pulse. */
+export const PERIOD = 74;
+
+/** How long a plane holds one photograph before crossing to the next. Prime
+ *  against PERIOD so the two cycles never phase-lock into a visible pattern. */
+export const HOLD = 11;
+
+/** Fraction of HOLD spent cross-fading. The dissolve is not a transition effect —
+ *  it is the same two-layer compositing the 2017 piece already needed for its 77
+ *  translucent tiles, run over time instead of over the picture plane. */
+export const CROSSFADE = 0.34;
+
+const TAU = Math.PI * 2;
+
+/** Smooth, monotone 0→1. Used for the reveal so it eases out of and back into
+ *  the flat state rather than arriving at it with a velocity. */
+const smooth = (x) => x * x * (3 - 2 * x);
+
+/** A trough-and-crest that spends real time at 0. `rest` is the fraction of the
+ *  cycle held flat, which is what makes the 2017 composite legible as an image
+ *  rather than as a moment passed through. */
+function dwell(phase, rest = 0.16) {
+  const p = phase - Math.floor(phase);
+  if (p < rest / 2 || p > 1 - rest / 2) return 0;
+  const t = (p - rest / 2) / (1 - rest);
+  return smooth(Math.sin(t * Math.PI)); // 0 → 1 → 0
+}
+
+/** The state of the piece at (seed, t), optionally under a program.
+ *
+ * Without a program the piece runs free — the endless departure-and-return above,
+ * which is what the live page and the gallery wall want. With one, the movements
+ * declared in `render/program.json` drive every channel and the result is a film:
+ * still a pure function of (seed, t), so an offline renderer can seek anywhere,
+ * render segments out of order, and get bit-identical frames.
+ */
+export function state(seed, t, program = null, stream = 0) {
+  return program ? programState(seed, t, program, stream) : freeState(seed, t);
+}
+
+/** Under a program, every channel is interpolated across its movement, and the
+ *  MATERIAL seed changes at declared reseed points — which is how the closing
+ *  movement restarts the engine with entirely different photographs while the
+ *  structural moves stay the same. */
+function programState(seed, t, program, stream) {
+  const { movement, index, u, passage } = movementAt(program, seed, t, stream);
+  const epoch = epochAt(movement, u);
+  const divergence = channel(movement, "divergence", u);
+
+  // Every passage draws from its own seed, so the phrase recurs and the material
+  // never does. The passage ORDINAL goes into the derivation too: a 32-bit seed
+  // has a birthday bound around 65,000 passages — roughly nine months of
+  // continuous running — and without the ordinal a gallery could, eventually,
+  // show the same passage twice. Including it makes recurrence impossible rather
+  // than merely unlikely, which is the whole claim the piece makes.
+  const material = hash(passage.seed, passage.index, epoch, index);
+
+  // Seeded drift on top of the programmed arc, so two seeds trace different paths
+  // through the same dramaturgy rather than the same path twice.
+  const w = movement.wander ?? 0;
+  const drift = (k) => (w ? Math.sin((t / range(6.5, 13.5, seed, index, k) + range(0, 1, seed, index, k + 1)) * TAU) * w : 0);
+
+  return {
+    t,
+    riverSeed: seed,
+    riverStream: stream,
+    // `reveal` is only a legibility signal — it tells the grammar the room is
+    // open. Under a program the cut is declared, so nothing infers it from here.
+    reveal: divergence,
+    divergence,
+    azimuth: channel(movement, "azimuth", u) + drift(111),
+    elevation: channel(movement, "elevation", u) + drift(113),
+    spread: channel(movement, "spread", u),
+    projK: channel(movement, "projK", u),
+    // Everything the grammar needs to cast this frame.
+    cut: movement.cut,
+    turnover: channel(movement, "turnover", u),
+    movement: movement.id,
+    epoch,
+    material,
+    // Which passage of the river this is, and its name. The signature frame
+    // prints both: a passage is identified by its seed AND its ordinal, so the
+    // receipt is unique for as long as the piece runs.
+    passage: passage.index,
+    passageSeed: passage.seed,
+    passageSeconds: passage.seconds,
+    passageT0: passage.t0,
+  };
+}
+
+/** The free-running piece: no program, no end. Unchanged behaviour — the flat
+ *  state at t=0 and at every PERIOD is what `check-danse.py` asserts. */
+function freeState(seed, t) {
+  const phase = t / PERIOD;
+  const reveal = dwell(phase);
+
+  // Azimuth and elevation drift on their own slow, seed-dependent periods, so
+  // successive departures leave in different directions and no two returns are
+  // approached from the same side.
+  const aPeriod = range(0.31, 0.53, seed, 101);
+  const ePeriod = range(0.17, 0.29, seed, 102);
+  const aPhase = range(0, 1, seed, 103);
+  const ePhase = range(0, 1, seed, 104);
+
+  return {
+    t,
+    riverSeed: seed,
+    reveal,
+    // The camera leaves the projector's eye. This alone un-flattens the picture.
+    divergence: reveal * range(0.55, 0.95, seed, 105),
+    azimuth: Math.sin((phase * aPeriod + aPhase) * TAU) * 0.85,
+    elevation: Math.sin((phase * ePeriod + ePhase) * TAU) * 0.34,
+    // Geometry departs slightly AHEAD of the camera, so the arrangement is
+    // already built by the time the move begins to disclose it — invisible while
+    // on-axis, which is exactly what the probe proved is possible.
+    spread: dwell(phase + 0.045),
+    // 0 = every plane is a window onto the room. Held there: `projK = 1` makes
+    // each plane carry its own crop, which duplicates the poster row. That is a
+    // real state of the piece, but it is a departure from the room, not the room.
+    projK: 0,
+    // The same fields a programmed state carries, so no consumer has to ask which
+    // kind of clock it is holding. Free-running, the cut is inferred from `reveal`
+    // and the material never reseeds.
+    cut: null,
+    turnover: 1,
+    movement: null,
+    epoch: 0,
+    material: seed,
+    // Free-running there are no passages — the piece departs and returns on one
+    // continuous breath rather than in phrases. Declared anyway, so a consumer
+    // never has to ask which kind of clock it is holding.
+    passage: 0,
+    passageSeed: seed,
+    passageSeconds: PERIOD,
+    passageT0: Math.floor(t / PERIOD) * PERIOD,
+  };
+}
+
+/** Which photograph a cell is showing at time t, and what it is crossing to.
+ *
+ * Each cell gets its own phase offset from its id, so the corpus turns over
+ * continuously across the picture rather than all at once — the room is always
+ * partly changing and never entirely.
+ */
+export function turnover(id, seed, t, rate = 1) {
+  // rate 0 freezes the corpus — movement ONE holds a single photograph for forty
+  // seconds, and a cell that crossfades under it would break that claim.
+  if (rate <= 0) return { epoch: 0, next: 0, mix: 0 };
+  const offset = range(0, 1, seed, id, 201);
+  const p = (t * rate) / HOLD + offset;
+  const epoch = Math.floor(p);
+  const frac = p - epoch;
+
+  if (frac < 1 - CROSSFADE) return { epoch, next: epoch + 1, mix: 0 };
+  return { epoch, next: epoch + 1, mix: smooth((frac - (1 - CROSSFADE)) / CROSSFADE) };
+}

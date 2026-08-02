@@ -1,0 +1,11 @@
+# The catalogue is machine-local and stays that way.
+#
+# resolve.py walks a personal disk and a personal Photos library; sources.json is
+# a list of where several thousand private recordings live, under a home
+# directory, on a repo that publishes. The CODE is the artifact — run it and it
+# rebuilds the catalogue for whatever machine it is on.
+sources.json
+
+# Extracted grains, likewise derived.
+bank/
+out/

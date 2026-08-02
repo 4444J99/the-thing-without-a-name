@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>danse</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0e0e10; overflow: hidden; }
+  body { font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #b9b9c4; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+
+  #veil {
+    position: fixed; inset: 0; display: grid; place-content: center; gap: 14px;
+    background: #0e0e10; text-align: center; transition: opacity .8s ease;
+  }
+  #veil.gone { opacity: 0; pointer-events: none; }
+  #veil h1 { font: 300 34px/1 ui-serif, Georgia, serif; letter-spacing: .32em; color: #e8e8ee; }
+  #veil p { color: #6a6a78; letter-spacing: .12em; }
+  #bar { width: 260px; height: 1px; background: #26262e; margin: 0 auto; }
+  #bar i { display: block; height: 100%; width: 0; background: #cfcfe0; transition: width .2s; }
+
+  #hud {
+    position: fixed; left: 14px; bottom: 12px; display: flex; gap: 16px; align-items: baseline;
+    color: #55555f; letter-spacing: .06em; user-select: none;
+  }
+  #hud b { font-weight: 400; color: #9a9aa8; }
+  #hud kbd { color: #3c3c46; }
+  #hud.hide { opacity: 0; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="veil">
+  <h1>danse</h1>
+  <p>20 june 2017 &middot; 162 photographs</p>
+  <div id="bar"><i></i></div>
+</div>
+
+<div id="hud">
+  <span><b id="river">—</b> <span id="passage"></span></span>
+  <span><b id="clock">0:00</b></span>
+  <span><b id="cut">—</b></span>
+  <span><b id="planes">0</b> planes</span>
+  <span id="keys"><kbd>space</kbd> hold &middot; <kbd>n</kbd> new river &middot; <kbd>s</kbd> share &middot; <kbd>f</kbd> free &middot; <kbd>1-7</kbd> movement &middot; <kbd>m</kbd> matte &middot; <kbd>h</kbd> hud</span>
+</div>
+
+<script type="module">
+import * as Arrival from "./arrival.js";
+import * as Corpus from "./engine/corpus.js";
+import * as Program from "./engine/program.js";
+import { frameAt, hex } from "./engine/engine.js";
+import { cutAt } from "./engine/grammar.js";
+import { Renderer } from "./engine/renderer.js";
+
+// ── Arriving IS the seed.
+//
+// Not a parameter someone has to know to type — the act of showing up. A bare
+// URL mints a river on the spot, keeps it, and puts it in the address bar; a URL
+// carrying `#s&e` is somebody else's river, joined in sync. Either way what runs
+// is the declared phrase, forever, and `#p=free` is the opt-out into the older
+// dwell cycle that `verify.html` pins the 2017 reproduction to.
+//
+// There is no `t` variable in this file. Every navigation — hold, jump, cite —
+// is a freeze or an epoch shift, so the page has no clock of its own to drift.
+let river = Arrival.arrive(location.hash);
+let shifted = river.shifted;
+let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
+let navigationGeneration = 0;
+
+const canvas = document.getElementById("stage");
+const el = (id) => document.getElementById(id);
+
+const corpus = await Corpus.load();
+const renderer = new Renderer(canvas, corpus);
+await corpus.prime(renderer.gl, {
+  onProgress: (p) => { el("bar").firstElementChild.style.width = `${p * 100}%`; },
+});
+el("veil").classList.add("gone");
+
+// Non-null ⟺ frozen at that offset. Releasing does NOT resume from there: the
+// river kept flowing while you looked, so it snaps forward to now. The pause is
+// yours, not the river's.
+let heldAt = null;
+let matteK = 0;
+
+// The cast is held for an eighth of a second rather than rebuilt every frame:
+// casting cells walks 162 index entries per cell, and at 60fps that is work
+// nobody can see. Geometry and camera still move every frame — only the CHOICE
+// is quantised. The film passes 0 here and pays for exactness.
+const RECAST = 1 / 8;
+
+/** Where the river is right now — or where it is frozen. The only reader of time
+ *  in the whole page, so there is exactly one answer to "when is it". */
+const at = () => heldAt ?? Arrival.now(river);
+
+function frame() {
+  const t = at();
+  // Time is not wrapped. The piece has no duration to reach and nothing to
+  // restart: each passage of the phrase draws its own length and its own
+  // material, so running longer means seeing further, never seeing again.
+
+  const r = frameAt(renderer, corpus, river.seed, t, program, { quantise: RECAST, stream: river.stream, matteK });
+
+  // Elapsed within the current passage, so the readout says where you are in
+  // this one rather than counting up forever into a number nobody can hold.
+  const local = t - (r.state.passageT0 ?? 0);
+  el("clock").textContent = `${Math.floor(local / 60)}:${String(Math.floor(local % 60)).padStart(2, "0")}`;
+  // Your river, then which passage of it you are in. The first number is the one
+  // that is yours and shareable; the second is the one that will never recur.
+  el("river").textContent = hex(river.seed);
+  el("passage").textContent = program ? `· ${hex(r.state.passageSeed)} · passage ${r.state.passage}` : "";
+  el("cut").textContent = program
+    ? `${r.state.movement} · ${r.state.cut}${r.state.epoch ? ` · reseed ${r.state.epoch}` : ""}`
+    : cutAt(river.seed, t, r.state.reveal) + (r.state.reveal < 0.02 ? " · 2017" : "");
+  el("planes").textContent = r.missing ? `${r.planes}−${r.missing}` : r.planes;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Keep the address bar honest without thrashing history — and note what it does
+// NOT write. Persisting `t` would make a reload resume where you left, which is
+// the loop this whole architecture exists to remove. `#s&e` names the river and
+// lets the clock say where in it you are. While `shifted`, nothing is written at
+// all: a position reached for debugging must not overwrite the river you keep.
+setInterval(() => {
+  if (shifted) return;
+  history.replaceState(null, "", Arrival.href(river, { mode: program ? null : "free" }));
+}, 1000);
+
+// Someone pasted a river into the address bar of a page that is already open.
+// Changing only the fragment is a same-document navigation — nothing reloads —
+// so without this the link would silently do nothing, which is the one way a
+// shared river can fail while looking like it worked. `replaceState` above does
+// not fire this event, so the page cannot chase its own tail.
+addEventListener("hashchange", async () => {
+  const generation = ++navigationGeneration;
+  const nextRiver = Arrival.arrive(location.hash);
+  const mode = Arrival.modeOf(location.hash);
+  if (mode === "free") program = null;
+  else if (!program) {
+    const loaded = await Program.load();
+    if (generation !== navigationGeneration) return;
+    program = loaded;
+  }
+  if (generation !== navigationGeneration) return;
+  river = nextRiver;
+  shifted = nextRiver.shifted;
+  heldAt = null;
+});
+
+/** Wind this river to `to` without renaming it. Every jump in the piece is this. */
+function jump(to) {
+  river = { ...Arrival.shiftTo(river, to), minted: false, shifted: true };
+  shifted = true;
+  heldAt = null;
+}
+
+/** Say something in the HUD for a moment, then give the keys back. */
+function flash(msg) {
+  const keys = el("keys");
+  const was = keys.innerHTML;
+  keys.textContent = msg;
+  setTimeout(() => { keys.innerHTML = was; }, 2200);
+}
+
+addEventListener("keydown", async (e) => {
+  if (e.key === " ") { heldAt = heldAt === null ? at() : null; e.preventDefault(); }
+  if (e.key === "n") { river = { ...Arrival.mint(), minted: true, shifted: false }; shifted = false; heldAt = null; }
+  if (e.key === "m") { matteK = matteK > 0 ? 0 : 1; }
+  if (e.key === "h") { el("hud").classList.toggle("hide"); }
+  // Hand someone your river. They land in the same water, in sync, having
+  // exchanged nothing with you but the river identity in the link.
+  if (e.key === "s") {
+    const link = Arrival.href(river, { mode: program ? null : "free" });
+    try {
+      await navigator.clipboard.writeText(link);
+      flash(`copied — ${hex(river.seed)} · your river, live`);
+    } catch {
+      flash(link);
+    }
+  }
+  // Let the piece roam instead of running the phrase — the older dwell cycle the
+  // 2017 reproduction is pinned to.
+  if (e.key === "f") { program = program ? null : await Program.load(); }
+  // Jump to the head of each movement OF THE PASSAGE YOU ARE IN — the fastest
+  // way to judge a program edit. Movements have no fixed times any more, so this
+  // has to ask the passage where its own movements start.
+  if (program && /^[1-9]$/.test(e.key)) {
+    const t = at();
+    const p = Program.passageAt(program, river.seed, t, river.stream);
+    const m = Program.movementsIn(program, river.seed, p.index, river.stream)[Number(e.key) - 1];
+    if (m) jump(p.t0 + m.t0);
+  }
+});
+
+// For the probe, the film renderer, and anyone reading the console.
+window.danse = {
+  corpus, renderer, frameAt, hex, jump,
+  get program() { return program; },
+  get t() { return at(); }, set t(v) { jump(v); },
+  get river() { return river; },
+  get seed() { return river.seed; }, set seed(v) { river = { ...river, seed: v >>> 0 }; },
+};
+</script>
+</body>
+</html>

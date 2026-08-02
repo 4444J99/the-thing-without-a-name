@@ -1,0 +1,5 @@
+The film is a pure function of a seed and a time — f(seed, t) — with no accumulated state anywhere, so any frame can be computed without computing the one before it. It renders in WebGL2 through a single projector matrix reconstructed from the 2017 camera; every fragment samples its pixel through that one matrix, which is why planes at unrelated depths and angles still meet along the same floor line.
+
+The 2017 composite is not re-created by eye. It was solved back into two hundred fifty-six rectangles, each naming the photograph it came from, and the engine reproduces the original at 31.60 dB PSNR against an arithmetic ceiling of 31.61 dB — the remaining error is image compression, not the model.
+
+Delivered at 3840×2160, 30 fps, ProRes 422 HQ, from full-camera-resolution plates. Sound is stereo at −16 LUFS integrated with true peak below −1 dBTP, built by granular selection from 193 seconds of the same apartment: no oscillator, no artificial reverberation. The whole film, picture and sound, is reproducible from one 32-bit number, which is printed on the last frame.

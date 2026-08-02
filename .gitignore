@@ -1,0 +1,9 @@
+# Delivery packages, prototype renders, and private source media are local build
+# state. Each owning pipeline also ignores its own cache; this root catches the
+# shared orchestration scratch used by deliver.py and one-off rehearsals.
+.work/
+.DS_Store
+__pycache__/
+*.py[cod]
+.limen-workstream/
+.worktrees/

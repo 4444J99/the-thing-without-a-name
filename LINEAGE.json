@@ -1,0 +1,41 @@
+{
+  "schema": "organvm.project-lineage.v1",
+  "canonical_repository": "https://github.com/organvm/the-thing-without-a-name",
+  "canonical_path": ".",
+  "project_id": "danse",
+  "title": "THE THING WITHOUT A NAME",
+  "migrated_at": "2026-08-02",
+  "source": {
+    "repository": "https://github.com/organvm/limen",
+    "path": "apps/danse",
+    "pull_request": "https://github.com/organvm/limen/pull/1762",
+    "base_commit": "11132c46640d52f3bfb7ead67a39a37cc9318ce5",
+    "source_head": "911410ba4c99a44368c823725561431e27354ec5",
+    "commits": [
+      "d55bd9fe295d4f1283aea6e085ea8b27d82ef7ba",
+      "7e9c0518d8336831af4476cccbd4af3932965a35",
+      "a29b3ecf6c892463232a69f41946bb35cf67e682",
+      "27b5c05a58286ac316c9c5f589f42c44912b5233",
+      "99feb53e66bbee6029d750efa1c48312b98c64b5",
+      "faa988d5c13a4e307ce4e94fb63f215a51e3f3f6",
+      "1a12b33ad2b805b921e4d982c636a62b8968898c",
+      "787772d9bf35dc42233faa74221206232029f6f9",
+      "5827794577b5e08d3047687346b0b7d5a17b142b",
+      "689d6f3299ccca0cd34e31a066c6f7e4fbad19c4",
+      "200a1c680445c6b5458d146c53cf02d25b42b152",
+      "0f8036b0a25ab04129291a6871ee2870e58c73dc",
+      "1b9812658e7c998750db7ba32dc376e1ce968285",
+      "911410ba4c99a44368c823725561431e27354ec5"
+    ]
+  },
+  "verification": {
+    "portable_invariants": 40,
+    "delivery_regressions": 53,
+    "machine_predicates": [
+      "Apple Metal renderer",
+      "31.60 dB reproduction",
+      "visitor arrival",
+      "projection continuity"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+# Rendered film. Segments, masters, screeners, stills — all regenerable from
+# program.json + a seed, which is the whole point of a pure f(seed, t):
+#
+#     render/render.py --window master --tier film
+#
+# What ships to a festival is uploaded, not committed. A 6:30 4K ProRes master is
+# ~40 GB and git is the wrong custodian for it.
+out/
