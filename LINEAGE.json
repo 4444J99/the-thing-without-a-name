@@ -10,7 +10,7 @@
     "path": "apps/danse",
     "pull_request": "https://github.com/organvm/limen/pull/1762",
     "base_commit": "11132c46640d52f3bfb7ead67a39a37cc9318ce5",
-    "source_head": "1b9812658e7c998750db7ba32dc376e1ce968285",
+    "source_head": "911410ba4c99a44368c823725561431e27354ec5",
     "commits": [
       "d55bd9fe295d4f1283aea6e085ea8b27d82ef7ba",
       "7e9c0518d8336831af4476cccbd4af3932965a35",
@@ -24,7 +24,8 @@
       "689d6f3299ccca0cd34e31a066c6f7e4fbad19c4",
       "200a1c680445c6b5458d146c53cf02d25b42b152",
       "0f8036b0a25ab04129291a6871ee2870e58c73dc",
-      "1b9812658e7c998750db7ba32dc376e1ce968285"
+      "1b9812658e7c998750db7ba32dc376e1ce968285",
+      "911410ba4c99a44368c823725561431e27354ec5"
     ]
   },
   "verification": {

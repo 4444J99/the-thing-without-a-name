@@ -3,7 +3,7 @@
 This repository is the canonical public owner of Danse / **THE THING WITHOUT A
 NAME**. The import is a path-preserving extraction of the publishable source from
 `organvm/limen`, including the delivery hardening at Limen source head
-`1b9812658e7c998750db7ba32dc376e1ce968285`.
+`911410ba4c99a44368c823725561431e27354ec5`.
 
 The import deliberately excludes raw photographs, private recordings, generated
 render/package caches, credentials, and local machine paths. Those hydrate only

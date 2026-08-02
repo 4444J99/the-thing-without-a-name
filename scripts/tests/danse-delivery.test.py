@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import io
 import json
@@ -269,7 +268,7 @@ class DeliveryContractTest(unittest.TestCase):
             package.mkdir()
             master = package / "master.mov"
             master.write_bytes(b"modified after packaging")
-            trusted_digest = hashlib.sha256(b"original packaged bytes").hexdigest()
+            prior_digest = "0" * 64
             (package / "manifest.json").write_text(
                 json.dumps(
                     {
@@ -278,7 +277,7 @@ class DeliveryContractTest(unittest.TestCase):
                         "t0": SPAN["t0"],
                         "t1": SPAN["t1"],
                         "duration": SPAN["duration"],
-                        "items": [{"name": "master.mov", "bytes": 23, "sha256": trusted_digest}],
+                        "items": [{"name": "master.mov", "bytes": 23, "sha256": prior_digest}],
                     }
                 )
             )
@@ -295,7 +294,7 @@ class DeliveryContractTest(unittest.TestCase):
             receipt = next(
                 item for item in json.loads((package / "manifest.json").read_text())["items"] if item["name"] == "master.mov"
             )
-            self.assertEqual(receipt["sha256"], trusted_digest)
+            self.assertEqual(receipt["sha256"], prior_digest)
             self.assertNotEqual(receipt["sha256"], DELIVER.digest(master))
 
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
