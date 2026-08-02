@@ -11,8 +11,8 @@
     "vary": 0.22
   },
   "signature": {
-    "_doc": "The last seconds of every passage. White on black, one line: the river seed and absolute passage start accepted by the public render path, plus the ordinal that makes the receipt unique.",
-    "format": "river 0x%RIVER_SEED%   from %PASSAGE_T0%s   passage %PASSAGE%",
+    "_doc": "The last seconds of every passage. White on black, one line: the river seed, passage stream, and absolute start accepted by the public render path, plus the ordinal that makes the receipt unique.",
+    "format": "river 0x%RIVER_SEED%/%RIVER_STREAM%   from %PASSAGE_T0%s   passage %PASSAGE%",
     "color": "#f2f2f4",
     "background": "#000000"
   },

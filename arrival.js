@@ -81,19 +81,23 @@ function grainOf(word) {
  * widen the output: distinct rivers cap at 4.3e9, and the birthday bound puts one
  * expected seed collision at roughly 65,000 visitors.
  *
- * That bound is survivable rather than papered over. Two visitors who DO collide
- * on a seed still never see the same passage, because their epochs differ and
- * `clock.js` folds the passage ordinal into the material hash. The claim the piece
- * makes is about the water, not about the riverbed.
+ * The epoch also derives an independent stream discriminator below. The public
+ * engine seed remains 32 bits, while passage selection receives the discriminator
+ * so two visitors whose displayed seeds collide still see different water.
  */
 export function riverOf(grain, epoch) {
   return hash(grain, epoch >>> 0, Math.floor(epoch / 4294967296));
 }
 
+/** The second half of a river identity, reproducible from a shared epoch. */
+export function streamOf(epoch) {
+  return hash(epoch >>> 0, Math.floor(epoch / 4294967296), 0x57ea9);
+}
+
 /** Mint a fresh river and keep it. `word` is optional and names it. */
 export function mint(word = null) {
   const epoch = platform.now();
-  const river = { seed: riverOf(grainOf(word), epoch), epoch };
+  const river = { seed: riverOf(grainOf(word), epoch), stream: streamOf(epoch), epoch };
   remember(river);
   return river;
 }
@@ -105,7 +109,8 @@ export function recall() {
   try {
     const raw = JSON.parse(s.getItem(KEY) ?? "null");
     if (!raw || !Number.isFinite(raw.seed) || !Number.isFinite(raw.epoch)) return null;
-    return { seed: raw.seed >>> 0, epoch: raw.epoch };
+    const stream = Number.isFinite(raw.stream) ? raw.stream >>> 0 : streamOf(raw.epoch);
+    return { seed: raw.seed >>> 0, stream, epoch: raw.epoch };
   } catch {
     return null;
   }
@@ -117,7 +122,7 @@ export function remember(river) {
   const s = store();
   if (!s) return;
   try {
-    s.setItem(KEY, JSON.stringify({ seed: river.seed, epoch: river.epoch }));
+    s.setItem(KEY, JSON.stringify({ seed: river.seed, stream: river.stream, epoch: river.epoch }));
   } catch {
     /* quota, private mode, disabled — the river still runs, it just isn't kept */
   }
@@ -131,7 +136,7 @@ export function now(river) {
 /** A river whose `now` is exactly `at`. Every navigation in the piece is this:
  *  there is no clock to set, only a birthday to move. */
 export function shiftTo(river, at) {
-  return { seed: river.seed, epoch: platform.now() - at * 1000 };
+  return { seed: river.seed, stream: river.stream ?? 0, epoch: platform.now() - at * 1000 };
 }
 
 /** Resolve an arrival into the river it should show.
@@ -161,13 +166,18 @@ export function arrive(fragment = globalThis.location?.hash ?? "") {
 
   const s = num("s");
   const e = num("e");
+  const tRaw = q.get("t");
   const t = num("t");
+  if (tRaw !== null && (t === null || t < 0)) throw new Error(`invalid cited time: ${tRaw}`);
+  const u = num("u");
 
-  if (s !== null && e !== null) return { seed: s >>> 0, epoch: e, minted: false, shifted: false };
-  if (s !== null && t !== null) {
-    return { ...shiftTo({ seed: s >>> 0, epoch: 0 }, t), minted: false, shifted: true };
+  if (s !== null && e !== null) {
+    return { seed: s >>> 0, stream: u === null ? streamOf(e) : u >>> 0, epoch: e, minted: false, shifted: false };
   }
-  if (s !== null) return { seed: s >>> 0, epoch: platform.now(), minted: false, shifted: false };
+  if (s !== null && t !== null) {
+    return { ...shiftTo({ seed: s >>> 0, stream: u === null ? 0 : u >>> 0, epoch: 0 }, t), minted: false, shifted: true };
+  }
+  if (s !== null) return { seed: s >>> 0, stream: 0, epoch: platform.now(), minted: false, shifted: false };
 
   const kept = recall();
   const named = q.get("name");
@@ -186,6 +196,6 @@ export function arrive(fragment = globalThis.location?.hash ?? "") {
 export function href(river, { at = null } = {}) {
   const base = (globalThis.location?.href ?? "").split("#")[0];
   return at === null
-    ? `${base}#s=${river.seed}&e=${river.epoch}`
-    : `${base}#s=${river.seed}&t=${at.toFixed(2)}`;
+    ? `${base}#s=${river.seed}&e=${river.epoch}&u=${river.stream ?? 0}`
+    : `${base}#s=${river.seed}&t=${at.toFixed(2)}&u=${river.stream ?? 0}`;
 }

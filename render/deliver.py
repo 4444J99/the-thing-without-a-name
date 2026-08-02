@@ -40,6 +40,7 @@ import functools
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -200,7 +201,9 @@ def registered_origin() -> Path:
         raise SystemExit(f"{REGISTER} does not declare package.origin_still.source_filename")
     if spec.get("copy_mode") != "byte-identical":
         raise SystemExit(f"{REGISTER} must declare package.origin_still.copy_mode: byte-identical")
-    return RAW / filename
+    configured_work = os.environ.get("DANSE_WORK")
+    work = Path(configured_work).expanduser() if configured_work else RAW.parent
+    return work / "raw" / filename
 
 
 def registered_audio_sources() -> list[str]:

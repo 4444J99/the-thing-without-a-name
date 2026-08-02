@@ -31,6 +31,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from corpus_contract import missing_measurement_inputs
+
 # A seam must stand this many robust deviations above the local background of the
 # gradient profile. Tuned to accept the composite's real edges while rejecting the
 # high-contrast content edges inside a poster.
@@ -177,11 +179,14 @@ def main() -> int:
     ap.add_argument("--room-frame", type=Path, help="a dancer-free frame to measure the room architecture from")
     args = ap.parse_args()
 
+    missing = missing_measurement_inputs(args.images, args.room_frame)
+    if missing:
+        for path in missing:
+            print(f"missing: {path}", file=sys.stderr)
+        return 1
+
     results = []
     for p in args.images:
-        if not p.exists():
-            print(f"missing: {p}", file=sys.stderr)
-            continue
         m = measure(p)
         results.append(m)
         print(
@@ -192,11 +197,9 @@ def main() -> int:
         print(f"  rows    {m['rows']}")
 
     lines = {}
-    if args.room_frame and args.room_frame.exists():
+    if args.room_frame:
         lines = room_lines(args.room_frame)
         print(f"room lines from {args.room_frame.name}: {lines}")
-    elif args.room_frame:
-        print(f"room frame missing: {args.room_frame}", file=sys.stderr)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(

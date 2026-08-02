@@ -103,7 +103,7 @@ function frame() {
   // restart: each passage of the phrase draws its own length and its own
   // material, so running longer means seeing further, never seeing again.
 
-  const r = frameAt(renderer, corpus, river.seed, t, program, { quantise: RECAST, matteK });
+  const r = frameAt(renderer, corpus, river.seed, t, program, { quantise: RECAST, stream: river.stream, matteK });
 
   // Elapsed within the current passage, so the readout says where you are in
   // this one rather than counting up forever into a number nobody can hold.
@@ -163,7 +163,7 @@ addEventListener("keydown", async (e) => {
   if (e.key === "m") { matteK = matteK > 0 ? 0 : 1; }
   if (e.key === "h") { el("hud").classList.toggle("hide"); }
   // Hand someone your river. They land in the same water, in sync, having
-  // exchanged nothing with you but the two numbers in the link.
+  // exchanged nothing with you but the river identity in the link.
   if (e.key === "s") {
     const link = Arrival.href(river);
     try {
@@ -181,8 +181,8 @@ addEventListener("keydown", async (e) => {
   // has to ask the passage where its own movements start.
   if (program && /^[1-9]$/.test(e.key)) {
     const t = at();
-    const p = Program.passageAt(program, river.seed, t);
-    const m = Program.movementsIn(program, river.seed, p.index)[Number(e.key) - 1];
+    const p = Program.passageAt(program, river.seed, t, river.stream);
+    const m = Program.movementsIn(program, river.seed, p.index, river.stream)[Number(e.key) - 1];
     if (m) jump(p.t0 + m.t0);
   }
 });

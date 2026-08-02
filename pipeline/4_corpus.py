@@ -46,7 +46,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from corpus_contract import room_cache_key
+from corpus_contract import frame_inventory, room_cache_key
 
 HERE = Path(__file__).resolve().parent
 WORK = Path(__file__).resolve().parent / ".work"
@@ -69,19 +69,6 @@ ROOM_WIDTH = 2048
 ROOM_QUALITY = 86
 
 MASK_THRESHOLD = 127  # white = person, per Vision's segmentation output
-
-
-def frames(work: Path) -> list[tuple[str, Path, Path, Path]]:
-    """(id, raw, mask, pose) for every frame that has all three."""
-    out = []
-    for raw in sorted((work / "raw").iterdir()):
-        if raw.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
-            continue
-        mask = work / "vision" / "mask" / f"{raw.stem}.png"
-        pose = work / "vision" / "pose" / f"{raw.stem}.json"
-        if mask.exists() and pose.exists():
-            out.append((raw.stem, raw, mask, pose))
-    return out
 
 
 # ── the empty room ─────────────────────────────────────────────────────────────
@@ -228,7 +215,13 @@ def main() -> int:
         print(f"no corpus at {args.work}/raw — run 0_export.sh first", file=sys.stderr)
         return 1
 
-    items = frames(args.work)
+    items, incomplete = frame_inventory(args.work)
+    if incomplete and args.limit is None:
+        for raw, missing in incomplete[:8]:
+            print(f"missing Vision artifact(s) for {raw.name}: {', '.join(path.name for path in missing)}", file=sys.stderr)
+        if len(incomplete) > 8:
+            print(f"… and {len(incomplete) - 8} more incomplete raw frame(s)", file=sys.stderr)
+        return 1
     if args.limit:
         items = items[: args.limit]
     if not items:

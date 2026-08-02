@@ -461,6 +461,15 @@ def check_stills(spec: dict, root: Path, rep: Report, exempt: set[str] = frozens
         ok = len(seeds) == len(named)
         rep.add("package", "stills distinct seeds", PASS if ok else FAIL, f"{len(seeds)} distinct of {len(named)}")
 
+    manifested = manifest_items(root)
+    stale = [p.name for p in named if (manifested.get(f"stills/{p.name}") or {}).get("sha256") != sha256(p)]
+    rep.add(
+        "package",
+        "stills bytes match delivery manifest",
+        FAIL if stale else PASS,
+        "; ".join(stale[:4]) if stale else f"{len(named)} seed still receipt(s) match",
+    )
+
     undersized = []
     unmeasured = 0
     for p in named:

@@ -295,7 +295,9 @@ def main() -> int:
         ap.error("nothing to do — pass --check, --verify, --arrival or --probe")
 
     with contextlib.ExitStack() as stack:
-        if args.base and reachable(args.base):
+        if args.base:
+            if not reachable(args.base):
+                ap.error(f"explicit --base is unreachable: {args.base}")
             base = args.base
         else:
             base = stack.enter_context(serve())

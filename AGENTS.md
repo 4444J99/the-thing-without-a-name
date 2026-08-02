@@ -10,12 +10,12 @@ Run the portable batch once per exact tree:
 ```bash
 python3 scripts/check-danse.py
 python3 scripts/tests/danse-delivery.test.py
-python3 -m py_compile render/*.py sound/*.py submission/*.py scripts/*.py
+python3 -m py_compile render/*.py pipeline/*.py sound/*.py submission/*.py scripts/*.py
 node --check sound/control.mjs
 bash -n done.sh
 ```
 
-The first command has a ratcheted floor of 39 portable invariants. A hydrated local
+The first command has a ratcheted floor of 40 portable invariants. A hydrated local
 grain bank adds three explicitly conditional checks. Never lower a floor or a quality
 threshold to make a change pass.
 

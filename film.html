@@ -41,6 +41,7 @@ const q = new URLSearchParams(location.search);
 const program = await Program.load(q.get("program") ?? "render/program.json");
 const cap = Program.captureOf(program, q.get("capture") ?? q.get("window") ?? "passage");
 const seed = numericParam(q, "s", program.seed, { integer: true, min: 0, max: 0xFFFFFFFF });
+const stream = numericParam(q, "u", 0, { integer: true, min: 0, max: 0xFFFFFFFF });
 const tier = q.get("tier") ?? "screen";
 const width = numericParam(q, "width", cap.w, { integer: true, min: 1 });
 const height = numericParam(q, "height", cap.h, { integer: true, min: 1 });
@@ -57,11 +58,11 @@ const from = numericParam(q, "from", 0, { min: 0 });
 const span = (() => {
   const fps = numericParam(q, "fps", cap.fps, { min: Number.EPSILON });
   if (cap.seconds > 0) return { t0: from, t1: from + cap.seconds, fps };
-  let at = Program.passageAt(program, seed, from);
+  let at = Program.passageAt(program, seed, from, stream);
   const t0 = at.t0;
   let t1 = at.t0;
   for (let k = 0; k < cap.passages; k++) {
-    at = Program.passageAt(program, seed, t1 + 1e-6);
+    at = Program.passageAt(program, seed, t1 + 1e-6, stream);
     t1 = at.t0 + at.seconds;
   }
   return { t0, t1, fps };
@@ -90,13 +91,13 @@ let missing = 0;
 async function renderAt(t) {
   // What this frame will ask for — fetched and decoded BEFORE anything is drawn,
   // so the frame does not depend on what happened to be cached.
-  const { cast } = step(corpus, seed, t, program);
+  const { cast } = step(corpus, seed, t, program, { stream });
   const ids = cast.flatMap((c) => c.layers.map((l) => l.frame)).filter(Boolean);
   if (ids.length) await requireTier(corpus, tier, ids);
 
   // `cover`, always. A 16:9 master that letterboxes a 4:3 source is a 4:3 film in
   // a 16:9 container, and a vertical Reel that does it is unwatchable on a phone.
-  const r = frameAt(renderer, corpus, seed, t, program, { quantise: 0, tier, pixelRatio: 1, fit: "cover" });
+  const r = frameAt(renderer, corpus, seed, t, program, { stream, quantise: 0, tier, pixelRatio: 1, fit: "cover" });
   renderer.gl.finish();
   drawn++;
   missing += r.missing;
@@ -106,19 +107,21 @@ async function renderAt(t) {
 // What this recording caught. The river has no name; a PASSAGE of it does, and
 // that is what a capture is named by — so a file on disk can be traced back to
 // the exact stretch of the piece it recorded and to nothing else.
-const opening = Program.passageAt(program, seed, span.t0);
+const opening = Program.passageAt(program, seed, span.t0, stream);
 
 window.danseFilm = {
   program,
   capture: cap.name,
   window: span,
   seed,
+  stream,
   seedHex: hex(seed),
   passage: opening.index,
   passageSeed: opening.seed,
   passageHex: hex(opening.seed),
   signature: signature(program, {
     riverSeed: seed,
+    riverStream: stream,
     passageSeed: opening.seed,
     passage: opening.index,
     passageT0: opening.t0,

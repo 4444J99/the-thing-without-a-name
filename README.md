@@ -247,9 +247,9 @@ cd pipeline
 ./0_export.sh                      # Photos ▸ etcetera ▸ ballerina danse ▸ danse → .work/raw
 ./1_vision/build.sh                # dependency-free Swift + Vision.framework
 ./1_vision/danse-vision .work/raw .work/vision
-python3 2_measure_transmutation.py .work/reference/T-2017-full.png \
+python3 2_measure_transmutation.py ../reference/T-2017-full.png \
         --room-frame .work/raw/IMG_1570.JPG -o .work/reference/transmutations.json
-python3 3_reconstruct.py --target .work/reference/T-2017-full.png \
+python3 3_reconstruct.py --target ../reference/T-2017-full.png \
         --frames .work/raw --depth 2 --leaves 256 -o .work/reference/score-danse.json
 python3 3_reconstruct.py ... --sweep 32,64,128,256,384,512   # rate/distortion curve
 ```

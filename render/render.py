@@ -98,7 +98,13 @@ def source_tree_sha256(args) -> str:
 def film_url(base: str, args) -> str:
     """The one URL used by planning and rendering, including seed zero."""
     params = {"capture": args.window, "from": args.start, "tier": args.tier}
-    for key, value in (("s", args.seed), ("width", args.width), ("height", args.height), ("fps", args.fps)):
+    for key, value in (
+        ("s", args.seed),
+        ("u", args.stream),
+        ("width", args.width),
+        ("height", args.height),
+        ("fps", args.fps),
+    ):
         if value is not None:
             params[key] = value
     return f"{base}/film.html?{urlencode(params)}"
@@ -114,6 +120,7 @@ def segment_identity(args, segment: int, frames: int) -> dict:
             "start": args.start,
             "tier": args.tier,
             "seed": args.seed,
+            "stream": args.stream,
             "codec": args.codec,
             "width": args.width,
             "height": args.height,
@@ -348,6 +355,7 @@ def main() -> int:
                          "forward to the next passage boundary; a `seconds` capture starts exactly here.")
     ap.add_argument("--tier", default="screen", help="corpus tier (`film` for the 4K master)")
     ap.add_argument("--seed", type=int, help="override the program's seed")
+    ap.add_argument("--stream", type=int, default=0, help="optional passage-stream discriminator")
     ap.add_argument("--codec", default="prores", choices=sorted(CODECS))
     ap.add_argument("--width", type=int, help="override the window's width")
     ap.add_argument("--height", type=int, help="override the window's height")
@@ -373,7 +381,8 @@ def main() -> int:
     args = ap.parse_args()
 
     stem_seed = args.seed if args.seed is not None else "default"
-    stem = args.out / f"{args.window}-{stem_seed}"
+    stream_suffix = f"-stream-{args.stream}" if args.stream else ""
+    stem = args.out / f"{args.window}-{stem_seed}{stream_suffix}"
     if args.concat:
         concat(stem, args.codec)
         return 0

@@ -58,16 +58,16 @@ function dwell(phase, rest = 0.16) {
  * still a pure function of (seed, t), so an offline renderer can seek anywhere,
  * render segments out of order, and get bit-identical frames.
  */
-export function state(seed, t, program = null) {
-  return program ? programState(seed, t, program) : freeState(seed, t);
+export function state(seed, t, program = null, stream = 0) {
+  return program ? programState(seed, t, program, stream) : freeState(seed, t);
 }
 
 /** Under a program, every channel is interpolated across its movement, and the
  *  MATERIAL seed changes at declared reseed points — which is how the closing
  *  movement restarts the engine with entirely different photographs while the
  *  structural moves stay the same. */
-function programState(seed, t, program) {
-  const { movement, index, u, passage } = movementAt(program, seed, t);
+function programState(seed, t, program, stream) {
+  const { movement, index, u, passage } = movementAt(program, seed, t, stream);
   const epoch = epochAt(movement, u);
   const divergence = channel(movement, "divergence", u);
 
@@ -87,6 +87,7 @@ function programState(seed, t, program) {
   return {
     t,
     riverSeed: seed,
+    riverStream: stream,
     // `reveal` is only a legibility signal — it tells the grammar the room is
     // open. Under a program the cut is declared, so nothing infers it from here.
     reveal: divergence,

@@ -53,6 +53,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from corpus_contract import block_shape_error
+
 # Block edge in composite pixels. This is the granularity of the cut SEARCH; it is not the
 # final edge precision, because REFINE moves every chosen cut to the exact pixel.
 BLOCK = 16
@@ -598,6 +600,8 @@ def main() -> int:
     globals()["REFINE_SPAN"] = args.refine_span
     C = np.asarray(Image.open(args.target).convert("RGB"), dtype=np.float32) / 255.0
     h, w, _ = C.shape
+    if error := block_shape_error(w, h, args.block):
+        ap.error(error)
     stack, names = load_stack(args.frames, (w, h), args.cache)
     print(f"target {args.target.name} {w}x{h} · corpus {len(names)} frames", file=sys.stderr)
 

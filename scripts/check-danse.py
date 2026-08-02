@@ -79,7 +79,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 39
+FLOOR = 40
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -401,7 +401,7 @@ ARRIVAL = APP / "arrival.js"
 # and can be held to the same standard as the engine.
 ARRIVAL_PROBE = """
 import { readFileSync } from "node:fs";
-import { arrive, mint, now, platform, riverOf } from "%(arrival)s";
+import { arrive, href, mint, now, platform, riverOf, streamOf } from "%(arrival)s";
 import { passageAt } from "%(program)s";
 import { state } from "%(clock)s";
 
@@ -418,11 +418,13 @@ const shared = arrive("#s=42&e=99");
 const cited = arrive("#s=42&t=10");
 const bare = arrive("#s=42");
 const fresh = arrive("");
+const citedFresh = arrive(href(fresh, {at: 10}).split("#")[1]);
 const links =
-  shared.seed === 42 && shared.epoch === 99 && !shared.shifted &&
+  shared.seed === 42 && shared.stream === streamOf(99) && shared.epoch === 99 && !shared.shifted &&
   cited.seed === 42 && Math.abs(now(cited) - 10) < 1e-9 && cited.shifted &&
   bare.seed === 42 && Math.abs(now(bare)) < 1e-9 &&
-  fresh.minted && fresh.seed === riverOf(0xabcdef01, CLOCK);
+  fresh.minted && fresh.seed === riverOf(0xabcdef01, CLOCK) &&
+  citedFresh.stream === fresh.stream && Math.abs(now(citedFresh) - 10) < 1e-9;
 
 // ── a named river ─────────────────────────────────────────────────────────────
 // `#name=` is the cheap slice of "put yourself into it": the seed comes from
@@ -468,6 +470,13 @@ const seeds = [];
 for (let i = 0; i < V; i++) { NEXT = (0x51ed0000 ^ i) >>> 0; seeds.push(mint().seed); }
 const distinct = new Set(seeds).size;
 
+// A seed collision must still produce different passage material when the two
+// arrivals happened at different epochs.
+const collisionSeed = 0x12345678;
+const collisionA = state(collisionSeed, 0, program, streamOf(1780000000000));
+const collisionB = state(collisionSeed, 0, program, streamOf(1780000000001));
+const disambiguated = collisionA.passageSeed !== collisionB.passageSeed;
+
 // ── time only moves forward ───────────────────────────────────────────────────
 // The regression this guards is the one that was there until now: a page that
 // writes `t` into the address bar and resumes from it is a loop wearing a river's
@@ -508,7 +517,7 @@ const agedMs = Number(process.hrtime.bigint() - started) / 1e6;
 
 console.log(JSON.stringify({
   links, named, deterministic, byDraw: byDraw.size, byEpoch: byEpoch.size, N,
-  visitors: V, distinct, backwards, rewound, synced, agedMs,
+  visitors: V, distinct, disambiguated, backwards, rewound, synced, agedMs,
   agedPassage: aged.index, samples: 2001,
 }));
 """
@@ -571,10 +580,15 @@ def check_arrival() -> None:
         collisions == 0,
         f"{r['distinct']}/{v} distinct — birthday expectation {expected:.3f} collisions",
     )
+    check(
+        "colliding 32-bit seeds retain distinct passage streams",
+        r["disambiguated"],
+        "the shared epoch derives a second passage-selection word",
+    )
     NOTE.append(
         "the river seed is 32 bits, so distinct rivers cap at 4.3e9 and one collision is expected "
-        "around 65,000 visitors. Two visitors who DO collide still never see the same passage: their "
-        "epochs differ, and clock.js folds the passage ordinal into the material hash."
+        "around 65,000 visitors. The shared epoch derives a second 32-bit passage-selection word, so "
+        "a displayed-seed collision does not become a passage collision."
     )
 
     check(

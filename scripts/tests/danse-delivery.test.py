@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 import wave
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,6 +58,7 @@ class DeliveryContractTest(unittest.TestCase):
             start=120.25,
             tier="film",
             seed=0,
+            stream=7,
             width=3840,
             height=2160,
             fps=24,
@@ -70,6 +71,7 @@ class DeliveryContractTest(unittest.TestCase):
                 "from": ["120.25"],
                 "tier": ["film"],
                 "s": ["0"],
+                "u": ["7"],
                 "width": ["3840"],
                 "height": ["2160"],
                 "fps": ["24"],
@@ -82,6 +84,7 @@ class DeliveryContractTest(unittest.TestCase):
             start=0.0,
             tier="film",
             seed=0,
+            stream=7,
             codec="prores",
             width=3840,
             height=2160,
@@ -132,8 +135,8 @@ class DeliveryContractTest(unittest.TestCase):
     def test_closing_signature_names_reproducible_river_position(self) -> None:
         script = """
           import { signature } from './engine/engine.js';
-          const program = {signature:{format:'river 0x%RIVER_SEED% from %PASSAGE_T0%s passage %PASSAGE%'}};
-          console.log(signature(program, {riverSeed:0, passageSeed:123, passageT0:12.5, passage:4}));
+          const program = {signature:{format:'river 0x%RIVER_SEED%/%RIVER_STREAM% from %PASSAGE_T0%s passage %PASSAGE%'}};
+          console.log(signature(program, {riverSeed:0, riverStream:7, passageSeed:123, passageT0:12.5, passage:4}));
         """
         done = subprocess.run(
             ["node", "--input-type=module", "--eval", script],
@@ -143,7 +146,7 @@ class DeliveryContractTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "river 0x000000 from 12.500s passage 4")
+        self.assertEqual(done.stdout.strip(), "river 0x000000/000007 from 12.500s passage 4")
 
     def test_room_cache_identity_changes_with_same_count_source_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,6 +159,51 @@ class DeliveryContractTest(unittest.TestCase):
             first = CORPUS_CONTRACT.room_cache_key(items)
             raw.write_bytes(b"corrected original")
             self.assertNotEqual(first, CORPUS_CONTRACT.room_cache_key(items))
+
+    def test_pipeline_inputs_fail_closed_before_partial_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "raw").mkdir()
+            (work / "vision/mask").mkdir(parents=True)
+            (work / "vision/pose").mkdir(parents=True)
+            complete_raw = work / "raw/IMG_1570.JPG"
+            incomplete_raw = work / "raw/IMG_1571.JPG"
+            complete_raw.write_bytes(b"raw one")
+            incomplete_raw.write_bytes(b"raw two")
+            (work / "vision/mask/IMG_1570.png").write_bytes(b"mask")
+            (work / "vision/pose/IMG_1570.json").write_text("{}")
+            complete, incomplete = CORPUS_CONTRACT.frame_inventory(work)
+            self.assertEqual([row[0] for row in complete], ["IMG_1570"])
+            self.assertEqual([row[0].name for row in incomplete], ["IMG_1571.JPG"])
+
+            absent = work / "missing.png"
+            self.assertEqual(CORPUS_CONTRACT.missing_measurement_inputs([complete_raw, absent]), [absent])
+            self.assertIsNone(CORPUS_CONTRACT.block_shape_error(1024, 768, 16))
+            self.assertIn("evenly divide", CORPUS_CONTRACT.block_shape_error(1024, 768, 30))
+
+            readme = (ROOT / "README.md").read_text()
+            self.assertIn("../reference/T-2017-full.png", readme)
+            self.assertNotIn(".work/reference/T-2017-full.png", readme)
+
+    def test_impractical_passage_offsets_are_rejected_without_walking(self) -> None:
+        script = """
+          import { readFileSync } from 'node:fs';
+          import { passageAt } from './engine/program.js';
+          const program = JSON.parse(readFileSync('./render/program.json', 'utf8'));
+          let rejected = false;
+          try { passageAt(program, 1, 1000000000000); } catch (error) { rejected = error instanceof RangeError; }
+          console.log(JSON.stringify({rejected}));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"rejected": True})
 
     def test_registered_room_requires_content_identity_not_basename(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -265,7 +313,12 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(report.failures, 0)
 
     def test_origin_source_is_owned_by_the_submission_register(self) -> None:
-        self.assertEqual(DELIVER.registered_origin(), DELIVER.RAW / "IMG_1594.JPG")
+        with mock.patch.dict(DELIVER.os.environ, {}, clear=True):
+            self.assertEqual(DELIVER.registered_origin(), DELIVER.RAW / "IMG_1594.JPG")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            DELIVER.os.environ, {"DANSE_WORK": tmp}, clear=True
+        ):
+            self.assertEqual(DELIVER.registered_origin(), Path(tmp) / "raw/IMG_1594.JPG")
 
     def test_attestation_template_survives_unowned_manual_requirement(self) -> None:
         register = {"requirements": [{"id": "later", "rule": "declare ownership", "check": "manual"}]}
@@ -619,6 +672,39 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(statuses["screener is one whole manifested passage"], CHECK.FAIL)
             self.assertEqual(statuses["screener bytes match delivery manifest"], CHECK.FAIL)
 
+    def test_seed_stills_match_their_manifested_bytes(self) -> None:
+        register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            stills = package / "stills"
+            stills.mkdir()
+            paths = []
+            for i in range(6):
+                path = stills / f"seed-0x{i:06X}.jpg"
+                path.write_bytes(f"still {i}".encode())
+                paths.append(path)
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {"name": f"stills/{path.name}", "sha256": CHECK.sha256(path)} for path in paths
+                        ]
+                    }
+                )
+            )
+            with mock.patch.object(CHECK, "image_size", return_value=(3840, 2160)):
+                report = CHECK.Report()
+                CHECK.check_stills(register["package"]["stills"], package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["stills bytes match delivery manifest"], CHECK.PASS)
+
+            paths[0].write_bytes(b"replacement still")
+            with mock.patch.object(CHECK, "image_size", return_value=(3840, 2160)):
+                report = CHECK.Report()
+                CHECK.check_stills(register["package"]["stills"], package, report)
+            statuses = {name: status for _, name, status, _ in report.rows}
+            self.assertEqual(statuses["stills bytes match delivery manifest"], CHECK.FAIL)
+
     def test_audio_provenance_is_bound_to_each_artifact(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
         expected = register["package"]["audio"]["source_recordings"]
@@ -800,6 +886,19 @@ class DeliveryContractTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(BROWSER.run_probe(page, "http://example.test"), 0)
         page.goto.assert_called_once_with("http://example.test/probe.html", wait_until="load")
+
+    def test_explicit_browser_base_never_falls_back_to_local_checkout(self) -> None:
+        forbidden = mock.Mock(side_effect=AssertionError("local server fallback invoked"))
+        with (
+            mock.patch.object(sys, "argv", ["browser.py", "--check", "--base", "https://unreachable.invalid"]),
+            mock.patch.object(BROWSER, "reachable", return_value=False),
+            mock.patch.object(BROWSER, "serve", forbidden),
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            BROWSER.main()
+        self.assertEqual(raised.exception.code, 2)
+        self.assertFalse(forbidden.called)
 
 
 if __name__ == "__main__":

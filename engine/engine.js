@@ -16,8 +16,8 @@ import { state } from "./clock.js";
 import { cells } from "./grammar.js";
 
 /** What is on screen at (seed, t). `program` null runs the piece free. */
-export function step(corpus, seed, t, program = null, { quantise = 0 } = {}) {
-  const s = state(seed, t, program);
+export function step(corpus, seed, t, program = null, { quantise = 0, stream = 0 } = {}) {
+  const s = state(seed, t, program, stream);
   // The state is always sampled at the exact t; only the cast may be held.
   const ct = quantise > 0 ? Math.floor(t / quantise) * quantise : t;
   const cast = cells(corpus, s.material, ct, { reveal: s.reveal, cut: s.cut, rate: s.turnover });
@@ -26,8 +26,8 @@ export function step(corpus, seed, t, program = null, { quantise = 0 } = {}) {
 
 /** Step and draw. Returns the renderer's stats plus the state that produced them. */
 export function frameAt(renderer, corpus, seed, t, program = null, opts = {}) {
-  const { quantise = 0, ...draw } = opts;
-  const { state: s, cast } = step(corpus, seed, t, program, { quantise });
+  const { quantise = 0, stream = 0, ...draw } = opts;
+  const { state: s, cast } = step(corpus, seed, t, program, { quantise, stream });
   // The signature is not an overlay added afterwards — it is the last movement,
   // and it comes through the same canvas as every frame before it.
   const closing =
@@ -60,6 +60,7 @@ export function signature(program, state) {
   return sig.format
     .replace("%SEED%", hex(seed).replace(/^0x/, ""))
     .replace("%RIVER_SEED%", hex(state?.riverSeed ?? 0).replace(/^0x/, ""))
+    .replace("%RIVER_STREAM%", hex(state?.riverStream ?? 0).replace(/^0x/, ""))
     .replace("%PASSAGE_T0%", Number(state?.passageT0 ?? 0).toFixed(3))
     .replace("%PASSAGE%", String(state?.passage ?? 0));
 }
