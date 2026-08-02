@@ -46,7 +46,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from corpus_contract import corpus_source_identity, frame_inventory, room_cache_key, tier_source_identity
+from corpus_contract import (
+    corpus_source_identity,
+    frame_inventory,
+    room_cache_key,
+    tier_output_identity,
+    tier_source_identity,
+)
 
 HERE = Path(__file__).resolve().parent
 WORK = Path(__file__).resolve().parent / ".work"
@@ -210,6 +216,10 @@ def main() -> int:
     if unknown:
         print(f"unknown tier(s): {', '.join(unknown)} — known: {', '.join(TIERS)}", file=sys.stderr)
         return 1
+    local_only_build = bool(build) and all(not TIERS[name]["ship"] for name in build) and not args.room_only
+    if local_only_build and not args.skip_room:
+        print("local-only tier builds require --skip-room to preserve the public corpus", file=sys.stderr)
+        return 1
 
     if not (args.work / "raw").is_dir():
         print(f"no corpus at {args.work}/raw — run 0_export.sh first", file=sys.stderr)
@@ -232,14 +242,14 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     room_rel = "room.webp"
 
-    if not args.skip_room:
-        img = room_plate(items, ROOM_WIDTH, args.work / "cache")
-        img.save(args.out / room_rel, "WEBP", quality=ROOM_QUALITY, method=6)
-        print(
-            f"  room.webp · {ROOM_WIDTH}×{round(ROOM_WIDTH * 3 / 4)} · "
-            f"{(args.out / room_rel).stat().st_size / 1024:.0f}K"
-        )
     if args.room_only:
+        if not args.skip_room:
+            img = room_plate(items, ROOM_WIDTH, args.work / "cache")
+            img.save(args.out / room_rel, "WEBP", quality=ROOM_QUALITY, method=6)
+            print(
+                f"  room.webp · {ROOM_WIDTH}×{round(ROOM_WIDTH * 3 / 4)} · "
+                f"{(args.out / room_rel).stat().st_size / 1024:.0f}K"
+            )
         return 0
 
     # Which frames the 2017 solve actually drew on — the engine weights toward
@@ -265,14 +275,8 @@ def main() -> int:
     strangers = sorted(fid for fid, size in native.items() if size != camera)
 
     entries = []
-    source_identity = corpus_source_identity(items)
-    tier_identities = {name: tier_source_identity(source_identity, TIERS[name], MATTE_QUALITY) for name in TIERS}
-    for i, (fid, raw, mask, pose) in enumerate(items, 1):
+    for fid, raw, mask, pose in items:
         geom = figure_geometry(mask)
-        for tier in build:
-            spec = TIERS[tier]
-            encode(raw, args.out / "plates" / tier / f"{fid}.webp", spec["width"], spec["quality"])
-            encode(mask, args.out / "mattes" / tier / f"{fid}.webp", spec["width"], MATTE_QUALITY, grey=True)
         entries.append(
             {
                 "id": fid,
@@ -287,18 +291,90 @@ def main() -> int:
                 "score_area": in_score.get(fid, 0.0),
             }
         )
-        print(f"\r  plates · {i}/{len(items)}", end="", flush=True)
-    print()
 
+    score_rel = "score-2017.json" if score_path.exists() else None
+    if local_only_build:
+        public_path = args.out / "manifest.json"
+        try:
+            public = json.loads(public_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            print("local-only tier build requires an existing valid public manifest.json", file=sys.stderr)
+            return 1
+        frame_fields = ("id", "source", "native", "registered", "figure", "joints", "score_area")
+        public_frames = public.get("frames") if isinstance(public, dict) else None
+        public_tiers = public.get("tiers") if isinstance(public, dict) else None
+        projected_frames = (
+            [{key: frame.get(key) for key in frame_fields} for frame in public_frames]
+            if isinstance(public_frames, list) and all(isinstance(frame, dict) for frame in public_frames)
+            else None
+        )
+        compatible = (
+            isinstance(public, dict)
+            and public.get("schema") == "danse.corpus.v1"
+            and public.get("camera") == list(camera)
+            and public.get("score") == score_rel
+            and isinstance(public_tiers, dict)
+            and set(public_tiers) == set(SHIPPED)
+            and projected_frames == entries
+        )
+        if not compatible:
+            print(
+                "local-only tier inputs do not match the public camera, score, frame metadata, and shipped tiers; "
+                "refusing to touch local runtime authorization",
+                file=sys.stderr,
+            )
+            return 1
+
+    if not args.skip_room:
+        img = room_plate(items, ROOM_WIDTH, args.work / "cache")
+        img.save(args.out / room_rel, "WEBP", quality=ROOM_QUALITY, method=6)
+        print(
+            f"  room.webp · {ROOM_WIDTH}×{round(ROOM_WIDTH * 3 / 4)} · "
+            f"{(args.out / room_rel).stat().st_size / 1024:.0f}K"
+        )
+
+    source_identity = corpus_source_identity(items)
+    tier_identities = {name: tier_source_identity(source_identity, TIERS[name], MATTE_QUALITY) for name in TIERS}
+    frame_ids = [fid for fid, _, _, _ in items]
     receipt_root = args.out / "tier-receipts"
     receipt_root.mkdir(exist_ok=True)
+    local_path = args.out / "manifest.local.json"
+    # An interrupted rebuild must not leave an older receipt or local manifest
+    # authorizing the partially replaced tier. New authorization is written only
+    # after compatibility, exact inventory, and every output byte are verified.
     for name in build:
+        (receipt_root / f"{name}.json").unlink(missing_ok=True)
+    if any(not TIERS[name]["ship"] for name in build):
+        local_path.unlink(missing_ok=True)
+
+    if build:
+        for i, (fid, raw, mask, _) in enumerate(items, 1):
+            for tier in build:
+                spec = TIERS[tier]
+                encode(raw, args.out / "plates" / tier / f"{fid}.webp", spec["width"], spec["quality"])
+                encode(mask, args.out / "mattes" / tier / f"{fid}.webp", spec["width"], MATTE_QUALITY, grey=True)
+            print(f"\r  plates · {i}/{len(items)}", end="", flush=True)
+        print()
+
+    built_output_identities = {}
+    for name in build:
+        output_identity = tier_output_identity(args.out, name, frame_ids)
+        if output_identity is None:
+            print(
+                f"{name} tier output inventory is incomplete or contains unexpected artifacts; refusing its receipt",
+                file=sys.stderr,
+            )
+            return 1
+        built_output_identities[name] = output_identity
+
+    for name, output_identity in built_output_identities.items():
         (receipt_root / f"{name}.json").write_text(
             json.dumps(
                 {
-                    "schema": "danse.corpus.tier-receipt.v1",
+                    "schema": "danse.corpus.tier-receipt.v2",
                     "tier": name,
                     "source_sha256": tier_identities[name],
+                    "output_sha256": output_identity,
                 },
                 indent=1,
             )
@@ -321,16 +397,20 @@ def main() -> int:
             data = json.loads(receipt.read_text())
         except (OSError, json.JSONDecodeError):
             return False
-        return (
+        if not (
             isinstance(data, dict)
-            and data.get("schema") == "danse.corpus.tier-receipt.v1"
+            and data.get("schema") == "danse.corpus.tier-receipt.v2"
             and data.get("tier") == name
             and data.get("source_sha256") == tier_identities[name]
-            and (args.out / "plates" / name).is_dir()
-            and (args.out / "mattes" / name).is_dir()
-        )
+        ):
+            return False
+        output_identity = built_output_identities.get(name)
+        if output_identity is None:
+            output_identity = tier_output_identity(args.out, name, frame_ids)
+        return output_identity is not None and data.get("output_sha256") == output_identity
 
-    present = {name: tier_bytes(name) for name in TIERS if tier_is_current(name)}
+    eligible_tiers = [name for name in TIERS if not TIERS[name]["ship"]] if local_only_build else TIERS
+    present = {name: tier_bytes(name) for name in eligible_tiers if tier_is_current(name)}
 
     def tier_entry(name: str, nbytes: int) -> dict:
         return {
@@ -347,7 +427,6 @@ def main() -> int:
     # when it is there. A committed manifest advertising 245 MB of plates that are
     # not in the repo would send every fresh checkout looking for 404s.
     local = {n: b for n, b in present.items() if not TIERS[n]["ship"]}
-    local_path = args.out / "manifest.local.json"
     if local:
         local_path.write_text(
             json.dumps(
@@ -358,25 +437,27 @@ def main() -> int:
     else:
         local_path.unlink(missing_ok=True)
 
-    manifest = {
-        "schema": "danse.corpus.v1",
-        "shot": "2017-06-20",
-        "convention": "fractions of frame size, y measured DOWN from the top",
-        "room": {
-            "file": room_rel,
-            "width": ROOM_WIDTH,
-            "height": round(ROOM_WIDTH * 3 / 4),
-            "derived": "masked per-pixel median over all frames",
-        },
-        "camera": list(camera),
-        # Shipped tiers only. A local tier's entry lives in manifest.local.json.
-        "tiers": {name: tier_entry(name, nbytes) for name, nbytes in present.items() if TIERS[name]["ship"]},
-        "score": "score-2017.json" if score_path.exists() else None,
-        "frames": entries,
-    }
-    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
-
-    print(f"\nmanifest.json · {len(entries)} frames · camera {camera[0]}×{camera[1]}")
+    if local_only_build:
+        print(f"\nmanifest.json · preserved public corpus · {len(entries)} frames · camera {camera[0]}×{camera[1]}")
+    else:
+        manifest = {
+            "schema": "danse.corpus.v1",
+            "shot": "2017-06-20",
+            "convention": "fractions of frame size, y measured DOWN from the top",
+            "room": {
+                "file": room_rel,
+                "width": ROOM_WIDTH,
+                "height": round(ROOM_WIDTH * 3 / 4),
+                "derived": "masked per-pixel median over all frames",
+            },
+            "camera": list(camera),
+            # Shipped tiers only. A local tier's entry lives in manifest.local.json.
+            "tiers": {name: tier_entry(name, nbytes) for name, nbytes in present.items() if TIERS[name]["ship"]},
+            "score": score_rel,
+            "frames": entries,
+        }
+        (args.out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        print(f"\nmanifest.json · {len(entries)} frames · camera {camera[0]}×{camera[1]}")
     for name, nbytes in present.items():
         flags = "eager" if TIERS[name]["eager"] else "lazy"
         if not TIERS[name]["ship"]:

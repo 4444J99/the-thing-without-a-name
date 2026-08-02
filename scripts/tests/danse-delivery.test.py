@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -40,6 +41,15 @@ BROWSER = load("danse_browser_test", ROOT / "render/browser.py")
 OFFLINE = load("danse_offline_test", ROOT / "render/render.py")
 BANK_CONTRACT = sys.modules["bank_contract"]
 CORPUS_CONTRACT = load("danse_corpus_contract_test", ROOT / "pipeline/corpus_contract.py")
+_prior_corpus_contract = sys.modules.get("corpus_contract")
+sys.modules["corpus_contract"] = CORPUS_CONTRACT
+try:
+    CORPUS_PIPELINE = load("danse_corpus_pipeline_test", ROOT / "pipeline/4_corpus.py")
+finally:
+    if _prior_corpus_contract is None:
+        del sys.modules["corpus_contract"]
+    else:
+        sys.modules["corpus_contract"] = _prior_corpus_contract
 RESOLVE = load("danse_resolve_test", ROOT / "sound/resolve.py")
 SPAN = {
     "t0": 0.0,
@@ -50,6 +60,54 @@ SPAN = {
     "passage": 0,
     "capture": "passage",
 }
+
+
+def corpus_fixture(root: Path) -> tuple[Path, Path]:
+    work = root / "work"
+    out = root / "out"
+    raw = work / "raw/IMG_1570.png"
+    mask = work / "vision/mask/IMG_1570.png"
+    pose = work / "vision/pose/IMG_1570.json"
+    raw.parent.mkdir(parents=True)
+    mask.parent.mkdir(parents=True)
+    pose.parent.mkdir(parents=True)
+    CORPUS_PIPELINE.Image.init()
+    CORPUS_PIPELINE.Image.new("RGB", (4, 3), "white").save(raw, "PNG")
+    CORPUS_PIPELINE.Image.new("L", (4, 3), 255).save(mask, "PNG")
+    pose.write_text("{}")
+    return work, out
+
+
+def corpus_public_manifest(work: Path) -> dict:
+    items, incomplete = CORPUS_CONTRACT.frame_inventory(work)
+    assert not incomplete and len(items) == 1
+    fid, raw, mask, pose = items[0]
+    with CORPUS_PIPELINE.Image.open(raw) as image:
+        native = list(image.size)
+    return {
+        "schema": "danse.corpus.v1",
+        "camera": native,
+        "tiers": {name: {"sentinel": name} for name in CORPUS_PIPELINE.SHIPPED},
+        "score": None,
+        "frames": [
+            {
+                "id": fid,
+                "source": raw.name,
+                "native": native,
+                "registered": True,
+                "figure": CORPUS_PIPELINE.figure_geometry(mask),
+                "joints": CORPUS_PIPELINE.joints_of(pose),
+                "score_area": 0.0,
+            }
+        ],
+        "sentinel": "public bytes must survive",
+    }
+
+
+def run_corpus_pipeline(work: Path, out: Path, tiers: str) -> int:
+    argv = ["4_corpus.py", "--work", str(work), "--out", str(out), "--skip-room", "--tiers", tiers]
+    with mock.patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        return CORPUS_PIPELINE.main()
 
 
 class DeliveryContractTest(unittest.TestCase):
@@ -135,6 +193,7 @@ class DeliveryContractTest(unittest.TestCase):
         script = """
           import { numericParam } from './engine/query.js';
           import { requireTier } from './engine/tier.js';
+          import { fromData } from './engine/corpus.js';
           const zero = numericParam(new URLSearchParams('s=0'), 's', 99, {integer:true,min:0});
           let invalid = false;
           try { numericParam(new URLSearchParams('s=nope'), 's', 99, {integer:true,min:0}); } catch { invalid = true; }
@@ -144,7 +203,21 @@ class DeliveryContractTest(unittest.TestCase):
           };
           let missingMatte = false;
           try { await requireTier(corpus, 'film', ['IMG_1570']); } catch { missingMatte = true; }
-          console.log(JSON.stringify({zero, invalid, missingMatte}));
+          const requested = [];
+          globalThis.Image = class { set src(value) { requested.push(value); } };
+          const progressive = fromData('/corpus/', {
+            tiers: {browse:{width:512,eager:true}, screen:{width:1024,eager:false}},
+            frames: [],
+          });
+          const fallback = {};
+          progressive.textures.set('plates/browse/IMG_1570', fallback);
+          const got = progressive.get(null, 'plates', 'IMG_1570', 'screen');
+          progressive.get(null, 'plates', 'IMG_1570', 'screen');
+          console.log(JSON.stringify({
+            zero, invalid, missingMatte,
+            progressiveFallback: got === fallback,
+            progressiveRequests: requested,
+          }));
         """
         done = subprocess.run(
             ["node", "--input-type=module", "--eval", script],
@@ -154,7 +227,16 @@ class DeliveryContractTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(json.loads(done.stdout), {"zero": 0, "invalid": True, "missingMatte": True})
+        self.assertEqual(
+            json.loads(done.stdout),
+            {
+                "zero": 0,
+                "invalid": True,
+                "missingMatte": True,
+                "progressiveFallback": True,
+                "progressiveRequests": ["/corpus/plates/screen/IMG_1570.webp"],
+            },
+        )
 
     def test_closing_signature_names_reproducible_river_position(self) -> None:
         script = """
@@ -189,6 +271,155 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertNotEqual(source_receipt, CORPUS_CONTRACT.source_set_receipt([raw]))
             self.assertNotEqual(source_identity, CORPUS_CONTRACT.corpus_source_identity(items))
             self.assertNotEqual(tier_identity, CORPUS_CONTRACT.tier_source_identity(source_identity, {"width": 1024}, 85))
+
+    def test_tier_output_identity_rejects_missing_and_extra_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plate = root / "plates/browse/IMG_1570.webp"
+            matte = root / "mattes/browse/IMG_1570.webp"
+            plate.parent.mkdir(parents=True)
+            matte.parent.mkdir(parents=True)
+            plate.write_bytes(b"plate bytes")
+            matte.write_bytes(b"matte bytes")
+
+            identity = CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"])
+            self.assertIsNotNone(identity)
+            matte.unlink()
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+            matte.write_bytes(b"matte bytes")
+            (matte.parent / "unexpected.webp").write_bytes(b"surplus")
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+
+    def test_tier_retention_rejects_mutated_bytes_and_source_only_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, out = corpus_fixture(root)
+            plate = out / "plates/browse/IMG_1570.webp"
+            matte = out / "mattes/browse/IMG_1570.webp"
+            receipt = out / "tier-receipts/browse.json"
+            plate.parent.mkdir(parents=True)
+            matte.parent.mkdir(parents=True)
+            receipt.parent.mkdir(parents=True)
+            plate.write_bytes(b"encoded plate")
+            matte.write_bytes(b"encoded matte")
+            items, incomplete = CORPUS_CONTRACT.frame_inventory(work)
+            self.assertFalse(incomplete)
+            source = CORPUS_CONTRACT.tier_source_identity(
+                CORPUS_CONTRACT.corpus_source_identity(items),
+                CORPUS_PIPELINE.TIERS["browse"],
+                CORPUS_PIPELINE.MATTE_QUALITY,
+            )
+            output = CORPUS_CONTRACT.tier_output_identity(out, "browse", ["IMG_1570"])
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.corpus.tier-receipt.v2",
+                        "tier": "browse",
+                        "source_sha256": source,
+                        "output_sha256": output,
+                    }
+                )
+            )
+
+            self.assertEqual(run_corpus_pipeline(work, out, ""), 0)
+            self.assertEqual(set(json.loads((out / "manifest.json").read_text())["tiers"]), {"browse"})
+
+            plate.write_bytes(b"mutated plate")
+            self.assertEqual(run_corpus_pipeline(work, out, ""), 0)
+            self.assertEqual(json.loads((out / "manifest.json").read_text())["tiers"], {})
+
+            plate.write_bytes(b"encoded plate")
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.corpus.tier-receipt.v1",
+                        "tier": "browse",
+                        "source_sha256": source,
+                    }
+                )
+            )
+            self.assertEqual(run_corpus_pipeline(work, out, ""), 0)
+            self.assertEqual(json.loads((out / "manifest.json").read_text())["tiers"], {})
+
+    def test_interrupted_tier_rebuild_cannot_retain_its_old_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, out = corpus_fixture(root)
+            public = out / "manifest.json"
+            public.parent.mkdir(parents=True)
+            public_bytes = (json.dumps(corpus_public_manifest(work), indent=1) + "\n").encode()
+            public.write_bytes(public_bytes)
+            receipt = out / "tier-receipts/film.json"
+            local = out / "manifest.local.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text('{"schema":"danse.corpus.tier-receipt.v2"}')
+            local.write_text('{"schema":"danse.corpus.local.v1"}')
+
+            with mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=RuntimeError("interrupted")):
+                with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                    run_corpus_pipeline(work, out, "film")
+            self.assertEqual(public.read_bytes(), public_bytes)
+            self.assertFalse(receipt.exists())
+            self.assertFalse(local.exists())
+
+    def test_local_tier_build_preserves_the_compatible_public_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, out = corpus_fixture(root)
+            public = out / "manifest.json"
+            public.parent.mkdir(parents=True)
+            public_bytes = (json.dumps(corpus_public_manifest(work), indent=1) + "\n").encode()
+            public.write_bytes(public_bytes)
+
+            def fake_encode(_src, dest, *_args, **_kwargs):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(dest.relative_to(out).as_posix().encode())
+                return dest.stat().st_size
+
+            with mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=fake_encode):
+                self.assertEqual(run_corpus_pipeline(work, out, "film"), 0)
+
+            self.assertEqual(public.read_bytes(), public_bytes)
+            local = json.loads((out / "manifest.local.json").read_text())
+            self.assertEqual(set(local["tiers"]), {"film"})
+            receipt = json.loads((out / "tier-receipts/film.json").read_text())
+            self.assertEqual(receipt["schema"], "danse.corpus.tier-receipt.v2")
+            self.assertEqual(len(receipt["output_sha256"]), 64)
+            self.assertIn("tier-receipts/film.json", (ROOT / "corpus/.gitignore").read_text().splitlines())
+
+    def test_local_tier_mismatch_preserves_prior_authorization_and_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, out = corpus_fixture(root)
+            public = out / "manifest.json"
+            incompatible = corpus_public_manifest(work)
+            incompatible["frames"][0]["source"] = "different-source.png"
+            public.parent.mkdir(parents=True)
+            public_bytes = (json.dumps(incompatible, indent=1) + "\n").encode()
+            public.write_bytes(public_bytes)
+            receipt = out / "tier-receipts/film.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_bytes(b"prior film receipt")
+            local = out / "manifest.local.json"
+            local.write_bytes(b"prior local manifest")
+            encoder = mock.Mock(side_effect=AssertionError("incompatible build encoded output"))
+
+            with mock.patch.object(CORPUS_PIPELINE, "encode", encoder):
+                self.assertEqual(run_corpus_pipeline(work, out, "film"), 1)
+
+            self.assertFalse(encoder.called)
+            self.assertEqual(public.read_bytes(), public_bytes)
+            self.assertEqual(receipt.read_bytes(), b"prior film receipt")
+            self.assertEqual(local.read_bytes(), b"prior local manifest")
+
+    def test_unregistered_recording_cannot_become_room_material(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "unregistered.mov"
+            candidate.write_bytes(b"private recording bytes")
+            self.assertEqual(RESOLVE.room_content_matches(candidate, None), (False, None))
+            expected = RESOLVE.sha256_file(candidate)
+            self.assertEqual(RESOLVE.room_content_matches(candidate, expected), (True, expected))
+            self.assertEqual(RESOLVE.room_content_matches(candidate, "0" * 64), (False, expected))
 
     def test_pipeline_inputs_fail_closed_before_partial_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -302,32 +533,39 @@ class DeliveryContractTest(unittest.TestCase):
             out = Path(tmp) / "render"
             argv = ["deliver.py", "--only", "text", "--out", str(out)]
             forbidden = mock.Mock(side_effect=AssertionError("render dependency invoked"))
+            nonmedia_probe = mock.Mock(side_effect=AssertionError("text passed to ffprobe"))
             with (
                 mock.patch.object(sys, "argv", argv),
                 mock.patch.object(DELIVER, "query_capture_span", forbidden),
                 mock.patch.object(DELIVER, "passage_picture", forbidden),
                 mock.patch.object(DELIVER, "passage_sound", forbidden),
-                mock.patch.object(DELIVER, "probe", return_value=None),
+                mock.patch.object(DELIVER, "probe", nonmedia_probe),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(DELIVER.main(), 0)
             self.assertFalse(forbidden.called)
+            self.assertFalse(nonmedia_probe.called)
             self.assertTrue((out / "package/text/synopsis_short.txt").is_file())
             attest = yaml.safe_load((out / "package/attest.yaml").read_text())
             self.assertTrue(attest)
             self.assertTrue(all(value is None for value in attest.values()))
+            items = json.loads((out / "package/manifest.json").read_text())["items"]
+            self.assertTrue(items)
+            self.assertTrue(all(set(item) == {"name", "bytes", "sha256"} for item in items))
 
     def test_only_origin_copies_source_bytes_under_stills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "IMG_1594.JPG"
             source.write_bytes(b"camera-original")
+            source_digest = DELIVER.digest(source)
             out = root / "render"
             argv = ["deliver.py", "--only", "origin", "--out", str(out)]
             forbidden = mock.Mock(side_effect=AssertionError("render dependency invoked"))
             with (
                 mock.patch.object(sys, "argv", argv),
                 mock.patch.object(DELIVER, "registered_origin", return_value=source),
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=source_digest),
                 mock.patch.object(DELIVER, "query_capture_span", forbidden),
                 mock.patch.object(DELIVER, "passage_picture", forbidden),
                 mock.patch.object(DELIVER, "passage_sound", forbidden),
@@ -339,17 +577,150 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(copied.read_bytes(), source.read_bytes())
             self.assertFalse(forbidden.called)
             register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+            origin_spec = dict(register["package"]["origin_still"], source_sha256=source_digest)
             report = CHECK.Report()
-            CHECK.check_origin_still(register["package"]["origin_still"], out / "package", report)
+            CHECK.check_origin_still(origin_spec, out / "package", report)
             self.assertEqual(report.failures, 0)
+            wrong = CHECK.Report()
+            CHECK.check_origin_still({**origin_spec, "source_sha256": "0" * 64}, out / "package", wrong)
+            self.assertEqual(wrong.failures, 1)
+
+            source.write_bytes(b"different camera bytes")
+            with (
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=source_digest),
+                self.assertRaises(SystemExit),
+            ):
+                DELIVER.deliver_origin(source, True)
 
     def test_origin_source_is_owned_by_the_submission_register(self) -> None:
+        self.assertEqual(
+            DELIVER.registered_origin_source_sha256(),
+            "72b4f8f1c553c40bd4ec2de9956d547493ed17aaa5eabe172260c2156c8fde42",
+        )
         with mock.patch.dict(DELIVER.os.environ, {}, clear=True):
             self.assertEqual(DELIVER.registered_origin(), DELIVER.RAW / "IMG_1594.JPG")
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
             DELIVER.os.environ, {"DANSE_WORK": tmp}, clear=True
         ):
             self.assertEqual(DELIVER.registered_origin(), Path(tmp) / "raw/IMG_1594.JPG")
+
+    def test_reused_origin_repairs_missing_or_stale_manifest_receipt(self) -> None:
+        for prior_receipt in ("missing", "stale"):
+            with self.subTest(prior_receipt=prior_receipt), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                out = root / "render"
+                package = out / "package"
+                origin_copy = package / "stills/origin-2017.jpg"
+                origin_copy.parent.mkdir(parents=True)
+                origin_copy.write_bytes(b"preserved camera original")
+                expected = DELIVER.digest(origin_copy)
+                if prior_receipt == "stale":
+                    (package / "manifest.json").write_text(
+                        json.dumps(
+                            {
+                                "items": [
+                                    {
+                                        "name": "stills/origin-2017.jpg",
+                                        "source": "wrong.jpg",
+                                        "copy_mode": "reencoded",
+                                        "sha256": "0" * 64,
+                                        "source_sha256": "0" * 64,
+                                    }
+                                ]
+                            }
+                        )
+                    )
+                missing_raw = root / "unmounted/IMG_1594.JPG"
+                forbidden = mock.Mock(side_effect=AssertionError("passage dependency invoked"))
+                with (
+                    mock.patch.object(sys, "argv", ["deliver.py", "--only", "origin", "--out", str(out)]),
+                    mock.patch.object(DELIVER, "registered_origin", return_value=missing_raw),
+                    mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                    mock.patch.object(DELIVER, "query_capture_span", forbidden),
+                    mock.patch.object(DELIVER, "passage_picture", forbidden),
+                    mock.patch.object(DELIVER, "passage_sound", forbidden),
+                    mock.patch.object(DELIVER, "probe", return_value=None),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(DELIVER.main(), 0)
+                self.assertFalse(forbidden.called)
+                self.assertEqual(origin_copy.read_bytes(), b"preserved camera original")
+                item = next(
+                    entry
+                    for entry in json.loads((package / "manifest.json").read_text())["items"]
+                    if entry["name"] == "stills/origin-2017.jpg"
+                )
+                self.assertEqual(
+                    item,
+                    {
+                        "name": "stills/origin-2017.jpg",
+                        "bytes": len(b"preserved camera original"),
+                        "sha256": expected,
+                        "source": "IMG_1594.JPG",
+                        "source_sha256": expected,
+                        "copy_mode": "byte-identical",
+                    },
+                )
+
+    def test_forged_origin_receipt_cannot_approve_tampered_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            origin_copy = package / "stills/origin-2017.jpg"
+            origin_copy.parent.mkdir(parents=True)
+            origin_copy.write_bytes(b"tampered bytes")
+            tampered = CHECK.sha256(origin_copy)
+            (package / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "name": "stills/origin-2017.jpg",
+                                "source": "IMG_1594.JPG",
+                                "copy_mode": "byte-identical",
+                                "sha256": tampered,
+                                "source_sha256": tampered,
+                            }
+                        ]
+                    }
+                )
+            )
+            spec = {
+                "filename": "origin-2017.jpg",
+                "source_filename": "IMG_1594.JPG",
+                "source_sha256": hashlib.sha256(b"camera original").hexdigest(),
+                "copy_mode": "byte-identical",
+            }
+            report = CHECK.Report()
+            CHECK.check_origin_still(spec, package, report)
+            status = next(
+                row[2]
+                for row in report.rows
+                if row[1] == "origin is byte-identical to its registered source"
+            )
+            self.assertEqual(status, CHECK.FAIL)
+
+    def test_origin_registration_rejects_missing_or_malformed_sha256(self) -> None:
+        cases = {
+            "missing": {},
+            "null": {"source_sha256": None},
+            "short": {"source_sha256": "0" * 63},
+            "non-hex": {"source_sha256": "g" * 64},
+            "non-string": {"source_sha256": 7},
+        }
+        for label, digest_field in cases.items():
+            register = {
+                "package": {
+                    "origin_still": {
+                        "source_filename": "IMG_1594.JPG",
+                        "copy_mode": "byte-identical",
+                        **digest_field,
+                    }
+                }
+            }
+            with mock.patch.object(DELIVER.yaml, "safe_load", return_value=register):
+                for reader in (DELIVER.registered_origin, DELIVER.registered_origin_source_sha256):
+                    with self.subTest(case=label, reader=reader.__name__), self.assertRaises(SystemExit):
+                        reader()
 
     def test_attestation_template_survives_unowned_manual_requirement(self) -> None:
         register = {
@@ -441,6 +812,7 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(DELIVER, "probe", side_effect=fake_probe),
                 mock.patch.object(DELIVER, "score_provenance", return_value={"sources": ["a", "b"]}),
                 mock.patch.object(DELIVER.shutil, "which", side_effect=lambda command: f"/tools/{command}"),
+                mock.patch.object(DELIVER.importlib.util, "find_spec", return_value=None),
                 mock.patch.object(
                     DELIVER.subprocess,
                     "run",
@@ -494,7 +866,7 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertIn("--check-concat", run.call_args_list[0].args[0])
             self.assertIn("--resume", run.call_args_list[1].args[0])
 
-    def test_preflight_reuses_manifested_origin_without_raw_source(self) -> None:
+    def test_preflight_reuses_registered_origin_bytes_without_raw_source(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -502,29 +874,40 @@ class DeliveryContractTest(unittest.TestCase):
             origin_copy = package / "stills/origin-2017.jpg"
             origin_copy.parent.mkdir(parents=True)
             origin_copy.write_bytes(b"preserved origin")
-            (package / "manifest.json").write_text(
-                json.dumps(
-                    {
-                        "passage_seed": DELIVER.hexseed(SPAN["seed"]),
-                        "passage": SPAN["passage"],
-                        "t0": SPAN["t0"],
-                        "t1": SPAN["t1"],
-                        "duration": SPAN["duration"],
-                        "items": [{"name": "stills/origin-2017.jpg", "sha256": DELIVER.digest(origin_copy)}],
-                    }
-                )
-            )
             missing_raw = root / "unmounted/IMG_1594.JPG"
             with (
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/node"),
+                mock.patch.object(
+                    DELIVER, "registered_origin_source_sha256", return_value=DELIVER.digest(origin_copy)
+                ),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(
-                    DELIVER.preflight(program, SPAN, {"origin"}, set(), "film", root, package, missing_raw),
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        set(),
+                        "film",
+                        root,
+                        package,
+                        missing_raw,
+                        passage_requested=False,
+                    ),
                     0,
                 )
                 self.assertEqual(
-                    DELIVER.preflight(program, SPAN, {"origin"}, {"origin"}, "film", root, package, missing_raw),
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        {"origin"},
+                        "film",
+                        root,
+                        package,
+                        missing_raw,
+                        passage_requested=False,
+                    ),
                     1,
                 )
 

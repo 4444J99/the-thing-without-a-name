@@ -157,8 +157,15 @@ class Corpus {
         this.textures.set(key, tex);
         return tex;
       }
+      // A declared target is first in `order`. Ask for it before accepting a
+      // cached lower tier, otherwise the fallback returns forever and the
+      // progressive texture can never upgrade. `request()` deduplicates this
+      // against an in-flight fetch.
+      if (tier === want) this.request(kind, want, id);
     }
-    this.request(kind, want, id);
+    // Preserve the previous fallback-first behavior for an undeclared tier.
+    // Offline tiers become declared when manifest.local.json is loaded.
+    if (at < 0) this.request(kind, want, id);
     return null;
   }
 

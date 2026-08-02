@@ -496,7 +496,7 @@ def check_stills(spec: dict, root: Path, rep: Report, exempt: set[str] = frozens
 
 def check_origin_still(spec: dict, root: Path, rep: Report) -> None:
     path = root / "stills" / spec["filename"]
-    exists = path.exists()
+    exists = path.is_file()
     rep.add(
         "package",
         "unaltered 2017 photograph",
@@ -505,18 +505,17 @@ def check_origin_still(spec: dict, root: Path, rep: Report) -> None:
     )
     if not exists:
         return
-    manifest_path = root / "manifest.json"
-    manifest = json.loads(manifest_path.read_text()) if manifest_path.is_file() else {}
-    item = next(
-        (entry for entry in manifest.get("items", []) if entry.get("name") == f"stills/{spec['filename']}"),
-        {},
-    )
+    item = manifest_items(root).get(f"stills/{spec['filename']}") or {}
     actual = sha256(path)
+    registered = spec.get("source_sha256")
     copied = (
-        item.get("source") == spec["source_filename"]
+        isinstance(registered, str)
+        and bool(re.fullmatch(r"[0-9a-fA-F]{64}", registered))
+        and actual == registered.lower()
+        and item.get("source") == spec["source_filename"]
         and item.get("copy_mode") == spec["copy_mode"]
         and item.get("sha256") == actual
-        and item.get("source_sha256") == actual
+        and item.get("source_sha256") == registered.lower()
     )
     rep.add(
         "package",

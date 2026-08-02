@@ -198,6 +198,7 @@ package:
     # One unaltered 2017 photograph, so the corpus is visible as photography.
     filename: "origin-2017.jpg"
     source_filename: "IMG_1594.JPG"
+    source_sha256: "72b4f8f1c553c40bd4ec2de9956d547493ed17aaa5eabe172260c2156c8fde42"
     copy_mode: byte-identical
   trailer:
     required: false
