@@ -46,7 +46,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from corpus_contract import frame_inventory, room_cache_key
+from corpus_contract import corpus_source_identity, frame_inventory, room_cache_key, tier_source_identity
 
 HERE = Path(__file__).resolve().parent
 WORK = Path(__file__).resolve().parent / ".work"
@@ -265,6 +265,8 @@ def main() -> int:
     strangers = sorted(fid for fid, size in native.items() if size != camera)
 
     entries = []
+    source_identity = corpus_source_identity(items)
+    tier_identities = {name: tier_source_identity(source_identity, TIERS[name], MATTE_QUALITY) for name in TIERS}
     for i, (fid, raw, mask, pose) in enumerate(items, 1):
         geom = figure_geometry(mask)
         for tier in build:
@@ -288,6 +290,21 @@ def main() -> int:
         print(f"\r  plates · {i}/{len(items)}", end="", flush=True)
     print()
 
+    receipt_root = args.out / "tier-receipts"
+    receipt_root.mkdir(exist_ok=True)
+    for name in build:
+        (receipt_root / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "schema": "danse.corpus.tier-receipt.v1",
+                    "tier": name,
+                    "source_sha256": tier_identities[name],
+                },
+                indent=1,
+            )
+            + "\n"
+        )
+
     # Measured from disk, not accumulated during encode, so a run that builds one
     # tier still writes a manifest telling the truth about all of them.
     def tier_bytes(name: str) -> int:
@@ -298,7 +315,22 @@ def main() -> int:
                 total += sum(p.stat().st_size for p in d.glob("*.webp"))
         return total
 
-    present = {name: tier_bytes(name) for name in TIERS if (args.out / "plates" / name).is_dir()}
+    def tier_is_current(name: str) -> bool:
+        receipt = receipt_root / f"{name}.json"
+        try:
+            data = json.loads(receipt.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+        return (
+            isinstance(data, dict)
+            and data.get("schema") == "danse.corpus.tier-receipt.v1"
+            and data.get("tier") == name
+            and data.get("source_sha256") == tier_identities[name]
+            and (args.out / "plates" / name).is_dir()
+            and (args.out / "mattes" / name).is_dir()
+        )
+
+    present = {name: tier_bytes(name) for name in TIERS if tier_is_current(name)}
 
     def tier_entry(name: str, nbytes: int) -> dict:
         return {

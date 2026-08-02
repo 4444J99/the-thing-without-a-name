@@ -148,6 +148,36 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+@functools.lru_cache(maxsize=None)
+def delivery_source_sha256(tier: str) -> str:
+    """Identity of every tracked or derived byte that can change a package artifact."""
+    roots = [
+        DANSE / "film.html",
+        DANSE / "arrival.js",
+        PROGRAM,
+        HERE / "deliver.py",
+        HERE / "render.py",
+        HERE / "browser.py",
+        DANSE / "corpus/manifest.json",
+        DANSE / "corpus/room.webp",
+        DANSE / "corpus/score-2017.json",
+        DANSE / "sound/control.mjs",
+        DANSE / "sound/score.py",
+        DANSE / "sound/rng.py",
+        DANSE / "sound/bank_contract.py",
+        BANK,
+    ]
+    roots.extend(sorted((DANSE / "engine").glob("*.js")))
+    for kind in ("plates", "mattes"):
+        roots.extend(sorted((DANSE / "corpus" / kind / tier).glob("*.webp")))
+    h = hashlib.sha256()
+    for path in roots:
+        if path.is_file():
+            h.update(str(path.relative_to(DANSE)).encode())
+            h.update(bytes.fromhex(digest(path)))
+    return h.hexdigest()
+
+
 def captures(program: dict) -> dict:
     return {k: v for k, v in program.get("captures", {}).items() if isinstance(v, dict)}
 
@@ -296,7 +326,12 @@ def recognized_package_media(package: Path) -> list[Path]:
     return sorted({path for path in paths if path.is_file()})
 
 
-def package_provenance_matches(package: Path, span: dict, start: float | None = None) -> bool:
+def package_provenance_matches(
+    package: Path,
+    span: dict,
+    start: float | None = None,
+    source_tree_sha256: str | None = None,
+) -> bool:
     manifest = package / "manifest.json"
     if not manifest.is_file():
         return not recognized_package_media(package)
@@ -331,7 +366,8 @@ def package_provenance_matches(package: Path, span: dict, start: float | None = 
         start_matches = not (passage_items & FIXED_WINDOW_ITEMS) or (
             start is not None and abs(float(data.get("start", -1)) - start) < 1e-9
         )
-        return passage_matches and start_matches
+        source_matches = source_tree_sha256 is None or data.get("source_tree_sha256") == source_tree_sha256
+        return passage_matches and start_matches and source_matches
     except (TypeError, ValueError):
         return False
 
@@ -420,7 +456,11 @@ def preflight(
     node = shutil.which("node")
     add(not passage_requested or node is not None, "node", node or ("not needed" if not passage_requested else "missing"))
     add(
-        not passage_requested or (span is not None and package_provenance_matches(package, span, start)),
+        not passage_requested
+        or (
+            span is not None
+            and package_provenance_matches(package, span, start, delivery_source_sha256(tier))
+        ),
         "package passage provenance",
         "preserved" if not passage_requested else str(package / "manifest.json"),
     )
@@ -443,12 +483,36 @@ def preflight(
     picture = render_root / "passage-default.mov"
     picture_info = probe(picture)
     cap = captures(program)["passage"]
-    picture_ready = bool(
+    picture_candidate = bool(
         span
         and picture_info
         and abs(picture_info.get("seconds", 0) * cap.get("fps", 30) - span["duration"] * cap.get("fps", 30)) < 2
         and not is_forced(force, "master")
     )
+    picture_ready = False
+    if need_picture and picture_candidate:
+        checked = subprocess.run(
+            [
+                sys.executable,
+                str(RENDER),
+                "--capture",
+                "passage",
+                "--start",
+                str(span["t0"]),
+                "--tier",
+                tier,
+                "--codec",
+                "prores",
+                "--quiet",
+                "--out",
+                str(render_root),
+                "--check-concat",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        picture_ready = checked.returncode == 0
     need_renderer = need_renderer or (need_picture and not picture_ready)
 
     score = render_root / "passage-score.wav"
@@ -882,7 +946,8 @@ def main() -> int:
             span_error,
             passage_requested,
         )
-    if passage_requested and not package_provenance_matches(package, span, args.start):
+    source_tree = delivery_source_sha256(args.tier) if passage_requested else None
+    if passage_requested and not package_provenance_matches(package, span, args.start, source_tree):
         raise SystemExit(f"{package}/manifest.json belongs to a different passage; choose a fresh --package root")
 
     work = pending(program, only, force, package)
@@ -984,9 +1049,10 @@ def main() -> int:
             "t0": span["t0"],
             "t1": span["t1"],
             "duration": span["duration"],
+            "source_tree_sha256": source_tree,
         }
     else:
-        manifest |= {key: previous[key] for key in passage_fields if key in previous}
+        manifest |= {key: previous[key] for key in (*passage_fields, "source_tree_sha256") if key in previous}
     for path in made:
         if not path.is_file():
             continue

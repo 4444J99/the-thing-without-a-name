@@ -23,7 +23,7 @@
 
 import { context, program, resize, texture, unitQuad, uniforms } from "./gl.js";
 import { compose, multiply, perspective } from "./mat4.js";
-import { camera, homePlacement, projector, rectUV, scatter } from "./room.js";
+import { camera, homePlacement, projector, rectUV, scatter, viewDepth } from "./room.js";
 
 /** How far past the picture plane the backdrop reaches, as a multiple of it.
  *
@@ -202,7 +202,7 @@ export class Renderer {
     const drawn = [];
     for (const cell of cells) {
       const place = scatter(cell.rect, cell.id, seed, state.spread);
-      drawn.push({ cell, place, z: viewZ(view.view, place.position) });
+      drawn.push({ cell, place, z: viewDepth(view.view, place.position) });
     }
     drawn.sort((a, b) => a.z - b.z);
 
@@ -383,10 +383,4 @@ function perspectiveFor(canvas, fit = "contain") {
   const toWidth = 2 * Math.atan(Math.tan(fovy / 2) * (aspect / view));
   const fov = fit === "cover" ? Math.min(fovy, toWidth) : Math.max(fovy, toWidth);
   return perspective(fov, view, 0.05, 100);
-}
-
-/** Depth along the camera's forward axis. Column-major, so row 2 of the view
- *  matrix is strided by 4. */
-function viewZ(view, p) {
-  return view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
 }

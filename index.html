@@ -69,6 +69,7 @@ import { Renderer } from "./engine/renderer.js";
 let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
 let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
+let navigationGeneration = 0;
 
 const canvas = document.getElementById("stage");
 const el = (id) => document.getElementById(id);
@@ -136,11 +137,18 @@ setInterval(() => {
 // shared river can fail while looking like it worked. `replaceState` above does
 // not fire this event, so the page cannot chase its own tail.
 addEventListener("hashchange", async () => {
-  river = Arrival.arrive(location.hash);
+  const generation = ++navigationGeneration;
+  const nextRiver = Arrival.arrive(location.hash);
   const mode = Arrival.modeOf(location.hash);
   if (mode === "free") program = null;
-  else if (!program) program = await Program.load();
-  shifted = river.shifted;
+  else if (!program) {
+    const loaded = await Program.load();
+    if (generation !== navigationGeneration) return;
+    program = loaded;
+  }
+  if (generation !== navigationGeneration) return;
+  river = nextRiver;
+  shifted = nextRiver.shifted;
   heldAt = null;
 });
 

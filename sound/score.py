@@ -465,7 +465,7 @@ def normalise(raw: np.ndarray, quiet: bool = False) -> np.ndarray:
     return out
 
 
-def control_track(window: str, seed: int | None, rate: int, start: float = 0.0) -> dict:
+def control_track(window: str, seed: int | None, rate: int, start: float = 0.0, stream: int = 0) -> dict:
     """Read the picture's absolute control span for the requested capture."""
     cmd = [
         "node",
@@ -476,6 +476,8 @@ def control_track(window: str, seed: int | None, rate: int, start: float = 0.0) 
         str(rate),
         "--from",
         str(start),
+        "--stream",
+        str(stream),
     ]
     if seed is not None:
         cmd += ["--seed", str(seed)]
@@ -489,6 +491,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--window", default="passage", help="any capture declared in render/program.json")
     ap.add_argument("--seed", help="override the program seed; accepts 0x notation")
+    ap.add_argument("--stream", type=int, default=0, help="optional 32-bit passage-stream discriminator")
     ap.add_argument("--rate", type=int, default=30, help="control-track sampling rate in Hz")
     ap.add_argument(
         "--from",
@@ -503,6 +506,8 @@ def main() -> int:
     args = ap.parse_args()
     if args.start < 0:
         ap.error("--from/--start must be non-negative")
+    if not 0 <= args.stream <= 0xFFFFFFFF:
+        ap.error("--stream must be a 32-bit unsigned integer")
     if DEPENDENCY_ERROR is not None:
         ap.error(
             f"sound dependencies unavailable ({DEPENDENCY_ERROR}); run this command in the Danse media environment"
@@ -510,7 +515,7 @@ def main() -> int:
 
     seed = int(args.seed, 0) if args.seed else None
     bank = Bank(args.bank)
-    control = control_track(args.window, seed, args.rate, args.start)
+    control = control_track(args.window, seed, args.rate, args.start, args.stream)
 
     print(
         f"{control['title']} · {control['capture']} · seed 0x{control['seed']:X} · "

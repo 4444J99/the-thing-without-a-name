@@ -418,13 +418,16 @@ const shared = arrive("#s=42&e=99");
 const cited = arrive("#s=42&t=10");
 const bare = arrive("#s=42");
 const fresh = arrive("");
-const citedFresh = arrive(href(fresh, {at: 10}).split("#")[1]);
+const citedAt = 10.1234567890123;
+const citedHref = href(fresh, {at: citedAt});
+const citedFresh = arrive(citedHref.split("#")[1]);
+const citedSerialized = Number(new URLSearchParams(citedHref.split("#")[1]).get("t"));
 const links =
   shared.seed === 42 && shared.stream === streamOf(99) && shared.epoch === 99 && !shared.shifted &&
   cited.seed === 42 && Math.abs(now(cited) - 10) < 1e-9 && cited.shifted &&
   bare.seed === 42 && Math.abs(now(bare)) < 1e-9 &&
   fresh.minted && fresh.seed === riverOf(0xabcdef01, CLOCK) &&
-  citedFresh.stream === fresh.stream && Math.abs(now(citedFresh) - 10) < 1e-9 &&
+  citedFresh.stream === fresh.stream && citedSerialized === citedAt && Math.abs(now(citedFresh) - citedAt) < 1e-6 &&
   modeOf(href(fresh, {mode: "free"})) === "free";
 
 // ── a named river ─────────────────────────────────────────────────────────────

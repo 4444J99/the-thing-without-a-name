@@ -197,7 +197,7 @@ export function href(river, { at = null, mode = null } = {}) {
   const base = (globalThis.location?.href ?? "").split("#")[0];
   const link = at === null
     ? `${base}#s=${river.seed}&e=${river.epoch}&u=${river.stream ?? 0}`
-    : `${base}#s=${river.seed}&t=${at.toFixed(2)}&u=${river.stream ?? 0}`;
+    : `${base}#s=${river.seed}&t=${String(at)}&u=${river.stream ?? 0}`;
   return mode === "free" ? `${link}&p=free` : link;
 }
 

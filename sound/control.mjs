@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { fromData } from "../engine/corpus.js";
 import { step } from "../engine/engine.js";
 import { captureOf, passageAt, validate } from "../engine/program.js";
-import { scatter } from "../engine/room.js";
+import { camera, scatter, viewDepth } from "../engine/room.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DANSE = path.join(HERE, "..");
@@ -47,7 +47,7 @@ function readJSON(p) {
 }
 
 function args(argv) {
-  const out = { window: "passage", rate: 30, seed: null, out: null, from: 0 };
+  const out = { window: "passage", rate: 30, seed: null, stream: 0, out: null, from: 0 };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, "");
     if (!(key in out)) throw new Error(`unknown option ${argv[i]}`);
@@ -55,12 +55,16 @@ function args(argv) {
   }
   out.rate = Number(out.rate);
   out.from = Number(out.from);
+  out.stream = Number(out.stream);
   return out;
 }
 
 const opt = args(process.argv.slice(2));
 if (!Number.isFinite(opt.rate) || opt.rate < 0) throw new Error("--rate must be a non-negative number");
 if (!Number.isFinite(opt.from) || opt.from < 0) throw new Error("--from must be a non-negative number");
+if (!Number.isInteger(opt.stream) || opt.stream < 0 || opt.stream > 0xffffffff) {
+  throw new Error("--stream must be a 32-bit unsigned integer");
+}
 
 const program = readJSON(path.join(DANSE, "render/program.json"));
 validate(program);
@@ -85,11 +89,11 @@ if (cap.seconds > 0) {
   t0 = from;
   t1 = from + cap.seconds;
 } else {
-  let at = passageAt(program, seed, from);
+  let at = passageAt(program, seed, from, opt.stream);
   t0 = at.t0;
   t1 = at.t0;
   for (let k = 0; k < cap.passages; k++) {
-    at = passageAt(program, seed, t1 + 1e-6);
+    at = passageAt(program, seed, t1 + 1e-6, opt.stream);
     t1 = at.t0 + at.seconds;
   }
 }
@@ -98,9 +102,9 @@ const dt = opt.rate > 0 ? 1 / opt.rate : null;
 // Provenance for an uncropped passage recording: at its boundary the ONE
 // movement is exactly one untouched source photograph. Metadata-only callers
 // use rate 0, avoiding a full 9,000-step control render just to resolve a span.
-const opening = step(corpus, seed, t0, program, { quantise: 0 }).cast;
+const opening = step(corpus, seed, t0, program, { quantise: 0, stream: opt.stream }).cast;
 const origin = opening.length === 1 ? opening[0].layers?.[0]?.frame ?? null : null;
-const caughtPassage = passageAt(program, seed, t0);
+const caughtPassage = passageAt(program, seed, t0, opt.stream);
 
 const frames = [];
 let previous = null; // cell id -> frame id, for spotting a re-cast
@@ -108,7 +112,8 @@ let previousCut = null;
 
 for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
   const t = t0 + i * dt;
-  const { state, cast } = step(corpus, seed, t, program, { quantise: 0 });
+  const { state, cast } = step(corpus, seed, t, program, { quantise: 0, stream: opt.stream });
+  const view = camera(state.divergence, state.azimuth, state.elevation);
 
   // Every plane, placed exactly where the renderer will place it.
   const placed = cast.map((cell) => {
@@ -117,7 +122,7 @@ for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
     return {
       id: cell.id,
       frame: cell.layers?.[0]?.frame ?? null,
-      z: p.position[2],
+      z: viewDepth(view.view, p.position),
       opacity: p.opacity,
       area: (x1 - x0) * (y1 - y0),
       // Where the plane sits across the frame, -1 to +1. The score pans on this,
@@ -175,6 +180,7 @@ const payload = {
   title: program.title,
   capture: cap.name,
   seed,
+  stream: opt.stream,
   passage: caughtPassage.index,
   passageSeed: caughtPassage.seed,
   rate: opt.rate,

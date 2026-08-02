@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
@@ -48,6 +49,22 @@ def source_digest(path: Path) -> bytes:
 
 def source_set_receipt(paths) -> list[dict[str, str]]:
     return [{"name": path.name, "sha256": source_digest(path).hex()} for path in paths]
+
+
+def corpus_source_identity(items) -> str:
+    """One content identity for every raw/matte input to encoded tiers."""
+    h = hashlib.sha256()
+    for frame_id, raw, mask, _ in items:
+        h.update(frame_id.encode())
+        h.update(source_digest(raw))
+        h.update(source_digest(mask))
+    return h.hexdigest()
+
+
+def tier_source_identity(source_sha256: str, spec: dict, matte_quality: int) -> str:
+    """Bind a tier to the shared source set and its encoder parameters."""
+    payload = {"source_sha256": source_sha256, "spec": spec, "matte_quality": matte_quality}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def room_cache_key(items) -> str:

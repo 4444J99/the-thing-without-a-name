@@ -182,9 +182,13 @@ class DeliveryContractTest(unittest.TestCase):
             items = [("IMG_1570", raw, mask, pose)]
             first = CORPUS_CONTRACT.room_cache_key(items)
             source_receipt = CORPUS_CONTRACT.source_set_receipt([raw])
+            source_identity = CORPUS_CONTRACT.corpus_source_identity(items)
+            tier_identity = CORPUS_CONTRACT.tier_source_identity(source_identity, {"width": 512}, 85)
             raw.write_bytes(b"corrected original")
             self.assertNotEqual(first, CORPUS_CONTRACT.room_cache_key(items))
             self.assertNotEqual(source_receipt, CORPUS_CONTRACT.source_set_receipt([raw]))
+            self.assertNotEqual(source_identity, CORPUS_CONTRACT.corpus_source_identity(items))
+            self.assertNotEqual(tier_identity, CORPUS_CONTRACT.tier_source_identity(source_identity, {"width": 1024}, 85))
 
     def test_pipeline_inputs_fail_closed_before_partial_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -270,10 +274,11 @@ class DeliveryContractTest(unittest.TestCase):
         payload = {"capture": "passage", "t0": 120.0, "t1": 432.54, "duration": 312.54}
         completed = subprocess.CompletedProcess([], 0, stdout=json.dumps(payload), stderr="")
         with mock.patch.object(SCORE.subprocess, "run", return_value=completed) as run:
-            self.assertEqual(SCORE.control_track("passage", 123, 30, 120.0), payload)
+            self.assertEqual(SCORE.control_track("passage", 123, 30, 120.0, stream=7), payload)
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--from") + 1], "120.0")
         self.assertEqual(command[command.index("--seed") + 1], "123")
+        self.assertEqual(command[command.index("--stream") + 1], "7")
 
     def test_score_rebases_absolute_control_times_into_the_capture(self) -> None:
         self.assertAlmostEqual(SCORE.local_time({"t0": 312.54}, 313.79), 1.25)
@@ -406,12 +411,70 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(DELIVER, "probe", side_effect=fake_probe),
                 mock.patch.object(DELIVER, "score_provenance", return_value={"sources": ["a", "b"]}),
                 mock.patch.object(DELIVER.shutil, "which", side_effect=lambda command: f"/tools/{command}"),
+                mock.patch.object(
+                    DELIVER.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0),
+                ),
                 redirect_stdout(io.StringIO()) as output,
             ):
                 result = DELIVER.preflight(program, SPAN, {"master"}, set(), "film", root, package, None)
             self.assertEqual(result, 0)
             self.assertNotIn("Python module numpy", output.getvalue())
             self.assertNotIn("grain bank", output.getvalue())
+
+    def test_preflight_rejects_a_picture_with_stale_concat_receipts(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            picture = root / "passage-default.mov"
+            score = root / "passage-score.wav"
+
+            def fake_probe(path: Path):
+                if path == picture:
+                    return {"seconds": SPAN["duration"], "fps": 30}
+                if path == score:
+                    return {"seconds": SPAN["duration"]}
+                return None
+
+            with (
+                mock.patch.object(DELIVER, "probe", side_effect=fake_probe),
+                mock.patch.object(DELIVER, "score_provenance", return_value={"sources": ["a", "b"]}),
+                mock.patch.object(DELIVER.shutil, "which", side_effect=lambda command: f"/tools/{command}"),
+                mock.patch.object(
+                    DELIVER.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 1),
+                ),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                result = DELIVER.preflight(program, SPAN, {"master"}, set(), "film", root, root / "package", None)
+            self.assertEqual(result, 1)
+            self.assertIn("Playwright", output.getvalue())
+
+    def test_hash_navigation_discards_superseded_program_loads(self) -> None:
+        source = (ROOT / "index.html").read_text()
+        self.assertIn("const generation = ++navigationGeneration", source)
+        self.assertGreaterEqual(source.count("generation !== navigationGeneration"), 2)
+
+    def test_sound_depth_uses_the_renderers_view_space(self) -> None:
+        script = """
+          import { camera, viewDepth } from './engine/room.js';
+          const view = camera(0.8, 0.7, 0.35).view;
+          const point = [0.4, -0.2, 0.9];
+          console.log(JSON.stringify({world: point[2], viewed: viewDepth(view, point)}));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        depths = json.loads(done.stdout)
+        self.assertNotAlmostEqual(depths["world"], depths["viewed"])
+        self.assertIn("viewDepth(view.view, p.position)", (ROOT / "sound/control.mjs").read_text())
 
     def test_cached_passage_picture_requires_current_concat_receipt(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
@@ -525,6 +588,7 @@ class DeliveryContractTest(unittest.TestCase):
                         "t0": SPAN["t0"],
                         "t1": SPAN["t1"],
                         "duration": SPAN["duration"],
+                        "source_tree_sha256": DELIVER.delivery_source_sha256("film"),
                         "items": [{"name": "master.mov", "bytes": 23, "sha256": prior_digest}],
                     }
                 )
@@ -602,6 +666,22 @@ class DeliveryContractTest(unittest.TestCase):
             )
             self.assertTrue(DELIVER.package_provenance_matches(package, SPAN, start=120.0))
             self.assertFalse(DELIVER.package_provenance_matches(package, SPAN, start=121.0))
+
+    def test_package_receipts_bind_the_producing_source_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            manifest = {
+                "passage_seed": DELIVER.hexseed(SPAN["seed"]),
+                "passage": SPAN["passage"],
+                "t0": SPAN["t0"],
+                "t1": SPAN["t1"],
+                "duration": SPAN["duration"],
+                "source_tree_sha256": "tree-a",
+                "items": [{"name": "master.mov"}],
+            }
+            (package / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(DELIVER.package_provenance_matches(package, SPAN, source_tree_sha256="tree-a"))
+            self.assertFalse(DELIVER.package_provenance_matches(package, SPAN, source_tree_sha256="tree-b"))
 
     def test_forced_score_rebuilds_every_selected_audio_derivative(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())

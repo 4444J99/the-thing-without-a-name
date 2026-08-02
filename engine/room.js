@@ -75,6 +75,12 @@ export function camera(divergence, azimuth, elevation, { near = 0.05, far = 100 
   return { eye, view, near, far };
 }
 
+/** Depth along the camera's forward axis. Column-major, so row 2 of the view
+ *  matrix is strided by 4. Shared by picture and sound to keep their ordering exact. */
+export function viewDepth(view, p) {
+  return view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+}
+
 /** Place a tile's rect where the 2017 composite put it: on the room plane, at unit
  *  scale, filling exactly the projector frustum's share of that rect.
  *
