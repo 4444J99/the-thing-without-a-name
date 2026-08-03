@@ -34,17 +34,20 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from browser import browser, serve  # noqa: E402
-
 HERE = Path(__file__).resolve().parent
 APP = HERE.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(APP / "pipeline"))
+from browser import browser, serve  # noqa: E402
+from corpus_contract import authorize_render_tier  # noqa: E402
+
 OUT = HERE / "out"
 
 # GL reads bottom-up; every encode flips once, here, so no downstream consumer
@@ -65,6 +68,12 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def hydrated_work_root() -> Path:
+    """Honor the private-work mount used by corpus hydration and delivery."""
+    configured = os.environ.get("DANSE_WORK")
+    return Path(configured).expanduser() if configured else APP / "pipeline/.work"
+
+
 def source_tree_sha256(args) -> str:
     """Identity of every source byte that can change an offline segment."""
     cached = getattr(args, "_source_tree_sha256", None)
@@ -75,9 +84,11 @@ def source_tree_sha256(args) -> str:
         APP / "render/program.json",
         APP / "render/render.py",
         APP / "render/browser.py",
+        APP / "pipeline/corpus_contract.py",
         APP / "corpus/manifest.json",
         APP / "corpus/room.webp",
         APP / "corpus/score-2017.json",
+        APP / "corpus" / "tier-receipts" / f"{args.tier}.json",
     ]
     local = APP / "corpus/manifest.local.json"
     if local.is_file():
@@ -428,6 +439,11 @@ def main() -> int:
     stem = args.out / f"{args.window}-{stem_seed}{stream_suffix}"
     if (args.concat or args.check_concat) and args.segment is not None:
         ap.error("--concat/--check-concat cannot be combined with --segment")
+
+    tier_ok, tier_detail = authorize_render_tier(APP / "corpus", hydrated_work_root(), args.tier)
+    if not tier_ok:
+        print(f"corpus tier {args.tier} is not authorized for rendering: {tier_detail}", file=sys.stderr)
+        return 1
 
     if args.determinism:
         seg = args.segment if args.segment is not None else 3

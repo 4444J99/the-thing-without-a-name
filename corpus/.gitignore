@@ -13,3 +13,4 @@ mattes/film/
 
 # Its manifest entry, kept out of the shipped manifest for the same reason.
 manifest.local.json
+tier-receipts/film.json

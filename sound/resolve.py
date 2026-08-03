@@ -178,7 +178,9 @@ def registered_room_assets(register: Path) -> dict[str, str]:
 
 
 def room_content_matches(path: Path, expected_digest: str | None) -> tuple[bool, str | None]:
-    digest = sha256_file(path) if expected_digest else None
+    if expected_digest is None:
+        return False, None
+    digest = sha256_file(path)
     return digest == expected_digest, digest
 
 

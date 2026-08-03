@@ -41,6 +41,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,7 +61,9 @@ REGISTER = DANSE / "submission" / "screendance-2027.yaml"
 RAW = DANSE / "pipeline" / ".work" / "raw"
 BANK = DANSE / "sound" / "bank" / "bank.json"
 sys.path.insert(0, str(DANSE / "sound"))
+sys.path.insert(0, str(DANSE / "pipeline"))
 from bank_contract import audit_bank  # noqa: E402
+from corpus_contract import authorize_render_tier  # noqa: E402
 
 # Captures that are sub-spans or scaled versions of the primary 4K `passage` capture,
 # so they can be cut/scaled from it. `copy` means stream-copy (no re-encode at all).
@@ -158,9 +161,12 @@ def delivery_source_sha256(tier: str) -> str:
         HERE / "deliver.py",
         HERE / "render.py",
         HERE / "browser.py",
+        DANSE / "pipeline/corpus_contract.py",
         DANSE / "corpus/manifest.json",
         DANSE / "corpus/room.webp",
         DANSE / "corpus/score-2017.json",
+        DANSE / "corpus/manifest.local.json",
+        DANSE / "corpus" / "tier-receipts" / f"{tier}.json",
         DANSE / "sound/control.mjs",
         DANSE / "sound/score.py",
         DANSE / "sound/rng.py",
@@ -224,6 +230,12 @@ def query_capture_span(capture_name: str, seed: int | None = None, start: float 
     return dict(_capture_span_items(capture_name, seed, start))
 
 
+def hydrated_work_root() -> Path:
+    """Honor the same external private-work mount as export and origin delivery."""
+    configured = os.environ.get("DANSE_WORK")
+    return Path(configured).expanduser() if configured else RAW.parent
+
+
 def registered_origin() -> Path:
     """The submission register is the sole owner of the source photograph."""
     register = yaml.safe_load(REGISTER.read_text()) or {}
@@ -233,9 +245,19 @@ def registered_origin() -> Path:
         raise SystemExit(f"{REGISTER} does not declare package.origin_still.source_filename")
     if spec.get("copy_mode") != "byte-identical":
         raise SystemExit(f"{REGISTER} must declare package.origin_still.copy_mode: byte-identical")
-    configured_work = os.environ.get("DANSE_WORK")
-    work = Path(configured_work).expanduser() if configured_work else RAW.parent
-    return work / "raw" / filename
+    source_sha256 = spec.get("source_sha256")
+    if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", source_sha256):
+        raise SystemExit(f"{REGISTER} must declare package.origin_still.source_sha256")
+    return hydrated_work_root() / "raw" / filename
+
+
+def registered_origin_source_sha256() -> str:
+    """The previously approved byte identity of the source photograph."""
+    register = yaml.safe_load(REGISTER.read_text()) or {}
+    source_sha256 = (((register.get("package") or {}).get("origin_still") or {}).get("source_sha256"))
+    if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", source_sha256):
+        raise SystemExit(f"{REGISTER} must declare package.origin_still.source_sha256")
+    return source_sha256.lower()
 
 
 def registered_audio_sources() -> list[str]:
@@ -324,6 +346,11 @@ def recognized_package_media(package: Path) -> list[Path]:
         paths.extend(stills.glob("seed-0x*.*"))
         paths.append(stills / "origin-2017.jpg")
     return sorted({path for path in paths if path.is_file()})
+
+
+def regular_directory_slot(path: Path) -> bool:
+    """True when a delivery directory is absent or a real directory."""
+    return not path.is_symlink() and (not path.exists() or path.is_dir())
 
 
 def package_provenance_matches(
@@ -445,6 +472,8 @@ def preflight(
     def add(ok: bool, name: str, detail: str) -> None:
         rows.append((ok, name, detail))
 
+    package_root_ok = regular_directory_slot(package)
+    add(package_root_ok, "package root", str(package))
     add(program.get("schema") == "danse.program.v2", "program", str(program.get("schema")))
     add(
         not passage_requested or (span is not None and span["duration"] > 0),
@@ -458,7 +487,8 @@ def preflight(
     add(
         not passage_requested
         or (
-            span is not None
+            package_root_ok
+            and span is not None
             and package_provenance_matches(package, span, start, delivery_source_sha256(tier))
         ),
         "package passage provenance",
@@ -530,23 +560,14 @@ def preflight(
         for command in ("ffmpeg", "ffprobe"):
             add(shutil.which(command) is not None, command, shutil.which(command) or "missing")
 
+    if only & PASSAGE_SELECTORS:
+        tier_ok, tier_detail = authorize_render_tier(DANSE / "corpus", hydrated_work_root(), tier)
+        add(tier_ok, f"corpus tier {tier} receipt", tier_detail)
+
     if need_renderer:
         chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
         add(importlib.util.find_spec("playwright") is not None, "Playwright", "Python module")
         add(chrome.is_file(), "Google Chrome", str(chrome))
-        local = DANSE / "corpus" / "manifest.local.json"
-        local_data = json.loads(local.read_text()) if local.is_file() else {}
-        tier_spec = (local_data.get("tiers") or {}).get(tier)
-        add(bool(tier_spec), f"corpus tier {tier}", str(local))
-        if tier_spec:
-            ids = [frame["id"] for frame in json.loads((DANSE / "corpus" / "manifest.json").read_text())["frames"]]
-            missing = [
-                fid
-                for fid in ids
-                if not (DANSE / "corpus" / "plates" / tier / f"{fid}.webp").is_file()
-                or not (DANSE / "corpus" / "mattes" / tier / f"{fid}.webp").is_file()
-            ]
-            add(not missing, "film source denominator", f"{len(ids) - len(missing)}/{len(ids)} plate+matte pairs")
 
     if work["stills"]:
         add(importlib.util.find_spec("PIL") is not None, "Python module Pillow", "package still dependency")
@@ -569,11 +590,38 @@ def preflight(
 
     if "origin" in only:
         origin_dest = package / "stills" / "origin-2017.jpg"
+        origin_slot_ok = (
+            package_root_ok
+            and regular_directory_slot(origin_dest.parent)
+            and not origin_dest.is_symlink()
+            and (not origin_dest.exists() or origin_dest.is_file())
+        )
+        add(origin_slot_ok, "staged origin is a regular file", str(origin_dest))
         need_origin_source = is_forced(force, "origin") or not origin_dest.is_file()
+        candidate = origin if need_origin_source else origin_dest
+        candidate_exists = (
+            origin_slot_ok
+            and candidate is not None
+            and candidate.is_file()
+            and (need_origin_source or not candidate.is_symlink())
+        )
+        expected_origin = registered_origin_source_sha256()
         add(
-            not need_origin_source or (origin is not None and origin.is_file()),
+            candidate_exists,
             "unaltered origin photograph",
-            str(origin if need_origin_source else origin_dest),
+            str(candidate),
+        )
+        origin_identity_ok = False
+        origin_identity_detail = expected_origin
+        if candidate_exists:
+            try:
+                origin_identity_ok = digest(candidate) == expected_origin
+            except OSError as exc:
+                origin_identity_detail = f"{candidate}: source bytes are unreadable ({exc})"
+        add(
+            origin_identity_ok,
+            "registered origin photograph identity",
+            origin_identity_detail,
         )
     if "text" in only:
         text_root = DANSE / "submission" / "text"
@@ -869,16 +917,39 @@ def deliver_text() -> list[Path]:
     return made
 
 
-def deliver_origin(origin: Path, force: bool) -> Path | None:
+def deliver_origin(origin: Path, force: bool) -> Path:
     dest = PACKAGE / "stills" / "origin-2017.jpg"
+    expected = registered_origin_source_sha256()
+    if (
+        not regular_directory_slot(PACKAGE)
+        or not regular_directory_slot(dest.parent)
+        or dest.is_symlink()
+        or (dest.exists() and not dest.is_file())
+    ):
+        raise SystemExit(f"staged origin photograph must be a regular non-symlink file: {dest}")
     if dest.is_file() and not force:
-        return None
+        if digest(dest) != expected:
+            raise SystemExit(f"staged origin photograph does not match {REGISTER}; rerun with --force origin")
+        # Return a verified reuse so the caller rewrites its manifest item from
+        # the canonical register. Exact bytes are sufficient custody to repair
+        # a missing or stale package receipt without the private raw mount.
+        return dest
     if not origin.is_file():
-        print(f"  origin-2017.jpg · MISSING SOURCE at {origin}")
-        return None
+        raise SystemExit(f"origin photograph source is missing at {origin}")
+    actual = digest(origin)
+    if actual != expected:
+        raise SystemExit(f"registered origin identity mismatch for {origin.name}: {actual}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  origin-2017.jpg · byte-identical copy of {origin.name}")
     shutil.copy2(origin, dest)
+    if (
+        not regular_directory_slot(PACKAGE)
+        or not regular_directory_slot(dest.parent)
+        or not dest.is_file()
+        or dest.is_symlink()
+        or digest(dest) != expected
+    ):
+        raise SystemExit(f"copied origin photograph does not match registered identity: {dest}")
     return dest
 
 
@@ -946,6 +1017,8 @@ def main() -> int:
             span_error,
             passage_requested,
         )
+    if not regular_directory_slot(package):
+        raise SystemExit(f"package root must be an absent or regular non-symlink directory: {package}")
     source_tree = delivery_source_sha256(args.tier) if passage_requested else None
     if passage_requested and not package_provenance_matches(package, span, args.start, source_tree):
         raise SystemExit(f"{package}/manifest.json belongs to a different passage; choose a fresh --package root")
@@ -1056,9 +1129,12 @@ def main() -> int:
     for path in made:
         if not path.is_file():
             continue
-        info = probe(path) or {}
         size = path.stat().st_size
         name = str(path.relative_to(PACKAGE))
+        # ffprobe accepts arbitrary text through its `ansi` demuxer and treats
+        # still images as one-frame video. Only time-based delivery media belongs
+        # in this receipt; text and photographs have their own package predicates.
+        info = (probe(path) or {}) if name in AUDIO_ITEMS else {}
         prior = previous_items.get(name) or {}
         item = {"name": name, "bytes": size, "sha256": digest(path), **info}
         if name in AUDIO_ITEMS:
@@ -1071,7 +1147,7 @@ def main() -> int:
             assert origin is not None
             item |= {
                 "source": origin.name,
-                "source_sha256": digest(origin),
+                "source_sha256": registered_origin_source_sha256(),
                 "copy_mode": "byte-identical",
             }
         previous_items[name] = item
