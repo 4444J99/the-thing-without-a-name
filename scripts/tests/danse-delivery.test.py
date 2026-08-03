@@ -1367,6 +1367,37 @@ class DeliveryContractTest(unittest.TestCase):
                     1,
                 )
 
+    def test_preflight_reports_unreadable_origin_without_aborting(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            source = root / "raw/IMG_1594.JPG"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"registered origin bytes")
+            with (
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value="f" * 64),
+                mock.patch.object(DELIVER, "digest", side_effect=PermissionError("access denied")),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        {"origin"},
+                        "film",
+                        root,
+                        package,
+                        source,
+                        passage_requested=False,
+                    ),
+                    1,
+                )
+            self.assertIn("registered origin photograph identity", output.getvalue())
+            self.assertIn("source bytes are unreadable (access denied)", output.getvalue())
+            self.assertIn("NOT READY", output.getvalue())
+
     def test_symlinked_origin_cannot_be_adopted_or_approved(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:

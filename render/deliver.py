@@ -599,10 +599,17 @@ def preflight(
             "unaltered origin photograph",
             str(candidate),
         )
+        origin_identity_ok = False
+        origin_identity_detail = expected_origin
+        if candidate_exists:
+            try:
+                origin_identity_ok = digest(candidate) == expected_origin
+            except OSError as exc:
+                origin_identity_detail = f"{candidate}: source bytes are unreadable ({exc})"
         add(
-            candidate_exists and digest(candidate) == expected_origin,
+            origin_identity_ok,
             "registered origin photograph identity",
-            expected_origin,
+            origin_identity_detail,
         )
     if "text" in only:
         text_root = DANSE / "submission" / "text"
