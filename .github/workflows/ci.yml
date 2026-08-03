@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - run: python -m pip install .
+      - run: python -m pip install '.[media]'
       - run: python scripts/check-danse.py
       - run: python scripts/tests/danse-delivery.test.py
       - run: python -m py_compile render/*.py pipeline/*.py sound/*.py submission/*.py scripts/*.py
