@@ -238,6 +238,89 @@ class DeliveryContractTest(unittest.TestCase):
             },
         )
 
+    def test_progressive_tier_failure_is_cached_until_invalidation(self) -> None:
+        script = """
+          import { fromData } from './engine/corpus.js';
+          const requested = [];
+          let shouldFail = true;
+          globalThis.Image = class {
+            set src(value) {
+              requested.push(value);
+              const fail = shouldFail;
+              queueMicrotask(() => fail ? this.onerror() : this.onload());
+            }
+          };
+          const settle = async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+          };
+          const corpus = fromData('/corpus/', {
+            tiers: {browse:{width:512,eager:true}, screen:{width:1024,eager:false}},
+            frames: [],
+          });
+          const key = 'plates/screen/IMG_1570';
+          const fallbackKey = 'plates/browse/IMG_1570';
+          const fallback = {};
+          corpus.textures.set(fallbackKey, fallback);
+
+          const firstFallback = corpus.get(null, 'plates', 'IMG_1570', 'screen') === fallback;
+          await settle();
+          const repeatedFallback = Array.from(
+            {length: 20},
+            () => corpus.get(null, 'plates', 'IMG_1570', 'screen') === fallback,
+          ).every(Boolean);
+          const requestsAfterFailure = requested.length;
+
+          shouldFail = false;
+          await corpus.ensure('plates', 'screen', ['IMG_1570']);
+          const recovered = corpus.has('plates', 'screen', 'IMG_1570') && !corpus.failed.has(key);
+          corpus.images.delete(key);
+
+          shouldFail = true;
+          const recoveredFallback = corpus.get(null, 'plates', 'IMG_1570', 'screen') === fallback;
+          await settle();
+          corpus.get(null, 'plates', 'IMG_1570', 'screen');
+          const requestsAfterRecoveryFailure = requested.length;
+
+          corpus.invalidate();
+          corpus.textures.set(fallbackKey, fallback);
+          const invalidatedFallback = corpus.get(null, 'plates', 'IMG_1570', 'screen') === fallback;
+          const requestsAfterInvalidation = requested.length;
+
+          console.log(JSON.stringify({
+            firstFallback,
+            repeatedFallback,
+            requestsAfterFailure,
+            recovered,
+            recoveredFallback,
+            requestsAfterRecoveryFailure,
+            invalidatedFallback,
+            requestsAfterInvalidation,
+          }));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            json.loads(done.stdout),
+            {
+                "firstFallback": True,
+                "repeatedFallback": True,
+                "requestsAfterFailure": 1,
+                "recovered": True,
+                "recoveredFallback": True,
+                "requestsAfterRecoveryFailure": 3,
+                "invalidatedFallback": True,
+                "requestsAfterInvalidation": 4,
+            },
+        )
+
     def test_closing_signature_names_reproducible_river_position(self) -> None:
         script = """
           import { signature } from './engine/engine.js';
@@ -287,7 +370,25 @@ class DeliveryContractTest(unittest.TestCase):
             matte.unlink()
             self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
             matte.write_bytes(b"matte bytes")
-            (matte.parent / "unexpected.webp").write_bytes(b"surplus")
+            surplus = matte.parent / "unexpected.webp"
+            surplus.write_bytes(b"surplus")
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+            surplus.unlink()
+
+            outside = root / "outside.webp"
+            outside.write_bytes(b"bytes outside the corpus tier")
+            matte.unlink()
+            matte.symlink_to(outside)
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+            matte.unlink()
+            matte.write_bytes(b"matte bytes")
+
+            outside_tier = root / "outside-tier"
+            outside_tier.mkdir()
+            (outside_tier / plate.name).write_bytes(b"plate bytes")
+            plate.unlink()
+            plate.parent.rmdir()
+            plate.parent.symlink_to(outside_tier, target_is_directory=True)
             self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
 
     def test_tier_retention_rejects_mutated_bytes_and_source_only_receipts(self) -> None:

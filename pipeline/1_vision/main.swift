@@ -349,6 +349,7 @@ print("  figure  \(counts["figure"] ?? 0)")
 print("  room    \(counts["room"] ?? 0)")
 print("  → \(outDir.path)/vision.json")
 if failed > 0 || index.count != images.count {
+    try? fm.removeItem(at: indexURL)
     FileHandle.standardError.write(
         "incomplete Vision hydration: \(index.count)/\(images.count) photographs; \(failed) failed\n"
             .data(using: .utf8)!)

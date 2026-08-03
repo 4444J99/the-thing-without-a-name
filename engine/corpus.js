@@ -101,6 +101,10 @@ class Corpus {
     this.images = new Map(); // `${kind}/${tier}/${id}` → HTMLImageElement
     this.textures = new Map(); // same key → WebGLTexture
     this.pending = new Set();
+    // A missing lazy asset must not become one failed request per rendered
+    // frame. Retrying is explicit through invalidate(), so the engine needs no
+    // wall clock or timer and each key gets at most one attempt per epoch.
+    this.failed = new Set();
     this.room = null;
   }
 
@@ -133,6 +137,7 @@ class Corpus {
           const key = `${kind}/${tier}/${id}`;
           try {
             this.images.set(key, await image(this.url(kind, tier, id)));
+            this.failed.delete(key);
           } catch {
             /* one missing plate must not sink the load */
           }
@@ -182,11 +187,15 @@ class Corpus {
     return this.images.has(`${kind}/${tier}/${id}`);
   }
 
-  /** Drop every uploaded texture so the next draw re-uploads under current
-   *  settings. Only a measurement needs this; the live page never changes them. */
+  /** Drop every uploaded texture and permit one fresh attempt for unavailable
+   *  resources. Only a measurement needs this; the live page never changes its
+   *  texture settings. */
   invalidate() {
     for (const t of this.textures.values()) this.gl?.deleteTexture?.(t);
     this.textures.clear();
+    // Replace rather than clear: a request from the prior epoch may reject
+    // later, but it must not repopulate the new epoch's failure cache.
+    this.failed = new Set();
   }
 
   /** Block until these frames exist at this tier.
@@ -202,6 +211,7 @@ class Corpus {
         if (this.images.has(key)) return;
         try {
           this.images.set(key, await image(this.url(kind, tier, id)));
+          this.failed.delete(key);
         } catch {
           /* leave it missing; the caller counts what did not arrive */
         }
@@ -210,14 +220,21 @@ class Corpus {
     );
   }
 
-  /** Ask for a tier we do not have. Idempotent, fire-and-forget. */
+  /** Ask for a tier we do not have. One attempt per invalidation epoch. */
   request(kind, tier, id) {
     const key = `${kind}/${tier}/${id}`;
-    if (this.images.has(key) || this.pending.has(key)) return;
+    if (this.images.has(key) || this.pending.has(key) || this.failed.has(key)) return;
+    const failures = this.failed;
     this.pending.add(key);
     image(this.url(kind, tier, id))
-      .then((img) => this.images.set(key, img))
-      .catch(() => {})
+      .then((img) => {
+        this.images.set(key, img);
+        this.failed.delete(key);
+      })
+      .catch(() => {
+        // A request begun before invalidate() cannot poison the new retry epoch.
+        if (failures === this.failed && !this.images.has(key)) failures.add(key);
+      })
       .finally(() => this.pending.delete(key));
   }
 
