@@ -184,11 +184,9 @@ let outDir = URL(fileURLWithPath: args[2], isDirectory: true)
 let poseDir = outDir.appendingPathComponent("pose")
 let maskDir = outDir.appendingPathComponent("mask")
 let indexURL = outDir.appendingPathComponent("vision.json")
+let incompleteURL = outDir.appendingPathComponent(".incomplete")
 
 let fm = FileManager.default
-for dir in [poseDir, maskDir] {
-    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-}
 
 let exts: Set<String> = ["jpg", "jpeg", "png", "heic", "tif", "tiff"]
 guard let entries = try? fm.contentsOfDirectory(
@@ -206,7 +204,47 @@ guard !images.isEmpty else {
     FileHandle.standardError.write("no images in \(rawDir.path)\n".data(using: .utf8)!)
     exit(1)
 }
-try? fm.removeItem(at: indexURL)
+
+func pathEntryExists(_ url: URL) -> Bool {
+    if fm.fileExists(atPath: url.path) { return true }
+    return (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil
+}
+
+func pathEntryIsSymlink(_ url: URL) -> Bool {
+    return (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil
+}
+
+// The marker makes the whole generation ineligible before any prior artifact is
+// touched. It survives errors and interruption; corpus_contract.py recognizes it
+// and refuses every tuple until a complete index has been written. Delete only
+// this extractor's expected outputs so a caller-supplied directory cannot lose
+// unrelated files.
+do {
+    if pathEntryIsSymlink(poseDir) || pathEntryIsSymlink(maskDir) || pathEntryIsSymlink(incompleteURL) {
+        throw NSError(
+            domain: "danse.vision", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Vision output paths must not be symlinks"])
+    }
+    for dir in [poseDir, maskDir] {
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    try "danse.vision.incomplete\n".write(to: incompleteURL, atomically: true, encoding: .utf8)
+
+    var staleArtifacts = [indexURL]
+    for url in images {
+        let id = url.deletingPathExtension().lastPathComponent
+        staleArtifacts.append(poseDir.appendingPathComponent("\(id).json"))
+        staleArtifacts.append(maskDir.appendingPathComponent("\(id).png"))
+    }
+    for artifact in staleArtifacts where pathEntryExists(artifact) {
+        try fm.removeItem(at: artifact)
+    }
+} catch {
+    FileHandle.standardError.write(
+        "cannot invalidate stale Vision generation in \(outDir.path): \(error)\n"
+            .data(using: .utf8)!)
+    exit(1)
+}
 
 var index: [[String: Any]] = []
 var counts = ["dancer": 0, "figure": 0, "room": 0]
@@ -216,11 +254,6 @@ for (i, url) in images.enumerated() {
     let id = url.deletingPathExtension().lastPathComponent
     let poseURL = poseDir.appendingPathComponent("\(id).json")
     let maskURL = maskDir.appendingPathComponent("\(id).png")
-
-    // Never let a failed rerun inherit a prior frame's measurements. A frame is
-    // complete only when this invocation emits both artifacts again.
-    try? fm.removeItem(at: poseURL)
-    try? fm.removeItem(at: maskURL)
 
     guard let img = loadImage(url) else {
         FileHandle.standardError.write("skip (unreadable): \(id)\n".data(using: .utf8)!)
@@ -323,6 +356,13 @@ for (i, url) in images.enumerated() {
     }
 }
 
+if failed > 0 || index.count != images.count {
+    FileHandle.standardError.write(
+        "incomplete Vision hydration: \(index.count)/\(images.count) photographs; \(failed) failed\n"
+            .data(using: .utf8)!)
+    exit(1)
+}
+
 let summary: [String: Any] = [
     "schema": "danse.vision.v1",
     "source": rawDir.path,
@@ -337,9 +377,10 @@ let summary: [String: Any] = [
 ]
 do {
     try jsonString(summary).write(to: indexURL, atomically: true, encoding: .utf8)
+    try fm.removeItem(at: incompleteURL)
 } catch {
     FileHandle.standardError.write(
-        "cannot write \(indexURL.path): \(error)\n".data(using: .utf8)!)
+        "cannot finalize \(indexURL.path): \(error)\n".data(using: .utf8)!)
     exit(1)
 }
 
@@ -348,10 +389,3 @@ print("  dancer  \(counts["dancer"] ?? 0)")
 print("  figure  \(counts["figure"] ?? 0)")
 print("  room    \(counts["room"] ?? 0)")
 print("  → \(outDir.path)/vision.json")
-if failed > 0 || index.count != images.count {
-    try? fm.removeItem(at: indexURL)
-    FileHandle.standardError.write(
-        "incomplete Vision hydration: \(index.count)/\(images.count) photographs; \(failed) failed\n"
-            .data(using: .utf8)!)
-    exit(1)
-}

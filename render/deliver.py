@@ -61,7 +61,9 @@ REGISTER = DANSE / "submission" / "screendance-2027.yaml"
 RAW = DANSE / "pipeline" / ".work" / "raw"
 BANK = DANSE / "sound" / "bank" / "bank.json"
 sys.path.insert(0, str(DANSE / "sound"))
+sys.path.insert(0, str(DANSE / "pipeline"))
 from bank_contract import audit_bank  # noqa: E402
+from corpus_contract import authorize_render_tier  # noqa: E402
 
 # Captures that are sub-spans or scaled versions of the primary 4K `passage` capture,
 # so they can be cut/scaled from it. `copy` means stream-copy (no re-encode at all).
@@ -159,9 +161,12 @@ def delivery_source_sha256(tier: str) -> str:
         HERE / "deliver.py",
         HERE / "render.py",
         HERE / "browser.py",
+        DANSE / "pipeline/corpus_contract.py",
         DANSE / "corpus/manifest.json",
         DANSE / "corpus/room.webp",
         DANSE / "corpus/score-2017.json",
+        DANSE / "corpus/manifest.local.json",
+        DANSE / "corpus" / "tier-receipts" / f"{tier}.json",
         DANSE / "sound/control.mjs",
         DANSE / "sound/score.py",
         DANSE / "sound/rng.py",
@@ -543,23 +548,14 @@ def preflight(
         for command in ("ffmpeg", "ffprobe"):
             add(shutil.which(command) is not None, command, shutil.which(command) or "missing")
 
+    if only & PASSAGE_SELECTORS:
+        tier_ok, tier_detail = authorize_render_tier(DANSE / "corpus", DANSE / "pipeline/.work", tier)
+        add(tier_ok, f"corpus tier {tier} receipt", tier_detail)
+
     if need_renderer:
         chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
         add(importlib.util.find_spec("playwright") is not None, "Playwright", "Python module")
         add(chrome.is_file(), "Google Chrome", str(chrome))
-        local = DANSE / "corpus" / "manifest.local.json"
-        local_data = json.loads(local.read_text()) if local.is_file() else {}
-        tier_spec = (local_data.get("tiers") or {}).get(tier)
-        add(bool(tier_spec), f"corpus tier {tier}", str(local))
-        if tier_spec:
-            ids = [frame["id"] for frame in json.loads((DANSE / "corpus" / "manifest.json").read_text())["frames"]]
-            missing = [
-                fid
-                for fid in ids
-                if not (DANSE / "corpus" / "plates" / tier / f"{fid}.webp").is_file()
-                or not (DANSE / "corpus" / "mattes" / tier / f"{fid}.webp").is_file()
-            ]
-            add(not missing, "film source denominator", f"{len(ids) - len(missing)}/{len(ids)} plate+matte pairs")
 
     if work["stills"]:
         add(importlib.util.find_spec("PIL") is not None, "Python module Pillow", "package still dependency")
@@ -582,9 +578,17 @@ def preflight(
 
     if "origin" in only:
         origin_dest = package / "stills" / "origin-2017.jpg"
+        origin_slot_ok = not origin_dest.parent.is_symlink() and not origin_dest.is_symlink() and (
+            not origin_dest.exists() or origin_dest.is_file()
+        )
+        add(origin_slot_ok, "staged origin is a regular file", str(origin_dest))
         need_origin_source = is_forced(force, "origin") or not origin_dest.is_file()
         candidate = origin if need_origin_source else origin_dest
-        candidate_exists = candidate is not None and candidate.is_file()
+        candidate_exists = (
+            candidate is not None
+            and candidate.is_file()
+            and (need_origin_source or not candidate.is_symlink())
+        )
         expected_origin = registered_origin_source_sha256()
         add(
             candidate_exists,
@@ -893,6 +897,8 @@ def deliver_text() -> list[Path]:
 def deliver_origin(origin: Path, force: bool) -> Path:
     dest = PACKAGE / "stills" / "origin-2017.jpg"
     expected = registered_origin_source_sha256()
+    if dest.parent.is_symlink() or dest.is_symlink() or (dest.exists() and not dest.is_file()):
+        raise SystemExit(f"staged origin photograph must be a regular non-symlink file: {dest}")
     if dest.is_file() and not force:
         if digest(dest) != expected:
             raise SystemExit(f"staged origin photograph does not match {REGISTER}; rerun with --force origin")
@@ -908,7 +914,7 @@ def deliver_origin(origin: Path, force: bool) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  origin-2017.jpg · byte-identical copy of {origin.name}")
     shutil.copy2(origin, dest)
-    if digest(dest) != expected:
+    if dest.parent.is_symlink() or not dest.is_file() or dest.is_symlink() or digest(dest) != expected:
         raise SystemExit(f"copied origin photograph does not match registered identity: {dest}")
     return dest
 

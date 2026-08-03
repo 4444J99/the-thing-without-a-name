@@ -496,7 +496,7 @@ def check_stills(spec: dict, root: Path, rep: Report, exempt: set[str] = frozens
 
 def check_origin_still(spec: dict, root: Path, rep: Report) -> None:
     path = root / "stills" / spec["filename"]
-    exists = path.is_file()
+    exists = path.is_file() and not path.is_symlink() and not path.parent.is_symlink()
     rep.add(
         "package",
         "unaltered 2017 photograph",

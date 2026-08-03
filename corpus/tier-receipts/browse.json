@@ -1,0 +1,6 @@
+{
+ "schema": "danse.corpus.tier-receipt.v2",
+ "tier": "browse",
+ "source_sha256": "f5147aff8820d929dd09f674bb77cf0e9e93080f2313d990bdebac3c3ba9acc0",
+ "output_sha256": "115bb8c6976ec229f7ac279525e4e4fedb32b2e7e9b2b2cddb91d4d8c5a3bfe1"
+}

@@ -252,6 +252,7 @@ python3 2_measure_transmutation.py ../reference/T-2017-full.png \
 python3 3_reconstruct.py --target ../reference/T-2017-full.png \
         --frames .work/raw --depth 2 --leaves 256 -o .work/reference/score-danse.json
 python3 3_reconstruct.py ... --sweep 32,64,128,256,384,512   # rate/distortion curve
+python3 4_corpus.py --limit 8       # isolated smoke corpus under .work/corpus-smoke-8
 ```
 
 ## Delivery

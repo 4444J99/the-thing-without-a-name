@@ -104,8 +104,8 @@ def corpus_public_manifest(work: Path) -> dict:
     }
 
 
-def run_corpus_pipeline(work: Path, out: Path, tiers: str) -> int:
-    argv = ["4_corpus.py", "--work", str(work), "--out", str(out), "--skip-room", "--tiers", tiers]
+def run_corpus_pipeline(work: Path, out: Path, tiers: str, *extra: str) -> int:
+    argv = ["4_corpus.py", "--work", str(work), "--out", str(out), "--skip-room", "--tiers", tiers, *extra]
     with mock.patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
         return CORPUS_PIPELINE.main()
 
@@ -136,6 +136,52 @@ class DeliveryContractTest(unittest.TestCase):
                 "fps": ["24"],
             },
         )
+
+    def test_offline_render_rejects_an_unauthorized_tier_before_capture(self) -> None:
+        render = mock.Mock(side_effect=AssertionError("unauthorized tier reached the renderer"))
+        with (
+            mock.patch.object(sys, "argv", ["render.py", "--segment", "0"]),
+            mock.patch.object(OFFLINE, "authorize_render_tier", return_value=(False, "stale receipt")),
+            mock.patch.object(OFFLINE, "render_segment", render),
+            redirect_stderr(io.StringIO()) as error,
+        ):
+            self.assertEqual(OFFLINE.main(), 1)
+        self.assertFalse(render.called)
+        self.assertIn("stale receipt", error.getvalue())
+
+    def test_render_and_delivery_source_identities_bind_the_tier_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "corpus/tier-receipts/screen.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_bytes(b"first receipt")
+
+            with mock.patch.object(OFFLINE, "APP", root):
+                first = OFFLINE.source_tree_sha256(SimpleNamespace(tier="screen"))
+                receipt.write_bytes(b"second receipt")
+                second = OFFLINE.source_tree_sha256(SimpleNamespace(tier="screen"))
+            self.assertNotEqual(first, second)
+
+            render_dir = root / "render"
+            render_dir.mkdir()
+            program = render_dir / "program.json"
+            bank = root / "sound/bank/bank.json"
+            bank.parent.mkdir(parents=True)
+            program.write_text("{}")
+            bank.write_text("{}")
+            DELIVER.delivery_source_sha256.cache_clear()
+            with (
+                mock.patch.object(DELIVER, "DANSE", root),
+                mock.patch.object(DELIVER, "HERE", render_dir),
+                mock.patch.object(DELIVER, "PROGRAM", program),
+                mock.patch.object(DELIVER, "BANK", bank),
+            ):
+                third = DELIVER.delivery_source_sha256("screen")
+                receipt.write_bytes(b"third receipt")
+                DELIVER.delivery_source_sha256.cache_clear()
+                fourth = DELIVER.delivery_source_sha256("screen")
+            DELIVER.delivery_source_sha256.cache_clear()
+            self.assertNotEqual(third, fourth)
 
     def test_render_resume_receipt_binds_inputs_source_and_output_bytes(self) -> None:
         args = SimpleNamespace(
@@ -391,6 +437,109 @@ class DeliveryContractTest(unittest.TestCase):
             plate.parent.symlink_to(outside_tier, target_is_directory=True)
             self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
 
+    def test_tier_receipt_validator_rejects_mutation_versions_and_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plate = root / "plates/browse/IMG_1570.webp"
+            matte = root / "mattes/browse/IMG_1570.webp"
+            receipt = root / "tier-receipts/browse.json"
+            plate.parent.mkdir(parents=True)
+            matte.parent.mkdir(parents=True)
+            receipt.parent.mkdir(parents=True)
+            plate.write_bytes(b"plate bytes")
+            matte.write_bytes(b"matte bytes")
+            output = CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"])
+            payload = {
+                "schema": "danse.corpus.tier-receipt.v2",
+                "tier": "browse",
+                "source_sha256": "1" * 64,
+                "output_sha256": output,
+            }
+            receipt.write_text(json.dumps(payload))
+            self.assertTrue(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
+
+            plate.write_bytes(b"mutated")
+            self.assertFalse(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
+            plate.write_bytes(b"plate bytes")
+            payload["schema"] = "danse.corpus.tier-receipt.v1"
+            receipt.write_text(json.dumps(payload))
+            self.assertFalse(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
+
+            payload["schema"] = "danse.corpus.tier-receipt.v2"
+            target = root / "receipt-target.json"
+            target.write_text(json.dumps(payload))
+            receipt.unlink()
+            receipt.symlink_to(target)
+            self.assertFalse(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
+
+    def test_tracked_shipped_tier_receipts_match_every_committed_byte(self) -> None:
+        manifest = json.loads((ROOT / "corpus/manifest.json").read_text())
+        ids = [frame["id"] for frame in manifest["frames"]]
+        for tier in ("browse", "screen"):
+            with self.subTest(tier=tier):
+                self.assertTrue(CORPUS_CONTRACT.tier_receipt_is_current(ROOT / "corpus", tier, ids))
+
+    def test_local_render_authorization_binds_hydrated_sources_and_output_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, corpus = corpus_fixture(root)
+            public = corpus_public_manifest(work)
+            corpus.mkdir(parents=True)
+            (corpus / "manifest.json").write_text(json.dumps(public))
+            plate = corpus / "plates/film/IMG_1570.webp"
+            matte = corpus / "mattes/film/IMG_1570.webp"
+            plate.parent.mkdir(parents=True)
+            matte.parent.mkdir(parents=True)
+            plate.write_bytes(b"film plate")
+            matte.write_bytes(b"film matte")
+            nbytes = plate.stat().st_size + matte.stat().st_size
+            (corpus / "manifest.local.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.corpus.local.v1",
+                        "tiers": {"film": CORPUS_CONTRACT.tier_manifest_entry("film", nbytes)},
+                    }
+                )
+            )
+            items, incomplete = CORPUS_CONTRACT.frame_inventory(work)
+            self.assertFalse(incomplete)
+            source = CORPUS_CONTRACT.tier_source_identity(
+                CORPUS_CONTRACT.corpus_source_identity(items),
+                CORPUS_CONTRACT.TIER_SPECS["film"],
+                CORPUS_CONTRACT.MATTE_QUALITY,
+            )
+            receipt = corpus / "tier-receipts/film.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.corpus.tier-receipt.v2",
+                        "tier": "film",
+                        "source_sha256": source,
+                        "output_sha256": CORPUS_CONTRACT.tier_output_identity(
+                            corpus, "film", ["IMG_1570"]
+                        ),
+                    }
+                )
+            )
+            self.assertEqual(
+                CORPUS_CONTRACT.authorize_render_tier(corpus, work, "film"),
+                (True, "1 exact plate+matte pairs"),
+            )
+
+            plate.write_bytes(b"FILM PLATE")
+            allowed, detail = CORPUS_CONTRACT.authorize_render_tier(corpus, work, "film")
+            self.assertFalse(allowed)
+            self.assertIn("receipt", detail)
+
+            plate.write_bytes(b"film plate")
+            raw = work / "raw/IMG_1570.png"
+            raw.unlink()
+            raw.symlink_to(work / "raw/missing.png")
+            allowed, detail = CORPUS_CONTRACT.authorize_render_tier(corpus, work, "film")
+            self.assertFalse(allowed)
+            self.assertIn("source bytes are unreadable", detail)
+
     def test_tier_retention_rejects_mutated_bytes_and_source_only_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -441,6 +590,125 @@ class DeliveryContractTest(unittest.TestCase):
             )
             self.assertEqual(run_corpus_pipeline(work, out, ""), 0)
             self.assertEqual(json.loads((out / "manifest.json").read_text())["tiers"], {})
+
+    def test_partial_shipped_rebuild_retains_only_receipted_current_tiers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, out = corpus_fixture(root)
+            screen_plate = out / "plates/screen/IMG_1570.webp"
+            screen_matte = out / "mattes/screen/IMG_1570.webp"
+            screen_receipt = out / "tier-receipts/screen.json"
+            screen_plate.parent.mkdir(parents=True)
+            screen_matte.parent.mkdir(parents=True)
+            screen_receipt.parent.mkdir(parents=True)
+            screen_plate.write_bytes(b"screen plate")
+            screen_matte.write_bytes(b"screen matte")
+            items, incomplete = CORPUS_CONTRACT.frame_inventory(work)
+            self.assertFalse(incomplete)
+            screen_source = CORPUS_CONTRACT.tier_source_identity(
+                CORPUS_CONTRACT.corpus_source_identity(items),
+                CORPUS_PIPELINE.TIERS["screen"],
+                CORPUS_PIPELINE.MATTE_QUALITY,
+            )
+            screen_receipt.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.corpus.tier-receipt.v2",
+                        "tier": "screen",
+                        "source_sha256": screen_source,
+                        "output_sha256": CORPUS_CONTRACT.tier_output_identity(
+                            out, "screen", ["IMG_1570"]
+                        ),
+                    }
+                )
+            )
+
+            def fake_encode(_src, dest, *_args, **_kwargs):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(dest.relative_to(out).as_posix().encode())
+                return dest.stat().st_size
+
+            with mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=fake_encode):
+                self.assertEqual(run_corpus_pipeline(work, out, "browse"), 0)
+                self.assertEqual(set(json.loads((out / "manifest.json").read_text())["tiers"]), {"browse", "screen"})
+
+                screen_plate.write_bytes(b"mutated screen plate")
+                self.assertEqual(run_corpus_pipeline(work, out, "browse"), 0)
+                self.assertEqual(set(json.loads((out / "manifest.json").read_text())["tiers"]), {"browse"})
+
+    def test_limited_smoke_build_isolated_from_canonical_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, canonical = corpus_fixture(root)
+            second_raw = work / "raw/IMG_1571.png"
+            second_mask = work / "vision/mask/IMG_1571.png"
+            second_pose = work / "vision/pose/IMG_1571.json"
+            CORPUS_PIPELINE.Image.new("RGB", (4, 3), "black").save(second_raw, "PNG")
+            CORPUS_PIPELINE.Image.new("L", (4, 3), 0).save(second_mask, "PNG")
+            second_pose.write_text("{}")
+            canonical.mkdir(parents=True)
+            sentinel = canonical / "manifest.json"
+            sentinel.write_bytes(b"canonical corpus bytes")
+
+            def fake_encode(_src, dest, *_args, **_kwargs):
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(dest.as_posix().encode())
+                return dest.stat().st_size
+
+            argv = ["4_corpus.py", "--work", str(work), "--limit", "1", "--skip-room"]
+            with (
+                mock.patch.object(CORPUS_PIPELINE, "OUT", canonical),
+                mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=fake_encode),
+                mock.patch.object(sys, "argv", argv),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(CORPUS_PIPELINE.main(), 0)
+            self.assertEqual(sentinel.read_bytes(), b"canonical corpus bytes")
+            smoke = work / "corpus-smoke-1"
+            self.assertEqual(set(json.loads((smoke / "manifest.json").read_text())["tiers"]), {"browse", "screen"})
+
+            extra = smoke / "plates/browse/old-extra.webp"
+            extra.write_bytes(b"stale smoke output")
+            with (
+                mock.patch.object(CORPUS_PIPELINE, "OUT", canonical),
+                mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=fake_encode),
+                mock.patch.object(sys, "argv", argv),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(CORPUS_PIPELINE.main(), 0)
+            self.assertFalse(extra.exists())
+            self.assertEqual(sentinel.read_bytes(), b"canonical corpus bytes")
+
+            external = root / "external-plates"
+            (external / "browse").mkdir(parents=True)
+            outside_sentinel = external / "browse/DO_NOT_DELETE"
+            outside_sentinel.write_bytes(b"outside smoke custody")
+            shutil.rmtree(smoke / "plates")
+            (smoke / "plates").symlink_to(external, target_is_directory=True)
+            with (
+                mock.patch.object(CORPUS_PIPELINE, "OUT", canonical),
+                mock.patch.object(CORPUS_PIPELINE, "encode", side_effect=fake_encode),
+                mock.patch.object(sys, "argv", argv),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(CORPUS_PIPELINE.main(), 0)
+            self.assertEqual(outside_sentinel.read_bytes(), b"outside smoke custody")
+
+            explicit = [*argv, "--out", str(canonical)]
+            encoder = mock.Mock(side_effect=AssertionError("canonical smoke target encoded"))
+            with (
+                mock.patch.object(CORPUS_PIPELINE, "OUT", canonical),
+                mock.patch.object(CORPUS_PIPELINE, "encode", encoder),
+                mock.patch.object(sys, "argv", explicit),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(CORPUS_PIPELINE.main(), 1)
+            self.assertFalse(encoder.called)
+            self.assertEqual(sentinel.read_bytes(), b"canonical corpus bytes")
 
     def test_interrupted_tier_rebuild_cannot_retain_its_old_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -538,6 +806,14 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual([row[0] for row in complete], ["IMG_1570"])
             self.assertEqual([row[0].name for row in incomplete], ["IMG_1571.JPG"])
 
+            marker = work / "vision/.incomplete"
+            marker.write_text("danse.vision.incomplete\n")
+            marked_complete, marked_incomplete = CORPUS_CONTRACT.frame_inventory(work)
+            self.assertEqual(marked_complete, [])
+            self.assertEqual([row[0].name for row in marked_incomplete], ["IMG_1570.JPG", "IMG_1571.JPG"])
+            self.assertTrue(all(marker in missing for _, missing in marked_incomplete))
+            marker.unlink()
+
             absent = work / "missing.png"
             self.assertEqual(CORPUS_CONTRACT.missing_measurement_inputs([complete_raw, absent]), [absent])
             self.assertIsNone(CORPUS_CONTRACT.block_shape_error(1024, 768, 16))
@@ -546,6 +822,44 @@ class DeliveryContractTest(unittest.TestCase):
             readme = (ROOT / "README.md").read_text()
             self.assertIn("../reference/T-2017-full.png", readme)
             self.assertNotIn(".work/reference/T-2017-full.png", readme)
+
+    @unittest.skipUnless(
+        sys.platform == "darwin" and (ROOT / "pipeline/1_vision/danse-vision").is_file(),
+        "requires the locally built macOS Vision extractor",
+    )
+    def test_failed_vision_rerun_cannot_retain_any_prior_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "raw"
+            out = root / "vision"
+            raw.mkdir()
+            for frame_id in ("IMG_1570", "IMG_1571"):
+                (raw / f"{frame_id}.jpg").write_bytes(b"not an image")
+                pose = out / "pose" / f"{frame_id}.json"
+                mask = out / "mask" / f"{frame_id}.png"
+                pose.parent.mkdir(parents=True, exist_ok=True)
+                mask.parent.mkdir(parents=True, exist_ok=True)
+                pose.write_text('{"stale":true}')
+                mask.write_bytes(b"stale mask")
+            unrelated_pose = out / "pose/NOT_A_DANSE_ARTIFACT.txt"
+            unrelated_mask = out / "mask/NOT_A_DANSE_ARTIFACT.txt"
+            unrelated_pose.write_text("preserve me")
+            unrelated_mask.write_text("preserve me")
+            (out / "vision.json").write_text('{"stale":true}')
+
+            done = subprocess.run(
+                [str(ROOT / "pipeline/1_vision/danse-vision"), str(raw), str(out)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 1, done.stderr)
+            self.assertFalse((out / "vision.json").exists())
+            self.assertTrue((out / ".incomplete").is_file())
+            self.assertEqual(unrelated_pose.read_text(), "preserve me")
+            self.assertEqual(unrelated_mask.read_text(), "preserve me")
+            self.assertFalse(any((out / "pose" / f"{frame_id}.json").exists() for frame_id in ("IMG_1570", "IMG_1571")))
+            self.assertFalse(any((out / "mask" / f"{frame_id}.png").exists() for frame_id in ("IMG_1570", "IMG_1571")))
 
     def test_impractical_passage_offsets_are_rejected_without_walking(self) -> None:
         script = """
@@ -882,6 +1196,7 @@ class DeliveryContractTest(unittest.TestCase):
             with (
                 mock.patch.object(DELIVER, "probe", side_effect=fake_probe),
                 mock.patch.object(DELIVER, "score_provenance", return_value={"sources": ["a", "b"]}),
+                mock.patch.object(DELIVER, "authorize_render_tier", return_value=(True, "fixture tier")),
                 mock.patch.object(DELIVER.shutil, "which", side_effect=lambda command: f"/tools/{command}"),
                 mock.patch.object(
                     DELIVER.subprocess,
@@ -1011,6 +1326,118 @@ class DeliveryContractTest(unittest.TestCase):
                     ),
                     1,
                 )
+
+    def test_symlinked_origin_cannot_be_adopted_or_approved(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "raw/IMG_1594.JPG"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"registered origin bytes")
+            expected = DELIVER.digest(source)
+            package = root / "package"
+            origin_copy = package / "stills/origin-2017.jpg"
+            origin_copy.parent.mkdir(parents=True)
+            origin_copy.symlink_to(source)
+
+            for forced in (False, True):
+                with (
+                    self.subTest(forced=forced),
+                    mock.patch.object(DELIVER, "PACKAGE", package),
+                    mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                    self.assertRaises(SystemExit),
+                ):
+                    DELIVER.deliver_origin(source, forced)
+
+                with (
+                    mock.patch.object(DELIVER.shutil, "which", return_value="/tools/node"),
+                    mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(
+                        DELIVER.preflight(
+                            program,
+                            SPAN,
+                            {"origin"},
+                            {"origin"} if forced else set(),
+                            "film",
+                            root,
+                            package,
+                            source,
+                            passage_requested=False,
+                        ),
+                        1,
+                    )
+
+            spec = {
+                "filename": "origin-2017.jpg",
+                "source_filename": source.name,
+                "source_sha256": expected,
+                "copy_mode": "byte-identical",
+            }
+            report = CHECK.Report()
+            CHECK.check_origin_still(spec, package, report)
+            self.assertEqual(report.failures, 1)
+
+            origin_copy.unlink()
+            origin_copy.symlink_to(root / "missing-origin.jpg")
+            with (
+                mock.patch.object(DELIVER.shutil, "which", return_value="/tools/node"),
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        {"origin"},
+                        "film",
+                        root,
+                        package,
+                        source,
+                        passage_requested=False,
+                    ),
+                    1,
+                )
+            dangling_report = CHECK.Report()
+            CHECK.check_origin_still(spec, package, dangling_report)
+            self.assertEqual(dangling_report.failures, 1)
+
+            origin_copy.unlink()
+            origin_copy.parent.rmdir()
+            external_stills = root / "external-stills"
+            external_stills.mkdir()
+            origin_copy.parent.symlink_to(external_stills, target_is_directory=True)
+            (external_stills / origin_copy.name).write_bytes(source.read_bytes())
+            with (
+                mock.patch.object(DELIVER, "PACKAGE", package),
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                self.assertRaises(SystemExit),
+            ):
+                DELIVER.deliver_origin(source, False)
+            with (
+                mock.patch.object(DELIVER.shutil, "which", return_value="/tools/node"),
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        set(),
+                        "film",
+                        root,
+                        package,
+                        source,
+                        passage_requested=False,
+                    ),
+                    1,
+                )
+            linked_parent_report = CHECK.Report()
+            CHECK.check_origin_still(spec, package, linked_parent_report)
+            self.assertEqual(linked_parent_report.failures, 1)
 
     def test_text_only_preserves_existing_sound_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -72,8 +72,6 @@ validate(program);
 
 const corpusDir = path.join(DANSE, "corpus");
 const manifest = readJSON(path.join(corpusDir, "manifest.json"));
-const local = path.join(corpusDir, "manifest.local.json");
-if (fs.existsSync(local)) Object.assign(manifest.tiers, readJSON(local).tiers);
 const solved = manifest.score ? readJSON(path.join(corpusDir, manifest.score)) : null;
 const corpus = fromData(`${corpusDir}/`, manifest, solved);
 
