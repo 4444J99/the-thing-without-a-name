@@ -1885,6 +1885,8 @@ class DeliveryContractTest(unittest.TestCase):
 
             def mux_reel(picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
                 self.assertEqual(picture.name, "reel-default.mp4")
+                self.assertEqual(dest.parent, package)
+                self.assertNotEqual(dest.name, "reel.mp4")
                 dest.write_bytes(b"muxed reel")
 
             with (
@@ -1902,6 +1904,8 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(first[first.index("--start") + 1], "140.0")
             self.assertNotIn("--concat", first)
             self.assertIn("--concat", second)
+            self.assertEqual((package / "reel.mp4").read_bytes(), b"muxed reel")
+            self.assertEqual(list(package.glob(".reel-*.mp4")), [])
 
     def test_reel_renderer_rejects_failed_concat_recovery(self) -> None:
         reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 155.0, "duration": 15.0}
@@ -1912,6 +1916,8 @@ class DeliveryContractTest(unittest.TestCase):
             package = root / "package"
             out.mkdir()
             package.mkdir()
+            final = package / "reel.mp4"
+            final.write_bytes(b"previous valid reel")
 
             def query(name: str, start: float = 0.0) -> dict:
                 return reel_span if name == "reel" else passage_span
@@ -1933,6 +1939,8 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SystemExit, "reel would not render"):
                     DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
+            self.assertEqual(final.read_bytes(), b"previous valid reel")
+            self.assertEqual(list(package.glob(".reel-*.mp4")), [])
 
     def test_reel_renderer_rejects_wrong_final_duration(self) -> None:
         reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 155.0, "duration": 15.0}
@@ -1943,6 +1951,8 @@ class DeliveryContractTest(unittest.TestCase):
             package = root / "package"
             out.mkdir()
             package.mkdir()
+            final = package / "reel.mp4"
+            final.write_bytes(b"previous valid reel")
 
             def query(name: str, start: float = 0.0) -> dict:
                 return reel_span if name == "reel" else passage_span
@@ -1966,7 +1976,8 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SystemExit, "render is wrong"):
                     DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
-            self.assertFalse((package / "reel.mp4").exists())
+            self.assertEqual(final.read_bytes(), b"previous valid reel")
+            self.assertEqual(list(package.glob(".reel-*.mp4")), [])
 
     def test_capture_overrun_is_rejected_before_render(self) -> None:
         overrun = {**SPAN, "t0": 300.0, "t1": 470.0, "duration": 170.0, "capture": "midnight-moment"}

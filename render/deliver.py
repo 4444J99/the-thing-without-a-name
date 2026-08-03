@@ -840,16 +840,22 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             raise SystemExit("the reel would not render")
         tmp_a = render_out / "reel-a.wav"
         cut_audio(sound, rel_t0, seconds, tmp_a)
-        mux(picture, tmp_a, dest, "aac")
-
-    got = probe_required(dest)
-    fps = captures(program).get("reel", {}).get("fps", 30)
-    want_frames = int(round(seconds * fps))
-    have = int(round(got["seconds"] * got.get("fps", fps))) if got else -1
-    if not got or abs(have - want_frames) > 1:
-        dest.unlink(missing_ok=True)
-        raise SystemExit(f"reel.mp4 is {have} frames, the capture declares {want_frames} — the render is wrong")
-    print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
+        with tempfile.NamedTemporaryFile(prefix=".reel-", suffix=".mp4", dir=PACKAGE, delete=False) as handle:
+            staged = Path(handle.name)
+        try:
+            mux(picture, tmp_a, staged, "aac")
+            got = probe_required(staged)
+            fps = captures(program).get("reel", {}).get("fps", 30)
+            want_frames = int(round(seconds * fps))
+            have = int(round(got["seconds"] * got.get("fps", fps))) if got else -1
+            if not got or abs(have - want_frames) > 1:
+                raise SystemExit(
+                    f"reel.mp4 is {have} frames, the capture declares {want_frames} — the render is wrong"
+                )
+            staged.replace(dest)
+            print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
+        finally:
+            staged.unlink(missing_ok=True)
     return dest
 
 
