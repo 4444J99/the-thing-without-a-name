@@ -139,13 +139,17 @@ class DeliveryContractTest(unittest.TestCase):
 
     def test_offline_render_rejects_an_unauthorized_tier_before_capture(self) -> None:
         render = mock.Mock(side_effect=AssertionError("unauthorized tier reached the renderer"))
-        with (
-            mock.patch.object(sys, "argv", ["render.py", "--segment", "0"]),
-            mock.patch.object(OFFLINE, "authorize_render_tier", return_value=(False, "stale receipt")),
-            mock.patch.object(OFFLINE, "render_segment", render),
-            redirect_stderr(io.StringIO()) as error,
-        ):
-            self.assertEqual(OFFLINE.main(), 1)
+        authorization = mock.Mock(return_value=(False, "stale receipt"))
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(sys, "argv", ["render.py", "--segment", "0"]),
+                mock.patch.object(OFFLINE, "authorize_render_tier", authorization),
+                mock.patch.object(OFFLINE, "render_segment", render),
+                mock.patch.dict(OFFLINE.os.environ, {"DANSE_WORK": tmp}, clear=True),
+                redirect_stderr(io.StringIO()) as error,
+            ):
+                self.assertEqual(OFFLINE.main(), 1)
+            authorization.assert_called_once_with(OFFLINE.APP / "corpus", Path(tmp), "screen")
         self.assertFalse(render.called)
         self.assertIn("stale receipt", error.getvalue())
 
@@ -1013,10 +1017,12 @@ class DeliveryContractTest(unittest.TestCase):
             "72b4f8f1c553c40bd4ec2de9956d547493ed17aaa5eabe172260c2156c8fde42",
         )
         with mock.patch.dict(DELIVER.os.environ, {}, clear=True):
+            self.assertEqual(DELIVER.hydrated_work_root(), DELIVER.RAW.parent)
             self.assertEqual(DELIVER.registered_origin(), DELIVER.RAW / "IMG_1594.JPG")
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
             DELIVER.os.environ, {"DANSE_WORK": tmp}, clear=True
         ):
+            self.assertEqual(DELIVER.hydrated_work_root(), Path(tmp))
             self.assertEqual(DELIVER.registered_origin(), Path(tmp) / "raw/IMG_1594.JPG")
 
     def test_reused_origin_repairs_missing_or_stale_manifest_receipt(self) -> None:
@@ -1193,20 +1199,24 @@ class DeliveryContractTest(unittest.TestCase):
                     return {"seconds": SPAN["duration"]}
                 return None
 
+            external_work = root / "external-work"
+            authorization = mock.Mock(return_value=(True, "fixture tier"))
             with (
                 mock.patch.object(DELIVER, "probe", side_effect=fake_probe),
                 mock.patch.object(DELIVER, "score_provenance", return_value={"sources": ["a", "b"]}),
-                mock.patch.object(DELIVER, "authorize_render_tier", return_value=(True, "fixture tier")),
+                mock.patch.object(DELIVER, "authorize_render_tier", authorization),
                 mock.patch.object(DELIVER.shutil, "which", side_effect=lambda command: f"/tools/{command}"),
                 mock.patch.object(
                     DELIVER.subprocess,
                     "run",
                     return_value=subprocess.CompletedProcess([], 0),
                 ),
+                mock.patch.dict(DELIVER.os.environ, {"DANSE_WORK": str(external_work)}, clear=True),
                 redirect_stdout(io.StringIO()) as output,
             ):
                 result = DELIVER.preflight(program, SPAN, {"master"}, set(), "film", root, package, None)
             self.assertEqual(result, 0)
+            authorization.assert_called_once_with(DELIVER.DANSE / "corpus", external_work, "film")
             self.assertNotIn("Python module numpy", output.getvalue())
             self.assertNotIn("grain bank", output.getvalue())
 

@@ -230,6 +230,12 @@ def query_capture_span(capture_name: str, seed: int | None = None, start: float 
     return dict(_capture_span_items(capture_name, seed, start))
 
 
+def hydrated_work_root() -> Path:
+    """Honor the same external private-work mount as export and origin delivery."""
+    configured = os.environ.get("DANSE_WORK")
+    return Path(configured).expanduser() if configured else RAW.parent
+
+
 def registered_origin() -> Path:
     """The submission register is the sole owner of the source photograph."""
     register = yaml.safe_load(REGISTER.read_text()) or {}
@@ -242,9 +248,7 @@ def registered_origin() -> Path:
     source_sha256 = spec.get("source_sha256")
     if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", source_sha256):
         raise SystemExit(f"{REGISTER} must declare package.origin_still.source_sha256")
-    configured_work = os.environ.get("DANSE_WORK")
-    work = Path(configured_work).expanduser() if configured_work else RAW.parent
-    return work / "raw" / filename
+    return hydrated_work_root() / "raw" / filename
 
 
 def registered_origin_source_sha256() -> str:
@@ -549,7 +553,7 @@ def preflight(
             add(shutil.which(command) is not None, command, shutil.which(command) or "missing")
 
     if only & PASSAGE_SELECTORS:
-        tier_ok, tier_detail = authorize_render_tier(DANSE / "corpus", DANSE / "pipeline/.work", tier)
+        tier_ok, tier_detail = authorize_render_tier(DANSE / "corpus", hydrated_work_root(), tier)
         add(tier_ok, f"corpus tier {tier} receipt", tier_detail)
 
     if need_renderer:

@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -65,6 +66,12 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def hydrated_work_root() -> Path:
+    """Honor the private-work mount used by corpus hydration and delivery."""
+    configured = os.environ.get("DANSE_WORK")
+    return Path(configured).expanduser() if configured else APP / "pipeline/.work"
 
 
 def source_tree_sha256(args) -> str:
@@ -433,7 +440,7 @@ def main() -> int:
     if (args.concat or args.check_concat) and args.segment is not None:
         ap.error("--concat/--check-concat cannot be combined with --segment")
 
-    tier_ok, tier_detail = authorize_render_tier(APP / "corpus", APP / "pipeline/.work", args.tier)
+    tier_ok, tier_detail = authorize_render_tier(APP / "corpus", hydrated_work_root(), args.tier)
     if not tier_ok:
         print(f"corpus tier {args.tier} is not authorized for rendering: {tier_detail}", file=sys.stderr)
         return 1
