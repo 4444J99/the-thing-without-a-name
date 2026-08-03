@@ -837,9 +837,11 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
     if done.returncode == 0 and not picture.is_file():
         # A full render shorter than one segment is already complete at its
         # single segment path; render.py only creates the concat path when a
-        # plan has multiple parts.
+        # plan has multiple parts.  Guard against a partial multi-segment run
+        # by requiring that seg-001 does not exist.
         single = stem.parent / f"{stem.name}-seg-000.mp4"
-        if single.is_file():
+        next_seg = stem.parent / f"{stem.name}-seg-001.mp4"
+        if single.is_file() and not next_seg.is_file():
             picture = single
     if done.returncode != 0 or not picture.is_file():
         raise SystemExit("the reel would not render")

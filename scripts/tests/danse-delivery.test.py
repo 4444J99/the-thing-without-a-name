@@ -1894,6 +1894,36 @@ class DeliveryContractTest(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual(command[command.index("--start") + 1], "140.0")
 
+    def test_reel_multi_segment_missing_concat_raises_not_delivers_first_segment(self) -> None:
+        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 200.0, "duration": 60.0}
+        passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "render"
+            package = root / "package"
+            out.mkdir()
+            package.mkdir()
+
+            def query(name: str, start: float = 0.0) -> dict:
+                return reel_span if name == "reel" else passage_span
+
+            def render_multi(command: list[str], **_: object) -> subprocess.CompletedProcess:
+                # Simulate a multi-segment run where concat was never produced.
+                (out / "reel-default-seg-000.mp4").write_bytes(b"segment 0")
+                (out / "reel-default-seg-001.mp4").write_bytes(b"segment 1")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                mock.patch.object(DELIVER, "OUT", out),
+                mock.patch.object(DELIVER, "PACKAGE", package),
+                mock.patch.object(DELIVER, "query_capture_span", side_effect=query),
+                mock.patch.object(DELIVER.subprocess, "run", side_effect=render_multi),
+                mock.patch.object(DELIVER, "cut_audio"),
+                mock.patch.object(DELIVER, "mux"),
+            ):
+                with self.assertRaises(SystemExit):
+                    DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
+
     def test_capture_overrun_is_rejected_before_render(self) -> None:
         overrun = {**SPAN, "t0": 300.0, "t1": 470.0, "duration": 170.0, "capture": "midnight-moment"}
         with mock.patch.object(DELIVER, "query_capture_span", return_value=overrun):
