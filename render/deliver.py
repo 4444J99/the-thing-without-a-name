@@ -45,6 +45,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -810,12 +811,10 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
     seconds = span["duration"]
 
     print("  reel.mp4 · rendering (vertical is a different field of view, not a crop)")
-    stem = OUT / "reel-default"
-    for junk in OUT.glob("reel-default*"):
-        junk.unlink(missing_ok=True)
-    done = subprocess.run(
-        # fmt: off
-        [
+    with tempfile.TemporaryDirectory(prefix=".reel-", dir=OUT) as render_tmp:
+        render_out = Path(render_tmp)
+        stem = render_out / "reel-default"
+        render_command = [
             sys.executable,
             str(RENDER),
             "--capture",
@@ -828,27 +827,29 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             "h264",
             "--quiet",
             "--out",
-            str(OUT),
-        ],
-        # fmt: on
-        check=False,
-    )
-    picture = stem.with_suffix(".mp4")
-    if done.returncode == 0 and not picture.is_file():
-        # A full render shorter than one segment is already complete at its
-        # single segment path; render.py only creates the concat path when a
-        # plan has multiple parts.
-        single = stem.parent / f"{stem.name}-seg-000.mp4"
-        receipt = single.with_name(single.name + ".receipt.json")
-        second = stem.parent / f"{stem.name}-seg-001.mp4"
-        if single.is_file() and receipt.is_file() and not second.exists():
-            picture = single
-    if done.returncode != 0 or not picture.is_file():
-        raise SystemExit("the reel would not render")
-    tmp_a = OUT / ".reel-a.wav"
-    cut_audio(sound, rel_t0, seconds, tmp_a)
-    mux(picture, tmp_a, dest, "aac")
-    tmp_a.unlink(missing_ok=True)
+            str(render_out),
+        ]
+        done = subprocess.run(render_command, check=False)
+        picture = stem.with_suffix(".mp4")
+        if done.returncode == 0 and not picture.is_file():
+            # A one-part full plan is left at its segment path. Ask the
+            # renderer to validate every planned segment and create the
+            # canonical output rather than adopting a segment directly.
+            done = subprocess.run([*render_command, "--concat"], check=False)
+        if done.returncode != 0 or not picture.is_file():
+            raise SystemExit("the reel would not render")
+        tmp_a = render_out / "reel-a.wav"
+        cut_audio(sound, rel_t0, seconds, tmp_a)
+        mux(picture, tmp_a, dest, "aac")
+
+    got = probe_required(dest)
+    fps = captures(program).get("reel", {}).get("fps", 30)
+    want_frames = int(round(seconds * fps))
+    have = int(round(got["seconds"] * got.get("fps", fps))) if got else -1
+    if not got or abs(have - want_frames) > 1:
+        dest.unlink(missing_ok=True)
+        raise SystemExit(f"reel.mp4 is {have} frames, the capture declares {want_frames} — the render is wrong")
+    print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
     return dest
 
 

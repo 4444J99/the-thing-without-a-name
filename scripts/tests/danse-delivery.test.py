@@ -1863,7 +1863,7 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertTrue(work["reel"])
 
     def test_reel_renderer_accepts_one_segment_and_receives_the_resolved_capture_start(self) -> None:
-        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 170.0, "duration": 30.0}
+        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 155.0, "duration": 15.0}
         passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1876,12 +1876,15 @@ class DeliveryContractTest(unittest.TestCase):
                 return reel_span if name == "reel" else passage_span
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
-                segment = out / "reel-default-seg-000.mp4"
-                segment.write_bytes(b"rendered reel")
-                segment.with_name(segment.name + ".receipt.json").write_text("{}")
+                render_out = Path(command[command.index("--out") + 1])
+                if "--concat" in command:
+                    (render_out / "reel-default.mp4").write_bytes(b"validated concat")
+                else:
+                    (render_out / "reel-default-seg-000.mp4").write_bytes(b"rendered reel")
                 return subprocess.CompletedProcess(command, 0)
 
-            def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
+            def mux_reel(picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
+                self.assertEqual(picture.name, "reel-default.mp4")
                 dest.write_bytes(b"muxed reel")
 
             with (
@@ -1891,13 +1894,17 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(DELIVER.subprocess, "run", side_effect=render) as run,
                 mock.patch.object(DELIVER, "cut_audio"),
                 mock.patch.object(DELIVER, "mux", side_effect=mux_reel),
+                mock.patch.object(DELIVER, "probe_required", return_value={"seconds": 15.0, "fps": 30.0}),
             ):
                 DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
-            command = run.call_args.args[0]
-            self.assertEqual(command[command.index("--start") + 1], "140.0")
+            self.assertEqual(run.call_count, 2)
+            first, second = (call.args[0] for call in run.call_args_list)
+            self.assertEqual(first[first.index("--start") + 1], "140.0")
+            self.assertNotIn("--concat", first)
+            self.assertIn("--concat", second)
 
-    def test_reel_renderer_rejects_multi_segment_plan_without_concat(self) -> None:
-        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 170.0, "duration": 30.0}
+    def test_reel_renderer_rejects_failed_concat_recovery(self) -> None:
+        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 155.0, "duration": 15.0}
         passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1910,10 +1917,10 @@ class DeliveryContractTest(unittest.TestCase):
                 return reel_span if name == "reel" else passage_span
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
-                for index in (0, 1):
-                    segment = out / f"reel-default-seg-{index:03d}.mp4"
-                    segment.write_bytes(b"rendered reel segment")
-                    segment.with_name(segment.name + ".receipt.json").write_text("{}")
+                render_out = Path(command[command.index("--out") + 1])
+                if "--concat" in command:
+                    return subprocess.CompletedProcess(command, 1)
+                (render_out / "reel-default-seg-000.mp4").write_bytes(b"rendered reel")
                 return subprocess.CompletedProcess(command, 0)
 
             with (
@@ -1926,6 +1933,40 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SystemExit, "reel would not render"):
                     DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
+
+    def test_reel_renderer_rejects_wrong_final_duration(self) -> None:
+        reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 155.0, "duration": 15.0}
+        passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "render"
+            package = root / "package"
+            out.mkdir()
+            package.mkdir()
+
+            def query(name: str, start: float = 0.0) -> dict:
+                return reel_span if name == "reel" else passage_span
+
+            def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
+                render_out = Path(command[command.index("--out") + 1])
+                (render_out / "reel-default.mp4").write_bytes(b"rendered reel")
+                return subprocess.CompletedProcess(command, 0)
+
+            def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
+                dest.write_bytes(b"short reel")
+
+            with (
+                mock.patch.object(DELIVER, "OUT", out),
+                mock.patch.object(DELIVER, "PACKAGE", package),
+                mock.patch.object(DELIVER, "query_capture_span", side_effect=query),
+                mock.patch.object(DELIVER.subprocess, "run", side_effect=render),
+                mock.patch.object(DELIVER, "cut_audio"),
+                mock.patch.object(DELIVER, "mux", side_effect=mux_reel),
+                mock.patch.object(DELIVER, "probe_required", return_value={"seconds": 14.0, "fps": 30.0}),
+            ):
+                with self.assertRaisesRegex(SystemExit, "render is wrong"):
+                    DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
+            self.assertFalse((package / "reel.mp4").exists())
 
     def test_capture_overrun_is_rejected_before_render(self) -> None:
         overrun = {**SPAN, "t0": 300.0, "t1": 470.0, "duration": 170.0, "capture": "midnight-moment"}
