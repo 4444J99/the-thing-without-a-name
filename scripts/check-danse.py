@@ -793,6 +793,13 @@ ENTROPY = (
 # The one file allowed to know what time it is.
 IMPURE = "arrival.js"
 
+# The workstream launcher nests complete Git worktrees below the canonical
+# checkout, and private delivery caches may also retain source-shaped files.
+# Neither is part of this tree's shipped application. Scanning those ignored
+# custody roots would count byte-identical copies of arrival.js as additional
+# entropy owners merely because a continuation capsule exists.
+NON_SOURCE_ROOTS = frozenset({".git", ".work", ".worktrees", "node_modules"})
+
 
 def check_purity() -> None:
     hits = []
@@ -809,12 +816,13 @@ def check_purity() -> None:
     # answers to "what time is it" and the piece can drift against itself.
     found: dict[str, list[str]] = {}
     for path in sorted([*APP.rglob("*.js"), *APP.rglob("*.mjs"), *APP.rglob("*.html")]):
-        if ENGINE in path.parents or "node_modules" in path.parts:
+        relative = path.relative_to(APP)
+        if ENGINE in path.parents or NON_SOURCE_ROOTS.intersection(relative.parts):
             continue
         text = path.read_text(errors="ignore")
         for rx, label in ENTROPY:
             if rx.search(text):
-                found.setdefault(str(path.relative_to(APP)), []).append(label)
+                found.setdefault(str(relative), []).append(label)
     strays = {name: labels for name, labels in found.items() if name != IMPURE}
     check(
         "entropy lives in exactly one file",
