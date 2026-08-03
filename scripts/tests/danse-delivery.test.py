@@ -417,6 +417,9 @@ class DeliveryContractTest(unittest.TestCase):
 
             identity = CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"])
             self.assertIsNotNone(identity)
+            linked_root = root / "linked-root"
+            linked_root.symlink_to(root, target_is_directory=True)
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(linked_root, "browse", ["IMG_1570"]))
             matte.unlink()
             self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
             matte.write_bytes(b"matte bytes")
@@ -494,6 +497,13 @@ class DeliveryContractTest(unittest.TestCase):
             target.write_text(json.dumps(payload))
             receipt.unlink()
             receipt.symlink_to(target)
+            self.assertFalse(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
+
+            receipt.unlink()
+            receipt.write_text(json.dumps(payload))
+            external_receipts = root / "external-tier-receipts"
+            receipt.parent.rename(external_receipts)
+            receipt.parent.symlink_to(external_receipts, target_is_directory=True)
             self.assertFalse(CORPUS_CONTRACT.tier_receipt_is_current(root, "browse", ["IMG_1570"]))
 
     def test_tracked_shipped_tier_receipts_match_every_committed_byte(self) -> None:

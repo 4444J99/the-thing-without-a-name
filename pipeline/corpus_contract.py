@@ -89,6 +89,9 @@ def tier_output_identity(root: Path, tier: str, frame_ids) -> str | None:
     compact, but its identity covers the relative path and SHA-256 of every
     expected plate and matte.
     """
+    if not root.is_dir() or root.is_symlink():
+        return None
+
     ids = list(frame_ids)
     expected = [
         Path(kind) / tier / f"{frame_id}.webp"
@@ -148,8 +151,14 @@ def tier_receipt_is_current(
     expected_source_sha256: str | None = None,
 ) -> bool:
     """Require a regular v2 receipt that binds the exact tier output bytes."""
-    receipt = root / "tier-receipts" / f"{tier}.json"
-    if not receipt.is_file() or receipt.is_symlink():
+    receipt_directory = root / "tier-receipts"
+    receipt = receipt_directory / f"{tier}.json"
+    if (
+        not receipt_directory.is_dir()
+        or receipt_directory.is_symlink()
+        or not receipt.is_file()
+        or receipt.is_symlink()
+    ):
         return False
     try:
         data = json.loads(receipt.read_text())
