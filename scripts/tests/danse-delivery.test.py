@@ -1907,11 +1907,15 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(first[first.index("--start") + 1], "140.0")
             self.assertNotIn("--concat", first)
             self.assertIn("--concat", second)
-            self.assertEqual((package / "reel.mp4").read_bytes(), b"muxed reel")
+            final = package / "reel.mp4"
+            self.assertTrue(final.is_file())
+            self.assertFalse(final.is_symlink())
+            self.assertEqual(final.read_bytes(), b"muxed reel")
             self.assertEqual(
-                (package / "reel.mp4").stat().st_mode & 0o777,
+                final.stat().st_mode & 0o777,
                 control.stat().st_mode & 0o777,
             )
+            self.assertEqual(final.stat().st_mode & 0o111, 0)
             self.assertEqual(list(package.glob(".reel-*")), [])
 
     def test_reel_renderer_rejects_failed_concat_recovery(self) -> None:
@@ -1925,6 +1929,7 @@ class DeliveryContractTest(unittest.TestCase):
             package.mkdir()
             final = package / "reel.mp4"
             final.write_bytes(b"previous valid reel")
+            prior_mode = final.stat().st_mode
 
             def query(name: str, start: float = 0.0) -> dict:
                 return reel_span if name == "reel" else passage_span
@@ -1947,6 +1952,7 @@ class DeliveryContractTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "reel would not render"):
                     DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
             self.assertEqual(final.read_bytes(), b"previous valid reel")
+            self.assertEqual(final.stat().st_mode, prior_mode)
             self.assertEqual(list(package.glob(".reel-*")), [])
 
     def test_reel_renderer_cleans_partial_mux_without_replacing_prior_reel(self) -> None:
@@ -2000,6 +2006,7 @@ class DeliveryContractTest(unittest.TestCase):
             package.mkdir()
             final = package / "reel.mp4"
             final.write_bytes(b"previous valid reel")
+            prior_mode = final.stat().st_mode
 
             def query(name: str, start: float = 0.0) -> dict:
                 return reel_span if name == "reel" else passage_span
@@ -2024,6 +2031,7 @@ class DeliveryContractTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "render is wrong"):
                     DELIVER.deliver_reel({}, root / "score.wav", "film", True, start=120.0)
             self.assertEqual(final.read_bytes(), b"previous valid reel")
+            self.assertEqual(final.stat().st_mode, prior_mode)
             self.assertEqual(list(package.glob(".reel-*")), [])
 
     def test_capture_overrun_is_rejected_before_render(self) -> None:
