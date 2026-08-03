@@ -348,6 +348,11 @@ def recognized_package_media(package: Path) -> list[Path]:
     return sorted({path for path in paths if path.is_file()})
 
 
+def regular_directory_slot(path: Path) -> bool:
+    """True when a delivery directory is absent or a real directory."""
+    return not path.is_symlink() and (not path.exists() or path.is_dir())
+
+
 def package_provenance_matches(
     package: Path,
     span: dict,
@@ -467,6 +472,8 @@ def preflight(
     def add(ok: bool, name: str, detail: str) -> None:
         rows.append((ok, name, detail))
 
+    package_root_ok = regular_directory_slot(package)
+    add(package_root_ok, "package root", str(package))
     add(program.get("schema") == "danse.program.v2", "program", str(program.get("schema")))
     add(
         not passage_requested or (span is not None and span["duration"] > 0),
@@ -480,7 +487,8 @@ def preflight(
     add(
         not passage_requested
         or (
-            span is not None
+            package_root_ok
+            and span is not None
             and package_provenance_matches(package, span, start, delivery_source_sha256(tier))
         ),
         "package passage provenance",
@@ -582,14 +590,18 @@ def preflight(
 
     if "origin" in only:
         origin_dest = package / "stills" / "origin-2017.jpg"
-        origin_slot_ok = not origin_dest.parent.is_symlink() and not origin_dest.is_symlink() and (
-            not origin_dest.exists() or origin_dest.is_file()
+        origin_slot_ok = (
+            package_root_ok
+            and regular_directory_slot(origin_dest.parent)
+            and not origin_dest.is_symlink()
+            and (not origin_dest.exists() or origin_dest.is_file())
         )
         add(origin_slot_ok, "staged origin is a regular file", str(origin_dest))
         need_origin_source = is_forced(force, "origin") or not origin_dest.is_file()
         candidate = origin if need_origin_source else origin_dest
         candidate_exists = (
-            candidate is not None
+            origin_slot_ok
+            and candidate is not None
             and candidate.is_file()
             and (need_origin_source or not candidate.is_symlink())
         )
@@ -908,7 +920,12 @@ def deliver_text() -> list[Path]:
 def deliver_origin(origin: Path, force: bool) -> Path:
     dest = PACKAGE / "stills" / "origin-2017.jpg"
     expected = registered_origin_source_sha256()
-    if dest.parent.is_symlink() or dest.is_symlink() or (dest.exists() and not dest.is_file()):
+    if (
+        not regular_directory_slot(PACKAGE)
+        or not regular_directory_slot(dest.parent)
+        or dest.is_symlink()
+        or (dest.exists() and not dest.is_file())
+    ):
         raise SystemExit(f"staged origin photograph must be a regular non-symlink file: {dest}")
     if dest.is_file() and not force:
         if digest(dest) != expected:
@@ -925,7 +942,13 @@ def deliver_origin(origin: Path, force: bool) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  origin-2017.jpg · byte-identical copy of {origin.name}")
     shutil.copy2(origin, dest)
-    if dest.parent.is_symlink() or not dest.is_file() or dest.is_symlink() or digest(dest) != expected:
+    if (
+        not regular_directory_slot(PACKAGE)
+        or not regular_directory_slot(dest.parent)
+        or not dest.is_file()
+        or dest.is_symlink()
+        or digest(dest) != expected
+    ):
         raise SystemExit(f"copied origin photograph does not match registered identity: {dest}")
     return dest
 
@@ -994,6 +1017,8 @@ def main() -> int:
             span_error,
             passage_requested,
         )
+    if not regular_directory_slot(package):
+        raise SystemExit(f"package root must be an absent or regular non-symlink directory: {package}")
     source_tree = delivery_source_sha256(args.tier) if passage_requested else None
     if passage_requested and not package_provenance_matches(package, span, args.start, source_tree):
         raise SystemExit(f"{package}/manifest.json belongs to a different passage; choose a fresh --package root")

@@ -371,6 +371,76 @@ class DeliveryContractTest(unittest.TestCase):
             },
         )
 
+    def test_invalidation_starts_a_fresh_request_while_the_old_one_is_pending(self) -> None:
+        script = """
+          import { fromData } from './engine/corpus.js';
+          const requested = [];
+          globalThis.Image = class {
+            set src(value) { this.url = value; requested.push(this); }
+          };
+          const settle = async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+          };
+          const corpus = fromData('/corpus/', {
+            tiers: {browse:{width:512,eager:true}, screen:{width:1024,eager:false}},
+            frames: [],
+          });
+          const key = 'plates/screen/IMG_1570';
+          const fallbackKey = 'plates/browse/IMG_1570';
+          const fallback = {};
+          corpus.textures.set(fallbackKey, fallback);
+          corpus.get(null, 'plates', 'IMG_1570', 'screen');
+          const firstEpoch = corpus.failed;
+
+          corpus.invalidate();
+          corpus.textures.set(fallbackKey, fallback);
+          corpus.get(null, 'plates', 'IMG_1570', 'screen');
+          const secondEpoch = corpus.failed;
+          const freshRequestStarted = requested.length === 2 && firstEpoch !== secondEpoch;
+          const newRequestOwnsPending = corpus.pending.get(key) === secondEpoch;
+
+          requested[0].onerror();
+          await settle();
+          const oldCompletionPreservesPending = corpus.pending.get(key) === secondEpoch;
+          const oldFailureDidNotPoison = !secondEpoch.has(key);
+          corpus.get(null, 'plates', 'IMG_1570', 'screen');
+          const repeatedGetDeduplicated = requested.length === 2;
+
+          requested[1].onerror();
+          await settle();
+          console.log(JSON.stringify({
+            freshRequestStarted,
+            newRequestOwnsPending,
+            oldCompletionPreservesPending,
+            oldFailureDidNotPoison,
+            repeatedGetDeduplicated,
+            currentFailureRecorded: corpus.failed.has(key),
+            pendingCleared: !corpus.pending.has(key),
+          }));
+        """
+        done = subprocess.run(
+            ["node", "--input-type=module", "--eval", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            json.loads(done.stdout),
+            {
+                "freshRequestStarted": True,
+                "newRequestOwnsPending": True,
+                "oldCompletionPreservesPending": True,
+                "oldFailureDidNotPoison": True,
+                "repeatedGetDeduplicated": True,
+                "currentFailureRecorded": True,
+                "pendingCleared": True,
+            },
+        )
+
     def test_closing_signature_names_reproducible_river_position(self) -> None:
         script = """
           import { signature } from './engine/engine.js';
@@ -1509,6 +1579,114 @@ class DeliveryContractTest(unittest.TestCase):
             linked_parent_report = CHECK.Report()
             CHECK.check_origin_still(spec, package, linked_parent_report)
             self.assertEqual(linked_parent_report.failures, 1)
+
+    def test_symlinked_package_root_cannot_receive_origin(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "raw/IMG_1594.JPG"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"registered origin bytes")
+            expected = DELIVER.digest(source)
+            external_package = root / "external-package"
+            external_package.mkdir()
+            package = root / "package"
+            package.symlink_to(external_package, target_is_directory=True)
+
+            with (
+                mock.patch.object(DELIVER, "PACKAGE", package),
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                self.assertRaises(SystemExit),
+            ):
+                DELIVER.deliver_origin(source, True)
+            self.assertFalse((external_package / "stills/origin-2017.jpg").exists())
+
+            external_origin = external_package / "stills/origin-2017.jpg"
+            external_origin.parent.mkdir()
+            external_origin.write_bytes(source.read_bytes())
+            with (
+                mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                mock.patch.object(DELIVER, "digest", side_effect=AssertionError("invalid package was read")),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    DELIVER.preflight(
+                        program,
+                        SPAN,
+                        {"origin"},
+                        set(),
+                        "film",
+                        root,
+                        package,
+                        source,
+                        passage_requested=False,
+                    ),
+                    1,
+                )
+            self.assertIn("staged origin is a regular file", output.getvalue())
+            self.assertIn("NOT READY", output.getvalue())
+
+            spec = {
+                "filename": "origin-2017.jpg",
+                "source_filename": source.name,
+                "source_sha256": expected,
+                "copy_mode": "byte-identical",
+            }
+            report = CHECK.Report()
+            CHECK.check_origin_still(spec, package, report)
+            self.assertEqual(report.failures, 1)
+
+            external_main = root / "external-main-package"
+            external_main.mkdir()
+            package_main = root / "main-package"
+            package_main.symlink_to(external_main, target_is_directory=True)
+            argv = ["deliver.py", "--only", "text", "--out", str(root / "render"), "--package", str(package_main)]
+            with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+                DELIVER.main()
+            self.assertEqual(list(external_main.iterdir()), [])
+
+    def test_non_directory_package_slots_fail_closed(self) -> None:
+        program = json.loads((ROOT / "render/program.json").read_text())
+        for blocked in ("package", "stills"):
+            with self.subTest(blocked=blocked), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "raw/IMG_1594.JPG"
+                source.parent.mkdir(parents=True)
+                source.write_bytes(b"registered origin bytes")
+                expected = DELIVER.digest(source)
+                package = root / "package"
+                if blocked == "package":
+                    package.write_bytes(b"not a package directory")
+                else:
+                    package.mkdir()
+                    (package / "stills").write_bytes(b"not a stills directory")
+
+                with (
+                    mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                    redirect_stdout(io.StringIO()) as output,
+                ):
+                    self.assertEqual(
+                        DELIVER.preflight(
+                            program,
+                            SPAN,
+                            {"origin"},
+                            {"origin"},
+                            "film",
+                            root,
+                            package,
+                            source,
+                            passage_requested=False,
+                        ),
+                        1,
+                    )
+                self.assertIn("NOT READY", output.getvalue())
+
+                with (
+                    mock.patch.object(DELIVER, "PACKAGE", package),
+                    mock.patch.object(DELIVER, "registered_origin_source_sha256", return_value=expected),
+                    self.assertRaises(SystemExit),
+                ):
+                    DELIVER.deliver_origin(source, True)
 
     def test_text_only_preserves_existing_sound_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

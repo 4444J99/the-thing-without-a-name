@@ -100,7 +100,9 @@ class Corpus {
 
     this.images = new Map(); // `${kind}/${tier}/${id}` → HTMLImageElement
     this.textures = new Map(); // same key → WebGLTexture
-    this.pending = new Set();
+    // key → failure Set for the invalidation epoch that began the request.
+    // A request still pending from an older epoch must not block a fresh one.
+    this.pending = new Map();
     // A missing lazy asset must not become one failed request per rendered
     // frame. Retrying is explicit through invalidate(), so the engine needs no
     // wall clock or timer and each key gets at most one attempt per epoch.
@@ -223,9 +225,9 @@ class Corpus {
   /** Ask for a tier we do not have. One attempt per invalidation epoch. */
   request(kind, tier, id) {
     const key = `${kind}/${tier}/${id}`;
-    if (this.images.has(key) || this.pending.has(key) || this.failed.has(key)) return;
     const failures = this.failed;
-    this.pending.add(key);
+    if (this.images.has(key) || this.pending.get(key) === failures || failures.has(key)) return;
+    this.pending.set(key, failures);
     image(this.url(kind, tier, id))
       .then((img) => {
         this.images.set(key, img);
@@ -235,7 +237,9 @@ class Corpus {
         // A request begun before invalidate() cannot poison the new retry epoch.
         if (failures === this.failed && !this.images.has(key)) failures.add(key);
       })
-      .finally(() => this.pending.delete(key));
+      .finally(() => {
+        if (this.pending.get(key) === failures) this.pending.delete(key);
+      });
   }
 
   /** Frames whose figure occupies this part of the room, best first.
