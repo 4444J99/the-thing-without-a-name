@@ -1862,7 +1862,7 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertEqual(work["derived"], set(DELIVER.DERIVED))
         self.assertTrue(work["reel"])
 
-    def test_reel_renderer_receives_the_resolved_capture_start(self) -> None:
+    def test_reel_renderer_accepts_one_segment_and_receives_the_resolved_capture_start(self) -> None:
         reel_span = {**SPAN, "capture": "reel", "t0": 140.0, "t1": 170.0, "duration": 30.0}
         passage_span = {**SPAN, "t0": 120.0, "t1": 432.54}
         with tempfile.TemporaryDirectory() as tmp:
@@ -1876,7 +1876,7 @@ class DeliveryContractTest(unittest.TestCase):
                 return reel_span if name == "reel" else passage_span
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
-                (out / "reel-default.mp4").write_bytes(b"rendered reel")
+                (out / "reel-default-seg-000.mp4").write_bytes(b"rendered reel")
                 return subprocess.CompletedProcess(command, 0)
 
             def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
