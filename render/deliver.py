@@ -839,7 +839,9 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
         # single segment path; render.py only creates the concat path when a
         # plan has multiple parts.
         single = stem.parent / f"{stem.name}-seg-000.mp4"
-        if single.is_file():
+        receipt = single.with_name(single.name + ".receipt.json")
+        second = stem.parent / f"{stem.name}-seg-001.mp4"
+        if single.is_file() and receipt.is_file() and not second.exists():
             picture = single
     if done.returncode != 0 or not picture.is_file():
         raise SystemExit("the reel would not render")
