@@ -441,6 +441,26 @@ class DeliveryContractTest(unittest.TestCase):
             plate.parent.symlink_to(outside_tier, target_is_directory=True)
             self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
 
+            plate.parent.unlink()
+            plate.parent.mkdir()
+            plate.write_bytes(b"plate bytes")
+            outside_plates = root / "outside-plates"
+            (outside_plates / "browse").mkdir(parents=True)
+            (outside_plates / "browse" / plate.name).write_bytes(b"plate bytes")
+            shutil.rmtree(root / "plates")
+            (root / "plates").symlink_to(outside_plates, target_is_directory=True)
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+
+            (root / "plates").unlink()
+            plate.parent.mkdir(parents=True)
+            plate.write_bytes(b"plate bytes")
+            outside_mattes = root / "outside-mattes"
+            (outside_mattes / "browse").mkdir(parents=True)
+            (outside_mattes / "browse" / matte.name).write_bytes(b"matte bytes")
+            shutil.rmtree(root / "mattes")
+            (root / "mattes").symlink_to(outside_mattes, target_is_directory=True)
+            self.assertIsNone(CORPUS_CONTRACT.tier_output_identity(root, "browse", ["IMG_1570"]))
+
     def test_tier_receipt_validator_rejects_mutation_versions_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

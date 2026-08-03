@@ -101,8 +101,9 @@ def tier_output_identity(root: Path, tier: str, frame_ids) -> str | None:
 
     actual_names = []
     for kind in ("plates", "mattes"):
-        directory = root / kind / tier
-        if not directory.is_dir() or directory.is_symlink():
+        kind_directory = root / kind
+        directory = kind_directory / tier
+        if kind_directory.is_symlink() or not directory.is_dir() or directory.is_symlink():
             return None
         try:
             entries = list(directory.iterdir())
