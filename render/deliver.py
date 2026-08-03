@@ -840,9 +840,8 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             raise SystemExit("the reel would not render")
         tmp_a = render_out / "reel-a.wav"
         cut_audio(sound, rel_t0, seconds, tmp_a)
-        with tempfile.NamedTemporaryFile(prefix=".reel-", suffix=".mp4", dir=PACKAGE, delete=False) as handle:
-            staged = Path(handle.name)
-        try:
+        with tempfile.TemporaryDirectory(prefix=".reel-publish-", dir=PACKAGE) as publish_tmp:
+            staged = Path(publish_tmp) / dest.name
             mux(picture, tmp_a, staged, "aac")
             got = probe_required(staged)
             fps = captures(program).get("reel", {}).get("fps", 30)
@@ -854,8 +853,6 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
                 )
             staged.replace(dest)
             print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
-        finally:
-            staged.unlink(missing_ok=True)
     return dest
 
 
