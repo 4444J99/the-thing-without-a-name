@@ -2394,12 +2394,50 @@ class DeliveryContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "attest.yaml").write_text("final-cut-only: true\n")
-            expected = {"package": 3, "uploaded": 5, "submitted": 6}
+            expected = {"package": 3, "uploaded": 5, "submitted": 10}
             for phase, count in expected.items():
                 report = CHECK.Report()
                 CHECK.check_attestations(reg, root, phase, report)
                 self.assertEqual(len(report.rows), count)
                 self.assertEqual(report.failures, count - 1)
+
+    def test_published_terms_keep_provenance_and_explicit_archive_choice(self) -> None:
+        reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        report = CHECK.Report()
+        CHECK.check_requirement_phases(reg, report)
+        term_row = next(row for row in report.rows if row[1] == "published term provenance and choice contract")
+        self.assertEqual(term_row[2], CHECK.PASS)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attestations = {
+                item["id"]: True
+                for section in CHECK.OWNED_SECTIONS
+                for item in reg.get(section, [])
+                if item.get("check") == "manual"
+            }
+            for choice in ("include", "opt-out"):
+                attestations["archive-library-choice"] = choice
+                (root / "attest.yaml").write_text(yaml.safe_dump(attestations))
+                phase = CHECK.Report()
+                CHECK.check_attestations(reg, root, "submitted", phase)
+                self.assertEqual(phase.failures, 0)
+
+            attestations["archive-library-choice"] = True
+            (root / "attest.yaml").write_text(yaml.safe_dump(attestations))
+            invalid = CHECK.Report()
+            CHECK.check_attestations(reg, root, "submitted", invalid)
+            choice_row = next(row for row in invalid.rows if row[1] == "archive-library-choice")
+            self.assertEqual(choice_row[2], CHECK.FAIL)
+
+        broken = yaml.safe_load(yaml.safe_dump(reg))
+        del broken["terms"][0]["source"]
+        broken_report = CHECK.Report()
+        CHECK.check_requirement_phases(broken, broken_report)
+        broken_term_row = next(
+            row for row in broken_report.rows if row[1] == "published term provenance and choice contract"
+        )
+        self.assertEqual(broken_term_row[2], CHECK.FAIL)
 
     def test_submitted_phase_explains_elapsed_target_without_reopening_it(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())

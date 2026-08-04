@@ -41,6 +41,7 @@ REGISTER = HERE / "screendance-2027.yaml"
 PASS, FAIL, OPEN, SKIP = "PASS", "FAIL", "OPEN", "SKIP"
 GLYPH = {PASS: "\033[32m ok \033[0m", FAIL: "\033[31mFAIL\033[0m", OPEN: "\033[33mOPEN\033[0m", SKIP: "skip"}
 PHASES = ("package", "uploaded", "submitted")
+OWNED_SECTIONS = ("requirements", "approvals", "terms")
 
 VIDEO_SUFFIXES = {".mov", ".mp4", ".mxf", ".m4v"}
 
@@ -273,7 +274,7 @@ def check_requirement_phases(reg: dict, rep: Report) -> None:
         PASS if reg.get("schema") == "danse.submission.v2" else FAIL,
         str(reg.get("schema")),
     )
-    owned = [item for section in ("requirements", "approvals") for item in reg.get(section, [])]
+    owned = [item for section in OWNED_SECTIONS for item in reg.get(section, [])]
     invalid = [item.get("id", "<unnamed>") for item in owned if item.get("phase") not in PHASES]
     rep.add(
         "register",
@@ -283,6 +284,34 @@ def check_requirement_phases(reg: dict, rep: Report) -> None:
         if not invalid
         else f"missing/invalid phase: {', '.join(invalid)}",
     )
+    term_errors = []
+    for item in reg.get("terms", []):
+        name = item.get("id", "<unnamed>")
+        source = item.get("source")
+        if item.get("status") != "verified" or not item.get("checked") or not (
+            isinstance(source, str) and source.startswith("https://")
+        ):
+            term_errors.append(f"{name}: provenance")
+        check_kind = item.get("check")
+        values = item.get("values")
+        if check_kind == "choice":
+            if not (
+                isinstance(values, list)
+                and len(values) >= 2
+                and all(isinstance(value, str) and value for value in values)
+                and len(values) == len(set(values))
+            ):
+                term_errors.append(f"{name}: choices")
+        elif check_kind != "manual":
+            term_errors.append(f"{name}: check")
+    rep.add(
+        "register",
+        "published term provenance and choice contract",
+        PASS if not term_errors else FAIL,
+        f"{len(reg.get('terms', []))} source-verified term(s)"
+        if not term_errors
+        else "; ".join(term_errors),
+    )
 
 
 def check_attestations(reg: dict, root: Path, phase: str, rep: Report) -> None:
@@ -290,12 +319,23 @@ def check_attestations(reg: dict, root: Path, phase: str, rep: Report) -> None:
     attested = yaml.safe_load(path.read_text()) if path.exists() else {}
     attested = attested or {}
     selected = PHASES.index(phase)
-    for req in [item for section in ("requirements", "approvals") for item in reg.get(section, [])]:
+    for req in [item for section in OWNED_SECTIONS for item in reg.get(section, [])]:
         owner = req.get("phase")
-        if req.get("check") != "manual" or owner not in PHASES or PHASES.index(owner) > selected:
+        check_kind = req.get("check")
+        if check_kind not in ("manual", "choice") or owner not in PHASES or PHASES.index(owner) > selected:
             continue
         value = attested.get(req["id"])
-        if value is True:
+        if check_kind == "choice" and value in req.get("values", []):
+            rep.add(f"attested through {phase}", req["id"], PASS, f"{req['rule']} — {value}")
+        elif check_kind == "choice":
+            choices = ", ".join(req.get("values", []))
+            rep.add(
+                f"attested through {phase}",
+                req["id"],
+                FAIL,
+                f"choose exactly one of [{choices}] in attest.yaml — {req['rule']}",
+            )
+        elif value is True:
             rep.add(f"attested through {phase}", req["id"], PASS, req["rule"])
         elif value is False:
             rep.add(f"attested through {phase}", req["id"], FAIL, req["rule"])

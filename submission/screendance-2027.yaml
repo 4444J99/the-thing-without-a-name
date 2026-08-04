@@ -88,6 +88,49 @@ requirements:
     checked: 2026-07-30
     check: manual
 
+# Filing also carries published legal/operational terms. They are separate from
+# artifact requirements because they bind the applicant's later choices and an
+# accepted film's lifecycle, not the bytes in the staged package. `check.py`
+# still assigns them to the submitted phase so no agent can infer assent from a
+# successful upload.
+terms:
+  - id: accepted-film-no-withdrawal
+    phase: submitted
+    status: verified
+    trigger: acceptance
+    rule: "After acceptance to ScreenDance Miami 2027, the film cannot be withdrawn."
+    source: https://miamilightproject.submittable.com/submit
+    checked: 2026-08-03
+    check: manual
+
+  - id: publicity-stills-free-of-rights
+    phase: submitted
+    status: verified
+    trigger: official-selection
+    rule: "After official selection, publicity material such as still images must be supplied free of rights and may be used to promote ScreenDance Miami without time or place limits."
+    source: https://miamilightproject.submittable.com/submit
+    checked: 2026-08-03
+    check: manual
+
+  - id: archive-library-choice
+    phase: submitted
+    status: verified
+    trigger: filing
+    rule: "Record whether the film may enter the ScreenDance Miami video-library archive; the form permits an explicit opt-out."
+    source: https://miamilightproject.submittable.com/submit
+    checked: 2026-08-03
+    check: choice
+    values: [include, opt-out]
+
+  - id: regulations-accepted
+    phase: submitted
+    status: verified
+    trigger: filing
+    rule: "Entry implies unconditional acceptance of the regulations, and festival management makes final decisions."
+    source: https://miamilightproject.submittable.com/submit
+    checked: 2026-08-03
+    check: manual
+
 # Internal artist approvals are package gates, not claims made by the call. They
 # live here because they govern the same staged attest.yaml and must not be
 # inferred from the existence of tracked prose.
