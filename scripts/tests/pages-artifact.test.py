@@ -155,6 +155,7 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertTrue(paths.isdisjoint(forbidden))
         self.assertFalse(any(path.startswith("pipeline/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
+        self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
 
     def test_every_recorded_sha256_and_byte_count_verifies(self) -> None:
@@ -291,6 +292,18 @@ class InterfaceContractTest(unittest.TestCase):
         self.assertIn("hidden", toast)
         self.assertIn('const toast = el("toast")', self.script)
         self.assertNotIn('el("keys")', self.script)
+
+    def test_optional_score_failure_announces_fallback_without_disabling_the_artwork(self) -> None:
+        self.assertIn("await MusicalScore.loadOptional(scoreUrl", self.script)
+        self.assertIn("scoreLoadFailure = error", self.script)
+        self.assertIn("continuing with the default artwork", self.script)
+        self.assertIn(
+            'if (scoreLoadFailure) flash("Musical score unavailable · continuing with the default artwork", 8000)',
+            self.script,
+        )
+        film = (ROOT / "film.html").read_text(encoding="utf-8")
+        self.assertIn("scoreUrl ? await MusicalScore.load(scoreUrl) : null", film)
+        self.assertNotIn("MusicalScore.loadOptional", film)
 
     def test_canvas_has_a_text_description_and_canonical_metadata(self) -> None:
         tag, canvas = self.markup.by_id["stage"]

@@ -121,6 +121,7 @@
 import * as Arrival from "./arrival.js";
 import * as Corpus from "./engine/corpus.js";
 import * as Program from "./engine/program.js";
+import * as MusicalScore from "./engine/score.js";
 import { frameAt, hex } from "./engine/engine.js";
 import { cutAt } from "./engine/grammar.js";
 import { Renderer } from "./engine/renderer.js";
@@ -138,6 +139,14 @@ import { Renderer } from "./engine/renderer.js";
 let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
 let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
+const scoreUrl = new URLSearchParams(location.search).get("score");
+let scoreLoadFailure = null;
+const musicalScore = scoreUrl
+  ? await MusicalScore.loadOptional(scoreUrl, (error) => {
+      scoreLoadFailure = error;
+      console.warn("optional musical score unavailable; continuing with the default artwork", error);
+    })
+  : null;
 let navigationGeneration = 0;
 
 const canvas = document.getElementById("stage");
@@ -196,7 +205,12 @@ function frame() {
   // restart: each passage of the phrase draws its own length and its own
   // material, so running longer means seeing further, never seeing again.
 
-  const r = frameAt(renderer, corpus, river.seed, t, program, { quantise: RECAST, stream: river.stream, matteK });
+  const r = frameAt(renderer, corpus, river.seed, t, program, {
+    quantise: RECAST,
+    stream: river.stream,
+    score: program ? musicalScore : null,
+    matteK,
+  });
 
   // Elapsed within the current passage, so the readout says where you are in
   // this one rather than counting up forever into a number nobody can hold.
@@ -254,7 +268,7 @@ function jump(to) {
 
 /** Announce temporary feedback without replacing the controls or live state. */
 let toastTimer = null;
-function flash(msg) {
+function flash(msg, duration = 2200) {
   const toast = el("toast");
   clearTimeout(toastTimer);
   toast.textContent = msg;
@@ -262,8 +276,10 @@ function flash(msg) {
   toastTimer = setTimeout(() => {
     toast.hidden = true;
     toast.textContent = "";
-  }, 2200);
+  }, duration);
 }
+
+if (scoreLoadFailure) flash("Musical score unavailable · continuing with the default artwork", 8000);
 
 addEventListener("keydown", async (e) => {
   const key = e.key.toLowerCase();
@@ -317,6 +333,7 @@ addEventListener("keydown", async (e) => {
 // For the probe, the film renderer, and anyone reading the console.
 window.danse = {
   corpus, renderer, frameAt, hex, jump,
+  score: musicalScore,
   get program() { return program; },
   get t() { return at(); }, set t(v) { jump(v); },
   get river() { return river; },

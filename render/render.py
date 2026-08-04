@@ -45,8 +45,10 @@ HERE = Path(__file__).resolve().parent
 APP = HERE.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(APP / "pipeline"))
+sys.path.insert(0, str(APP / "sound"))
 from browser import browser, serve  # noqa: E402
 from corpus_contract import authorize_render_tier  # noqa: E402
+from music_score import validate as validate_music_score  # noqa: E402
 
 OUT = HERE / "out"
 
@@ -74,6 +76,51 @@ def hydrated_work_root() -> Path:
     return Path(configured).expanduser() if configured else APP / "pipeline/.work"
 
 
+def music_score_identity(args) -> dict | None:
+    """Receipt-safe score identity with no local absolute path."""
+    raw = getattr(args, "score", None)
+    if not raw:
+        return None
+    cached = getattr(args, "_music_score_identity", None)
+    if cached:
+        return cached
+    candidate = Path(raw)
+    candidate = candidate if candidate.is_absolute() else APP / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        relative = resolved.relative_to(APP.resolve())
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--score must name a score file inside the repository: {raw} ({exc})") from exc
+    if candidate.is_symlink() or not resolved.is_file():
+        raise SystemExit(f"--score must name a regular score file: {raw}")
+    try:
+        score = json.loads(resolved.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid --score contract {raw}: {exc}") from exc
+    try:
+        score = validate_music_score(score)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"invalid --score contract {raw}: {exc}") from exc
+    identity = score.get("identity") or {}
+    got = {
+        "path": str(relative),
+        "file_sha256": file_sha256(resolved),
+        "contract_sha256": identity.get("contract_sha256"),
+        "midi_sha256": identity.get("midi_sha256"),
+        "provenance": score.get("provenance"),
+        "stems": [
+            {
+                "id": stem.get("id"),
+                "midi_source_sha256": stem.get("midi_source_sha256"),
+                "audio_source_sha256": stem.get("audio_source_sha256"),
+            }
+            for stem in score.get("orchestration", [])
+        ],
+    }
+    args._music_score_identity = got
+    return got
+
+
 def source_tree_sha256(args) -> str:
     """Identity of every source byte that can change an offline segment."""
     cached = getattr(args, "_source_tree_sha256", None)
@@ -94,6 +141,9 @@ def source_tree_sha256(args) -> str:
     if local.is_file():
         roots.append(local)
     roots.extend(sorted((APP / "engine").glob("*.js")))
+    score_identity = music_score_identity(args)
+    if score_identity:
+        roots.append(APP / score_identity["path"])
     for kind in ("plates", "mattes"):
         roots.extend(sorted((APP / "corpus" / kind / args.tier).glob("*.webp")))
     h = hashlib.sha256()
@@ -109,12 +159,14 @@ def source_tree_sha256(args) -> str:
 def film_url(base: str, args) -> str:
     """The one URL used by planning and rendering, including seed zero."""
     params = {"capture": args.window, "from": args.start, "tier": args.tier}
+    score = music_score_identity(args)
     for key, value in (
         ("s", args.seed),
         ("u", args.stream),
         ("width", args.width),
         ("height", args.height),
         ("fps", args.fps),
+        ("score", score["path"] if score else None),
     ):
         if value is not None:
             params[key] = value
@@ -122,7 +174,7 @@ def film_url(base: str, args) -> str:
 
 
 def segment_identity(args, segment: int, frames: int) -> dict:
-    return {
+    payload = {
         "schema": "danse.render.segment.v1",
         "segment": segment,
         "frames": frames,
@@ -140,6 +192,10 @@ def segment_identity(args, segment: int, frames: int) -> dict:
             "source_tree_sha256": source_tree_sha256(args),
         },
     }
+    score = music_score_identity(args)
+    if score:
+        payload["inputs"]["music_score"] = score
+    return payload
 
 
 def segment_receipt_path(dest: Path) -> Path:
@@ -413,6 +469,10 @@ def main() -> int:
     ap.add_argument("--width", type=int, help="override the window's width")
     ap.add_argument("--height", type=int, help="override the window's height")
     ap.add_argument("--fps", type=float, help="override the window's frame rate")
+    ap.add_argument(
+        "--score",
+        help="opt into a compiled score contract (for example music/score.json); omitted keeps the current artwork",
+    )
     ap.add_argument("--segment", type=int, help="render one segment (default: all of them)")
     ap.add_argument("--segment-frames", type=int, default=600)
     ap.add_argument("--out", type=Path, default=OUT)

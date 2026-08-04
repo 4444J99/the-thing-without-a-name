@@ -35,6 +35,7 @@ ENGINE_MODULES = (
     "engine/renderer.js",
     "engine/rng.js",
     "engine/room.js",
+    "engine/score.js",
 )
 RUNTIME_FILES = (
     ".nojekyll",

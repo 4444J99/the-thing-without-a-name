@@ -21,6 +21,7 @@
  */
 
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,9 +29,15 @@ import { fromData } from "../engine/corpus.js";
 import { step } from "../engine/engine.js";
 import { captureOf, passageAt, validate } from "../engine/program.js";
 import { camera, scatter, viewDepth } from "../engine/room.js";
+import { eventsBetween, validate as validateScore } from "../engine/score.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DANSE = path.join(HERE, "..");
+const DANSE_REAL = fs.realpathSync(DANSE);
+
+function inside(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
 
 /** How many planes the score actually voices.
  *
@@ -47,7 +54,7 @@ function readJSON(p) {
 }
 
 function args(argv) {
-  const out = { window: "passage", rate: 30, seed: null, stream: 0, out: null, from: 0 };
+  const out = { window: "passage", rate: 30, seed: null, stream: 0, out: null, from: 0, score: null };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, "");
     if (!(key in out)) throw new Error(`unknown option ${argv[i]}`);
@@ -68,6 +75,27 @@ if (!Number.isInteger(opt.stream) || opt.stream < 0 || opt.stream > 0xffffffff) 
 
 const program = readJSON(path.join(DANSE, "render/program.json"));
 validate(program);
+
+let musicalScore = null;
+let musicalScorePath = null;
+let musicalScoreFileSha256 = null;
+if (opt.score) {
+  const lexicalPath = path.resolve(DANSE, opt.score);
+  if (!inside(DANSE, lexicalPath)) {
+    throw new Error("--score must stay inside the Danse repository");
+  }
+  const scoreStat = fs.lstatSync(lexicalPath);
+  if (scoreStat.isSymbolicLink() || !scoreStat.isFile()) {
+    throw new Error("--score must be a regular file, not a symlink");
+  }
+  musicalScorePath = fs.realpathSync(lexicalPath);
+  if (!inside(DANSE_REAL, musicalScorePath)) {
+    throw new Error("--score resolves outside the Danse repository");
+  }
+  const bytes = fs.readFileSync(musicalScorePath);
+  musicalScore = validateScore(JSON.parse(bytes.toString("utf8")));
+  musicalScoreFileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+}
 
 
 const corpusDir = path.join(DANSE, "corpus");
@@ -100,7 +128,7 @@ const dt = opt.rate > 0 ? 1 / opt.rate : null;
 // Provenance for an uncropped passage recording: at its boundary the ONE
 // movement is exactly one untouched source photograph. Metadata-only callers
 // use rate 0, avoiding a full 9,000-step control render just to resolve a span.
-const opening = step(corpus, seed, t0, program, { quantise: 0, stream: opt.stream }).cast;
+const opening = step(corpus, seed, t0, program, { quantise: 0, stream: opt.stream, score: musicalScore }).cast;
 const origin = opening.length === 1 ? opening[0].layers?.[0]?.frame ?? null : null;
 const caughtPassage = passageAt(program, seed, t0, opt.stream);
 
@@ -110,7 +138,11 @@ let previousCut = null;
 
 for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
   const t = t0 + i * dt;
-  const { state, cast } = step(corpus, seed, t, program, { quantise: 0, stream: opt.stream });
+  const { state, cast } = step(corpus, seed, t, program, {
+    quantise: 0,
+    stream: opt.stream,
+    score: musicalScore,
+  });
   const view = camera(state.divergence, state.azimuth, state.elevation);
 
   // Every plane, placed exactly where the renderer will place it.
@@ -165,12 +197,40 @@ for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
     n: placed.length,
     v: voices,
     e: events,
+    ...(state.music
+      ? {
+          ms: {
+            source: round(state.music.source_second, 4),
+            beat: state.music.beat.index,
+            downbeat: state.music.beat.downbeat,
+            phrase: state.music.phrase.id,
+            movement: state.music.movement.id,
+            dynamic: state.music.dynamic.level,
+            cues: state.music.cues.map((cue) => cue.id),
+            recast: state.music.visual.recast,
+          },
+        }
+      : {}),
   });
 }
 
 function round(x, places) {
   const f = 10 ** places;
   return Math.round(x * f) / f;
+}
+
+const musicEvents = [];
+if (musicalScore) {
+  let cursor = t0;
+  while (cursor < t1) {
+    const passage = passageAt(program, seed, cursor, opt.stream);
+    const end = Math.min(t1, passage.t0 + passage.seconds);
+    musicEvents.push(
+      ...eventsBetween(musicalScore, cursor, end, { t0: passage.t0, seconds: passage.seconds }),
+    );
+    if (!(end > cursor)) throw new Error("score passage traversal did not advance");
+    cursor = end;
+  }
 }
 
 const payload = {
@@ -188,6 +248,18 @@ const payload = {
   origin,
   voices: VOICES,
   layout: { v: ["z", "opacity", "area", "x"], e: ["z", "area", "x"] },
+  ...(musicalScore
+    ? {
+        music: {
+          score_path: path.relative(DANSE_REAL, musicalScorePath),
+          score_file_sha256: musicalScoreFileSha256,
+          identity: musicalScore.identity,
+          provenance: musicalScore.provenance,
+          stems: musicalScore.orchestration,
+          events: musicEvents,
+        },
+      }
+    : {}),
   frames,
 };
 

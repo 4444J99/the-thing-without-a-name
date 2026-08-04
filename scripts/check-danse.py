@@ -80,7 +80,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 44
+FLOOR = 45
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -110,6 +110,17 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def load(path: Path):
     return json.loads(path.read_text())
+
+
+def check_music_contract() -> None:
+    """Run the fixture score's cross-language, provenance, and seek regressions."""
+    test = ROOT / "scripts/tests/music-score.test.py"
+    done = subprocess.run([sys.executable, str(test)], cwd=ROOT, capture_output=True, text=True, check=False)
+    detail = "fixture register, compiler, JS/Python/WebAudio parity, receipts, and human gate"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("the musical score is one immutable absolute-time contract", done.returncode == 0, detail)
 
 
 # ── 1. the score partitions the frame exactly ──────────────────────────────────
@@ -1048,6 +1059,8 @@ def main() -> int:
     check_delivery(score, manifest)
     print("\n the sound is the same film")
     check_sound()
+    print("\n the score clock is shared by sound and image")
+    check_music_contract()
 
     # Counted BEFORE these checks run, so the floor never counts itself and the
     # numbers below stay the number of real invariants.
