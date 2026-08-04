@@ -45,8 +45,10 @@ HERE = Path(__file__).resolve().parent
 APP = HERE.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(APP / "pipeline"))
+sys.path.insert(0, str(APP / "sound"))
 from browser import browser, serve  # noqa: E402
 from corpus_contract import authorize_render_tier  # noqa: E402
+from music_score import validate as validate_music_score  # noqa: E402
 
 OUT = HERE / "out"
 
@@ -95,8 +97,10 @@ def music_score_identity(args) -> dict | None:
         score = json.loads(resolved.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"invalid --score contract {raw}: {exc}") from exc
-    if score.get("schema") != "danse.music.score.v1":
-        raise SystemExit(f"invalid --score schema {score.get('schema')}")
+    try:
+        score = validate_music_score(score)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"invalid --score contract {raw}: {exc}") from exc
     identity = score.get("identity") or {}
     got = {
         "path": str(relative),

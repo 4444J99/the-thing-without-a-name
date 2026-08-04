@@ -130,6 +130,10 @@ def parse_track(data: bytes, track: int) -> tuple[list[Event], int]:
                 except UnicodeDecodeError as exc:
                     raise ValueError(f"track {track}: metadata is not UTF-8") from exc
                 events.append(Event(tick, track, order, "track_name" if kind == 0x03 else "marker", (value,)))
+            # Standard MIDI File meta events cancel any channel-message
+            # running status. Subsequent data bytes must introduce a new
+            # channel status byte rather than inheriting across metadata.
+            running = None
             order += 1
             continue
         if status in {0xF0, 0xF7}:
@@ -318,7 +322,7 @@ def meter_rows(events: list[Event], duration_tick: int, division: int, timeline:
             beats.append(
                 {
                     "index": beat_index,
-                    "tick": rounded(at, 3),
+                    "tick": int(at) if at.denominator == 1 else rounded(at, 3),
                     "quarter": rounded(at / division),
                     "second": rounded(timeline.seconds(at)),
                     "bar": bar,
@@ -613,6 +617,11 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
     work = matches[0]
     midi = ROOT / work["score"]["source_midi"]["path"]
     midi_digest = sha256(midi)
+    declared_midi_digest = work["score"]["source_midi"]["sha256"]
+    if midi_digest != declared_midi_digest:
+        raise ValueError(
+            f"score.source_midi.sha256 {declared_midi_digest} does not match actual {midi_digest}"
+        )
     division, events, duration_tick = parse_midi(midi)
     timeline = Timeline(division, events)
     duration_seconds = rounded(timeline.seconds(duration_tick))
@@ -707,6 +716,15 @@ def output_bytes(score: dict[str, Any]) -> bytes:
     return (json.dumps(score, indent=2, ensure_ascii=False) + "\n").encode()
 
 
+def display_path(path: Path) -> str:
+    """Prefer a repository-relative diagnostic without rejecting external paths."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", type=Path, default=DEFAULT_REGISTER)
@@ -723,7 +741,7 @@ def main() -> int:
     if args.check:
         if not args.out.is_file() or args.out.read_bytes() != expected:
             parser.error(f"{args.out} is absent or stale; compile it without --check")
-        print(f"ok: {args.out.relative_to(ROOT)} {score['identity']['contract_sha256']}")
+        print(f"ok: {display_path(args.out)} {score['identity']['contract_sha256']}")
         return 0
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(expected)

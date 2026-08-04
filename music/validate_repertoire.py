@@ -443,6 +443,15 @@ def validate_schema_document(path: Path = DEFAULT_SCHEMA) -> list[str]:
     return errors
 
 
+def display_path(path: Path) -> str:
+    """Prefer a repository-relative diagnostic without rejecting external paths."""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("register", nargs="?", type=Path, default=DEFAULT_REGISTER)
@@ -457,7 +466,10 @@ def main() -> int:
         for row in errors:
             print(f"FAIL: {row}")
         return 1
-    print(f"ok: {args.register.relative_to(ROOT)} ({len(register['works'])} work(s); artistic gate {register['artistic_gate']['status']})")
+    print(
+        f"ok: {display_path(args.register)} "
+        f"({len(register['works'])} work(s); artistic gate {register['artistic_gate']['status']})"
+    )
     return 0
 
 

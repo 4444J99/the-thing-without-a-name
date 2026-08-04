@@ -182,6 +182,8 @@ def score_at(score: dict[str, Any], absolute_second: float, window: dict[str, fl
             offsets[channel] = offsets.get(channel, 0.0) + float(value) * float(cue["strength"])
     next_beat = score["beats"][beat["index"] + 1] if beat["index"] + 1 < len(score["beats"]) else None
     beat_span = (float(next_beat["second"]) - float(beat["second"])) if next_beat else 60.0 / float(tempo["bpm"])
+    if not beat_span:
+        beat_span = 60.0 / float(tempo["bpm"])
     return {
         "identity": score["identity"]["contract_sha256"],
         "absolute_second": absolute_second,

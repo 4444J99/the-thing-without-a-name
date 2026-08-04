@@ -32,6 +32,7 @@ from compile_score import (  # noqa: E402
     meter_rows,
     note_and_orchestration_rows,
     output_bytes,
+    parse_track,
 )
 from music_score import events_between, load_score, score_at, validate as validate_score  # noqa: E402
 from validate_repertoire import load_register, sha256, validate_document  # noqa: E402
@@ -45,8 +46,15 @@ def load_module(name: str, path: Path):
     return module
 
 
-def run(*command: str) -> subprocess.CompletedProcess:
-    return subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+def run(*command: str, timeout: float = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
 
 
 def compact(state: dict) -> dict:
@@ -109,6 +117,28 @@ class MusicScoreContractTest(unittest.TestCase):
             self.register["works"][0]["derived_artifacts"][0]["sha256"],
             sha256(ROOT / "music/score.json"),
         )
+        self.assertTrue(all(type(beat["tick"]) is int for beat in self.score["beats"]))
+
+    def test_cli_success_diagnostics_accept_external_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            score = directory / "score.json"
+            score.write_bytes((ROOT / "music/score.json").read_bytes())
+            checked = run(
+                sys.executable,
+                "music/compile_score.py",
+                "--check",
+                "--out",
+                str(score),
+            )
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            self.assertIn(str(score), checked.stdout)
+
+            register = directory / "repertoire.yaml"
+            register.write_bytes((ROOT / "music/repertoire.yaml").read_bytes())
+            validated = run(sys.executable, "music/validate_repertoire.py", str(register))
+            self.assertEqual(validated.returncode, 0, validated.stdout + validated.stderr)
+            self.assertIn(str(register), validated.stdout)
 
     def test_compilation_is_byte_deterministic(self) -> None:
         first = output_bytes(compile_contract(copy.deepcopy(self.register), self.program, "generated-contract-study"))
@@ -180,9 +210,7 @@ class MusicScoreContractTest(unittest.TestCase):
             any("composition.evidence[0].source.sha256" in error and "actual" in error for error in validate_document(stale_evidence, check_derived=False))
         )
 
-        work = ROOT / ".work"
-        work.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=work) as temporary:
+        with tempfile.TemporaryDirectory(dir=ROOT / "music") as temporary:
             private = Path(temporary) / "private-source.bin"
             private.write_bytes(b"private custody must not enter a tracked score")
             untracked = copy.deepcopy(self.register)
@@ -219,7 +247,7 @@ class MusicScoreContractTest(unittest.TestCase):
         _meter_rows, beats = meter_rows(meters, 3360, division, timeline)
         self.assertEqual(
             [(beat["tick"], beat["bar"]) for beat in beats if beat["downbeat"]],
-            [(0.0, 1), (1920.0, 2)],
+            [(0, 1), (1920, 2)],
         )
 
         tail = Event(1000, 0, 1, "marker", ("cue:tail:cue:100",))
@@ -260,6 +288,33 @@ class MusicScoreContractTest(unittest.TestCase):
             [(72, 0, 41, 960), (60, 1, 41, 960)],
         )
         self.assertEqual(stems[0]["program"], 41)
+
+    def test_meta_events_clear_running_status(self) -> None:
+        channel_then_meta_then_data = bytes(
+            [
+                0x00,
+                0x90,
+                60,
+                100,
+                0x00,
+                0xFF,
+                0x06,
+                0x01,
+                ord("x"),
+                0x00,
+                61,
+                100,
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "data byte without running status"):
+            parse_track(channel_then_meta_then_data, 0)
+
+    def test_compiler_rechecks_declared_midi_identity_before_parsing(self) -> None:
+        stale = copy.deepcopy(self.register)
+        stale["works"][0]["score"]["source_midi"]["sha256"] = "0" * 64
+        with mock.patch("compile_score.validate_document", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "source_midi.sha256.*does not match actual"):
+                compile_contract(stale, self.program, "generated-contract-study")
 
     def test_score_contract_digest_rejects_content_with_a_stale_identity(self) -> None:
         tampered = copy.deepcopy(self.score)
@@ -312,6 +367,22 @@ class MusicScoreContractTest(unittest.TestCase):
         result = run("node", "--input-type=module", "--eval", script)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_zero_beat_span_uses_the_tempo_fallback_in_both_consumers(self) -> None:
+        score = copy.deepcopy(self.score)
+        score["beats"][8]["index"] = 7
+        expected = score_at(score, 4.25)["beat"]["phase"]
+        script = """
+          import fs from 'node:fs';
+          import { scoreAt } from './engine/score.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          score.beats[8].index = 7;
+          console.log(JSON.stringify(scoreAt(score, 4.25).beat.phase));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.assertEqual(expected, 0.5)
 
     def test_bucket_event_queries_are_scaled_half_open_deduplicated_and_value_identical(self) -> None:
         window = {"t0": 51.25, "seconds": 312.54}
@@ -614,11 +685,28 @@ class MusicScoreContractTest(unittest.TestCase):
         self.assertNotIn(str(ROOT), json.dumps(identity))
         self.assertTrue(all(set(stem) == {"id", "midi_source_sha256", "audio_source_sha256"} for stem in identity["stems"]))
 
+    def test_offline_receipt_rejects_structurally_invalid_or_stale_scores(self) -> None:
+        offline = load_module("danse_music_bad_receipt_test", ROOT / "render/render.py")
+        tampered = copy.deepcopy(self.score)
+        tampered["notes"][0]["pitch"] += 1
+        cases = [
+            [],
+            {"schema": "danse.music.score.v1"},
+            tampered,
+        ]
+        with tempfile.TemporaryDirectory(dir=ROOT / "render") as temporary:
+            directory = Path(temporary)
+            for index, malformed in enumerate(cases):
+                with self.subTest(index=index):
+                    candidate = directory / f"bad-{index}.json"
+                    candidate.write_text(json.dumps(malformed))
+                    args = SimpleNamespace(score=str(candidate.relative_to(ROOT)))
+                    with self.assertRaisesRegex(SystemExit, "invalid --score contract"):
+                        offline.music_score_identity(args)
+
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
     def test_control_rejects_a_repository_score_symlink_to_external_bytes(self) -> None:
-        work = ROOT / ".work"
-        work.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory(dir=work) as inside:
+        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory(dir=ROOT / "music") as inside:
             external = Path(outside) / "external-score.json"
             external.write_bytes((ROOT / "music/score.json").read_bytes())
             link = Path(inside) / "score-link.json"

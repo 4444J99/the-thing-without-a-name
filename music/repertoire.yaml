@@ -144,4 +144,4 @@ works:
     derived_artifacts:
       - kind: fixture-score-contract
         path: music/score.json
-        sha256: c37e5a30b19891dd1bc643f644312e41cd6727c872134ed10b024dd1adb1f317
+        sha256: da30bb8c167916d1de9de50629e88feaa0ebc65fb833656787f8e8e678225e48
