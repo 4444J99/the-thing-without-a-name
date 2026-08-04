@@ -84,7 +84,7 @@ export function planRoomWebAudio(bus, registry, layoutId, start, end) {
   return planRoomRender(validateRoomBus(bus), validateRoomLayouts(registry), layoutId, start, end);
 }
 
-function hardLimiter(context, input, ceilingDbfs) {
+function hardLimiter(context, input, ceilingDbfs, destination) {
   if (typeof context.createWaveShaper !== "function") {
     throw new TypeError("room audio requires a WaveShaper ceiling stage");
   }
@@ -98,8 +98,39 @@ function hardLimiter(context, input, ceilingDbfs) {
   limiter.curve = curve;
   limiter.oversample = "4x";
   input.connect(limiter);
-  limiter.connect(context.destination);
+  limiter.connect(destination);
   return { ceiling_dbfs: ceilingDbfs, ceiling_linear: ceiling };
+}
+
+function roomDestination(context, output, outputChannels) {
+  const destination = context.destination;
+  if (!destination) throw new TypeError("room audio requires an AudioDestinationNode");
+  if (output !== "multichannel") return destination;
+  const fixedOfflineChannels = destination.maxChannelCount === 0 && destination.channelCount === outputChannels;
+  if (
+    (!Number.isInteger(destination.maxChannelCount) || destination.maxChannelCount < outputChannels)
+    && !fixedOfflineChannels
+  ) {
+    throw new RangeError(
+      `multichannel room output requires ${outputChannels} destination channels; `
+      + `only ${destination.maxChannelCount ?? 0} are available`,
+    );
+  }
+  try {
+    destination.channelCountMode = "explicit";
+    destination.channelInterpretation = "discrete";
+    if (destination.channelCount !== outputChannels) destination.channelCount = outputChannels;
+  } catch (error) {
+    throw new RangeError(`multichannel destination configuration failed: ${error.message}`, { cause: error });
+  }
+  if (
+    destination.channelCount !== outputChannels
+    || destination.channelCountMode !== "explicit"
+    || destination.channelInterpretation !== "discrete"
+  ) {
+    throw new RangeError(`multichannel destination did not admit ${outputChannels} discrete channels`);
+  }
+  return destination;
 }
 
 /** Schedule verified room-event sources into the declared speaker field.
@@ -141,6 +172,7 @@ export function scheduleRoomWebAudio(
 
   const layout = roomLayout(registry, layoutId);
   const outputChannels = output === "stereo" ? 2 : layout.speakers.length;
+  const destination = roomDestination(context, output, outputChannels);
   const scheduled = [];
   const missing = [];
   const blocked = [];
@@ -173,19 +205,23 @@ export function scheduleRoomWebAudio(
     }
     if (!merger) {
       merger = context.createChannelMerger(outputChannels);
-      limiter = hardLimiter(context, merger, registry.safety.limiter_ceiling_dbfs);
+      limiter = hardLimiter(context, merger, registry.safety.limiter_ceiling_dbfs, destination);
     }
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = event.audio.pitch === null ? 1 : 2 ** ((event.audio.pitch - 60) / 12);
     const taps = event[output];
     for (const tap of taps) {
-      const delay = context.createDelay(registry.safety.latency_budget_ms / 1000);
       const gain = context.createGain();
-      delay.delayTime.value = tap.delay_ms / 1000;
       gain.gain.value = tap.gain;
-      source.connect(delay);
-      delay.connect(gain);
+      if (tap.delay_ms > 0) {
+        const delay = context.createDelay(registry.safety.latency_budget_ms / 1000);
+        delay.delayTime.value = tap.delay_ms / 1000;
+        source.connect(delay);
+        delay.connect(gain);
+      } else {
+        source.connect(gain);
+      }
       gain.connect(merger, 0, tap.channel);
     }
     const at = startWhen + (event.at - start);

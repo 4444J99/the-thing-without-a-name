@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,29 @@ from room_events import (  # noqa: E402
     validate_room_bus,
 )
 
+UINT32_MAX = 0xFFFFFFFF
+
+
+def _uint32(value: Any) -> bool:
+    return type(value) is int and 0 <= value <= UINT32_MAX
+
+
+def _finite(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(float(value))
+
 
 def validate_control_room(control: Any, registry: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(control, dict):
         raise ValueError("control track must be a mapping")
+    if not _uint32(control.get("seed")) or not _uint32(control.get("stream")):
+        raise ValueError("control seed and stream must be uint32 values")
+    if (
+        not _finite(control.get("t0"))
+        or not _finite(control.get("t1"))
+        or control["t0"] < 0
+        or not control["t1"] > control["t0"]
+    ):
+        raise ValueError("control interval must be finite, non-negative, and non-empty")
     room = control.get("room")
     if not isinstance(room, dict) or room.get("schema") != "danse.room.control.v1":
         raise ValueError("control track has no danse.room.control.v1 payload")
@@ -41,11 +61,38 @@ def validate_control_room(control: Any, registry: dict[str, Any]) -> list[dict[s
     validated = [validate_room_bus(bus) for bus in buses]
     if len({bus["identity"]["contract_sha256"] for bus in validated}) != len(validated):
         raise ValueError("control room buses are duplicated")
+
+    music = control.get("music")
+    music_identity = music.get("identity") if isinstance(music, dict) else None
+    if not isinstance(music_identity, dict):
+        raise ValueError("control track has no score identity for its room buses")
+    expected_score = music_identity.get("contract_sha256")
+    expected_midi = music_identity.get("midi_sha256")
     if any(
-        left["time"]["t1"] > right["time"]["t0"] + 1e-6
-        for left, right in zip(validated, validated[1:])
+        bus["identity"]["passage"]["river_seed"] != control["seed"]
+        or bus["identity"]["passage"]["stream"] != control["stream"]
+        for bus in validated
     ):
-        raise ValueError("control room buses overlap or are out of order")
+        raise ValueError("control room bus seed or stream does not match the control track")
+    if any(
+        bus["identity"]["score_contract_sha256"] != expected_score
+        or bus["identity"]["midi_sha256"] != expected_midi
+        for bus in validated
+    ):
+        raise ValueError("control room bus score identity does not match the control track")
+
+    for left, right in zip(validated, validated[1:]):
+        if left["time"]["t1"] != right["time"]["t0"]:
+            raise ValueError("control room buses must be ordered and contiguous")
+    start = float(control["t0"])
+    end = float(control["t1"])
+    first = validated[0]["time"]
+    last = validated[-1]["time"]
+    if not (
+        float(first["t0"]) <= start < float(first["t1"])
+        and float(last["t0"]) < end <= float(last["t1"])
+    ):
+        raise ValueError("control room buses must cover the complete control interval")
     return validated
 
 

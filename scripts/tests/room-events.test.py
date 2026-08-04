@@ -419,6 +419,141 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertFalse(observed["directDestination"])
         self.assertEqual(observed["limiterReceipt"]["ceiling_dbfs"], self.layouts["safety"]["limiter_ceiling_dbfs"])
 
+    def test_zero_latency_and_discrete_multichannel_webaudio_are_admitted_safely(self) -> None:
+        script = f"""
+          import fs from 'node:fs';
+          import {{ compileRoomBus, layoutContractSha256, roomContractSha256, validateRoomLayouts }} from './engine/room-events.js';
+          import {{ scheduleRoomWebAudio }} from './sound/web_audio.mjs';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const layouts = JSON.parse(fs.readFileSync('sound/room-layout.json'));
+          layouts.safety.latency_budget_ms = 0;
+          layouts.identity.contract_sha256 = layoutContractSha256(layouts);
+          validateRoomLayouts(layouts);
+
+          const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
+          const event = bus.events.find((candidate) => candidate.type === 'score.note');
+          const layout = layouts.layouts.find((candidate) => candidate.id === 'reference-quad');
+          const digest = 'b'.repeat(64);
+          for (const coincident of bus.events.filter((candidate) => candidate.at === event.at)) {{
+            coincident.target_speaker = layout.speakers[0].id;
+          }}
+          event.audio.source_sha256 = digest;
+          bus.identity.contract_sha256 = roomContractSha256(bus);
+
+          function harness(maxChannelCount, channelCount = 2) {{
+            const state = {{nodeCalls: 0, delayCalls: 0, mergerChannels: null, limiterReachedDestination: false}};
+            const destination = {{
+              kind: 'destination',
+              maxChannelCount,
+              channelCount,
+              channelCountMode: 'max',
+              channelInterpretation: 'speakers',
+            }};
+            const node = (kind) => ({{
+              kind,
+              connect(target) {{
+                state.nodeCalls += 1;
+                if (kind === 'limiter' && target === destination) state.limiterReachedDestination = true;
+              }},
+            }});
+            const context = {{
+              currentTime: 0,
+              destination,
+              createChannelMerger(channels) {{
+                state.nodeCalls += 1;
+                state.mergerChannels = channels;
+                return node('merger');
+              }},
+              createWaveShaper() {{
+                state.nodeCalls += 1;
+                return {{...node('limiter'), curve: null, oversample: 'none'}};
+              }},
+              createBufferSource() {{
+                state.nodeCalls += 1;
+                return {{...node('source'), buffer: null, playbackRate: {{value: 1}}, start() {{}}, stop() {{}}}};
+              }},
+              createDelay(maxDelayTime) {{
+                state.nodeCalls += 1;
+                state.delayCalls += 1;
+                if (!(maxDelayTime > 0)) throw new Error('createDelay requires a positive maximum');
+                return {{...node('delay'), delayTime: {{value: 0}}}};
+              }},
+              createGain() {{
+                state.nodeCalls += 1;
+                return {{...node('gain'), gain: {{value: 0}}}};
+              }},
+            }};
+            return {{context, destination, state}};
+          }}
+
+          const admittedHarness = harness(4);
+          const admitted = scheduleRoomWebAudio(
+            admittedHarness.context,
+            bus,
+            layouts,
+            'reference-quad',
+            {{[event.audio.role]: {{buffer: {{duration: 1}}, audio_source_sha256: digest}}}},
+            event.at,
+            event.at + 0.0001,
+            {{output: 'multichannel'}},
+          );
+
+          const limitedHarness = harness(2);
+          let insufficientRejected = false;
+          try {{
+            scheduleRoomWebAudio(
+              limitedHarness.context,
+              bus,
+              layouts,
+              'reference-quad',
+              {{[event.audio.role]: {{buffer: {{duration: 1}}, audio_source_sha256: digest}}}},
+              event.at,
+              event.at + 0.0001,
+              {{output: 'multichannel'}},
+            );
+          }} catch (error) {{
+            insufficientRejected = /requires 4 destination channels/.test(error.message);
+          }}
+
+          const fixedOfflineHarness = harness(0, 4);
+          const fixedOffline = scheduleRoomWebAudio(
+            fixedOfflineHarness.context,
+            bus,
+            layouts,
+            'reference-quad',
+            {{[event.audio.role]: {{buffer: {{duration: 1}}, audio_source_sha256: digest}}}},
+            event.at,
+            event.at + 0.0001,
+            {{output: 'multichannel'}},
+          );
+
+          console.log(JSON.stringify({{
+            scheduled: admitted.scheduled.length,
+            delayCalls: admittedHarness.state.delayCalls,
+            mergerChannels: admittedHarness.state.mergerChannels,
+            destination: admittedHarness.destination,
+            limiterReachedDestination: admittedHarness.state.limiterReachedDestination,
+            insufficientRejected,
+            limitedNodeCalls: limitedHarness.state.nodeCalls,
+            fixedOfflineScheduled: fixedOffline.scheduled.length,
+            fixedOfflineDestination: fixedOfflineHarness.destination,
+          }}));
+        """
+        observed = node_json(script)
+        self.assertEqual(observed["scheduled"], 1)
+        self.assertEqual(observed["delayCalls"], 0)
+        self.assertEqual(observed["mergerChannels"], 4)
+        self.assertEqual(observed["destination"]["channelCount"], 4)
+        self.assertEqual(observed["destination"]["channelCountMode"], "explicit")
+        self.assertEqual(observed["destination"]["channelInterpretation"], "discrete")
+        self.assertTrue(observed["limiterReachedDestination"])
+        self.assertTrue(observed["insufficientRejected"])
+        self.assertEqual(observed["limitedNodeCalls"], 0)
+        self.assertEqual(observed["fixedOfflineScheduled"], 1)
+        self.assertEqual(observed["fixedOfflineDestination"]["channelCount"], 4)
+        self.assertEqual(observed["fixedOfflineDestination"]["channelCountMode"], "explicit")
+        self.assertEqual(observed["fixedOfflineDestination"]["channelInterpretation"], "discrete")
+
     def test_control_live_stereo_offline_and_multichannel_share_exact_bus_events(self) -> None:
         result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -484,6 +619,69 @@ class RoomEventContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the Danse repository"):
             room_event_plan(escaped_control)
 
+    def test_control_buses_are_identity_bound_contiguous_and_complete(self) -> None:
+        result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        control = json.loads(result.stdout)
+        original = control["room"]["buses"][0]
+
+        foreign = copy.deepcopy(control)
+        foreign_bus = foreign["room"]["buses"][0]
+        foreign_seed = (foreign["seed"] + 1) & 0xFFFFFFFF
+        foreign_bus["identity"]["passage"]["river_seed"] = foreign_seed
+        for event in foreign_bus["events"]:
+            event["passage"]["river_seed"] = foreign_seed
+        foreign_bus["identity"]["contract_sha256"] = room_contract_sha256(foreign_bus)
+        with self.assertRaisesRegex(ValueError, "seed or stream"):
+            validate_control_room(foreign, self.layouts)
+
+        foreign_score = copy.deepcopy(control)
+        foreign_score["music"]["identity"]["contract_sha256"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "score identity"):
+            validate_control_room(foreign_score, self.layouts)
+
+        def shifted_bus(source: dict, index: int, t0: float) -> dict:
+            shifted = copy.deepcopy(source)
+            old_t0 = shifted["time"]["t0"]
+            delta = t0 - old_t0
+            passage = shifted["identity"]["passage"]
+            passage["index"] = index
+            passage["seed"] = (passage["seed"] + index) & 0xFFFFFFFF
+            passage["t0"] = t0
+            for event in shifted["events"]:
+                event["id"] = f"{index}:" + event["id"].split(":", 1)[1]
+                event["at"] += delta
+                if "end" in event:
+                    event["end"] += delta
+                event["passage"] = copy.deepcopy(passage)
+            shifted["time"]["t0"] = t0
+            shifted["time"]["t1"] = t0 + shifted["time"]["seconds"]
+            shifted["identity"]["contract_sha256"] = room_contract_sha256(shifted)
+            return validate_room_bus(shifted)
+
+        second = shifted_bus(original, original["identity"]["passage"]["index"] + 1, original["time"]["t1"])
+        third = shifted_bus(original, original["identity"]["passage"]["index"] + 2, second["time"]["t1"])
+        continuous = copy.deepcopy(control)
+        continuous["t0"] = original["time"]["t0"]
+        continuous["t1"] = third["time"]["t1"]
+        continuous["room"]["buses"] = [original, second, third]
+        self.assertEqual(len(validate_control_room(continuous, self.layouts)), 3)
+
+        missing_middle = copy.deepcopy(continuous)
+        del missing_middle["room"]["buses"][1]
+        with self.assertRaisesRegex(ValueError, "ordered and contiguous"):
+            validate_control_room(missing_middle, self.layouts)
+
+        missing_first = copy.deepcopy(continuous)
+        del missing_first["room"]["buses"][0]
+        with self.assertRaisesRegex(ValueError, "cover the complete control interval"):
+            validate_control_room(missing_first, self.layouts)
+
+        missing_last = copy.deepcopy(continuous)
+        missing_last["room"]["buses"].pop()
+        with self.assertRaisesRegex(ValueError, "cover the complete control interval"):
+            validate_control_room(missing_last, self.layouts)
+
     def test_tampered_bus_and_control_identity_fail_before_rendering(self) -> None:
         stale = copy.deepcopy(self.bus)
         stale["events"][0]["intensity"] = 0.1
@@ -495,6 +693,15 @@ class RoomEventContractTest(unittest.TestCase):
         malformed["identity"]["contract_sha256"] = room_contract_sha256(malformed)
         with self.assertRaisesRegex(ValueError, "position is invalid"):
             validate_room_bus(malformed)
+
+        bool_coercion = copy.deepcopy(self.bus)
+        bool_coercion["identity"]["passage"]["river_seed"] = 1
+        for event in bool_coercion["events"]:
+            event["passage"]["river_seed"] = 1
+        bool_coercion["events"][0]["passage"]["river_seed"] = True
+        bool_coercion["identity"]["contract_sha256"] = room_contract_sha256(bool_coercion)
+        with self.assertRaisesRegex(ValueError, "seed and stream fields must be uint32"):
+            validate_room_bus(bool_coercion)
 
         passage_script = f"""
           import fs from 'node:fs';

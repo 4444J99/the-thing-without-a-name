@@ -175,6 +175,7 @@ def validate_room_bus(bus: Any) -> dict[str, Any]:
         passage = _validate_passage((bus.get("identity") or {}).get("passage"), "identity.passage")
     except ValueError as exc:
         bad(str(exc))
+    passage_identity = canonical_sha256(passage)
     score_digest = (bus.get("identity") or {}).get("score_contract_sha256")
     midi_digest = (bus.get("identity") or {}).get("midi_sha256")
     if bus.get("release_status") == "diagnostic-only":
@@ -266,7 +267,11 @@ def validate_room_bus(bus: Any) -> dict[str, Any]:
             bad(f"event {index}.audio is invalid")
         if not isinstance(event.get("source"), dict):
             bad(f"event {index}.source is invalid")
-        if event.get("passage") != passage:
+        try:
+            event_passage = _validate_passage(event.get("passage"), f"event {index}.passage")
+        except ValueError as exc:
+            bad(str(exc))
+        if canonical_sha256(event_passage) != passage_identity:
             bad(f"event {index}.passage does not match identity")
         if "end" in event and (
             not _finite(event["end"]) or event["end"] < event["at"] or event["end"] > time["t1"] + 1e-6

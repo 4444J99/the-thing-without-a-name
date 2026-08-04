@@ -39,10 +39,14 @@ an exceeded latency budget fails before scheduling.
 - `scheduleRoomWebAudio()` schedules the same renderer-neutral plan to stereo or
   multichannel WebAudio nodes. It revalidates both contract digests at this
   byte-owning boundary and routes the merger through the declared hard sample
-  ceiling. With `enabled: false` it returns that exact plan without touching an
-  `AudioContext`.
+  ceiling. Zero-delay taps bypass `DelayNode` creation; multichannel output
+  requires and configures the exact discrete destination channel count (including
+  a fixed-channel offline destination). With `enabled: false` it returns that
+  exact plan without touching an `AudioContext`.
 - `sound/room_render.py` emits offline stereo or multichannel render
-  instructions from the buses in `sound/control.mjs` output.
+  instructions from the buses in `sound/control.mjs` output. It binds every bus
+  to the control seed, stream, score/MIDI identity, and a contiguous passage
+  sequence that covers the complete capture interval.
 - `sound/score.py` securely loads the registry named by the control receipt,
   then validates and routes the same stereo plan before its byte-owning renderer
   proceeds.
