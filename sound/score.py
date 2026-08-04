@@ -34,6 +34,7 @@ Two things this deliberately does NOT do:
     sound/score.py                       # one complete passage
     sound/score.py --window trailer
     sound/score.py --seed 0x5F1E --window reel
+    sound/score.py --music-score music/score.json  # fails closed until cleared stems exist
 """
 
 from __future__ import annotations
@@ -275,12 +276,28 @@ def local_time(control: dict, absolute_time: float) -> float:
     return max(0.0, float(absolute_time) - float(control.get("t0", 0.0)))
 
 
+def music_event_plan(control: dict) -> list[dict]:
+    """The compiled MIDI note/cue starts the JS engine mapped onto this capture."""
+    music = control.get("music") if isinstance(control.get("music"), dict) else {}
+    events = music.get("events") if isinstance(music.get("events"), list) else []
+    return sorted(events, key=lambda event: (float(event["at"]), event["type"], int(event["index"])))
+
+
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
     seed = int(control["seed"])
     rate = float(control["rate"])
     frames = control["frames"]
     total = int(round(control["duration"] * SR))
     buf = np.zeros((2, total), dtype=np.float64)
+    if control.get("music"):
+        stems = control["music"].get("stems") or []
+        missing = [stem["id"] for stem in stems if not stem.get("audio_source_sha256")]
+        if missing:
+            raise ValueError(
+                "score-driven audio is not renderable until Anthony selects repertoire and every stem/sample "
+                f"has cleared source bytes; missing {', '.join(missing)}"
+            )
+        raise ValueError("score-driven stem rendering is gated until the selected stem-to-bank mapping is registered")
     counts = {"bed": 0, "voice": 0, "event": 0, "swell": 0}
 
     # ── bed ────────────────────────────────────────────────────────────────────
@@ -465,7 +482,14 @@ def normalise(raw: np.ndarray, quiet: bool = False) -> np.ndarray:
     return out
 
 
-def control_track(window: str, seed: int | None, rate: int, start: float = 0.0, stream: int = 0) -> dict:
+def control_track(
+    window: str,
+    seed: int | None,
+    rate: int,
+    start: float = 0.0,
+    stream: int = 0,
+    music_score: Path | None = None,
+) -> dict:
     """Read the picture's absolute control span for the requested capture."""
     cmd = [
         "node",
@@ -481,6 +505,8 @@ def control_track(window: str, seed: int | None, rate: int, start: float = 0.0, 
     ]
     if seed is not None:
         cmd += ["--seed", str(seed)]
+    if music_score is not None:
+        cmd += ["--score", str(music_score)]
     done = subprocess.run(cmd, capture_output=True, text=True)
     if done.returncode != 0:
         sys.exit(f"control track failed:\n{done.stderr.strip()}")
@@ -502,6 +528,12 @@ def main() -> int:
         help="absolute seconds into the river where recording begins",
     )
     ap.add_argument("--bank", type=Path, default=BANK)
+    ap.add_argument(
+        "--music-score",
+        type=Path,
+        default=None,
+        help="opt into a compiled score contract; fixture audio fails closed until cleared stems are registered",
+    )
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     if args.start < 0:
@@ -515,7 +547,7 @@ def main() -> int:
 
     seed = int(args.seed, 0) if args.seed else None
     bank = Bank(args.bank)
-    control = control_track(args.window, seed, args.rate, args.start, args.stream)
+    control = control_track(args.window, seed, args.rate, args.start, args.stream, args.music_score)
 
     print(
         f"{control['title']} · {control['capture']} · seed 0x{control['seed']:X} · "

@@ -232,6 +232,7 @@ animating it toward `0` is literally its undoing.
   arrival.js   the ONE impure module — a visitor's river, and the only clock
   join.html    local camera/pose study   probe.html   projection go/no-go
   engine/      gl · mat4 · rng · room · grammar · renderer · corpus · clock · program
+  music/       layered repertoire provenance · MIDI compiler · immutable fixture score
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
@@ -287,6 +288,10 @@ Run media commands in a Python environment providing NumPy, SciPy, Pillow, and
 Playwright. `deliver.py --preflight` reports missing modules, the Metal Chrome
 surface, the film tier, the two-source grain bank, and the registered origin
 photograph without creating output directories.
+
+The score-clock implementation is fixture-only until repertoire and its exact
+source layers are selected and cleared. See [`music/README.md`](music/README.md)
+for the opt-in query/render paths and the explicit remaining artistic gate.
 
 ## Provenance
 
