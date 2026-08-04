@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -60,6 +61,8 @@ else:
     DEPENDENCY_ERROR = None
 
 HERE = Path(__file__).resolve().parent
+DANSE = HERE.parent
+DANSE_REAL = DANSE.resolve()
 sys.path.insert(0, str(HERE))
 from bank_contract import audit_bank  # noqa: E402
 from room_events import load_room_layouts  # noqa: E402
@@ -286,11 +289,33 @@ def music_event_plan(control: dict) -> list[dict]:
     return sorted(events, key=lambda event: (float(event["at"]), event["type"], int(event["index"])))
 
 
+def _control_room_layouts(control: dict) -> Path:
+    """Resolve a receipt-declared registry without escaping repository custody."""
+    declared = control["room"].get("layout_registry_path")
+    if declared is None:
+        return ROOM_LAYOUTS
+    if not isinstance(declared, str) or not declared or Path(declared).is_absolute():
+        raise ValueError("control room layout registry path must be repository-relative")
+    lexical = DANSE / declared
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(DANSE_REAL)
+    except ValueError as exc:
+        raise ValueError("control room layout registry resolves outside the Danse repository") from exc
+    try:
+        metadata = lexical.lstat()
+    except OSError as exc:
+        raise ValueError(f"control room layout registry is unavailable: {declared}") from exc
+    if lexical.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("control room layout registry must be a regular file, not a symlink")
+    return resolved
+
+
 def room_event_plan(control: dict, layout: str = "stereo", output: str = "stereo") -> dict | None:
     """Validate and route the control track's immutable room buses."""
     if not control.get("room"):
         return None
-    return plan_control(control, load_room_layouts(ROOM_LAYOUTS), layout, output)
+    return plan_control(control, load_room_layouts(_control_room_layouts(control)), layout, output)
 
 
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:

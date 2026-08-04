@@ -104,10 +104,11 @@
     "audio": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "source_sha256"],
+      "required": ["role", "source_sha256", "pitch"],
       "properties": {
         "role": {"type": ["string", "null"]},
-        "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+        "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "pitch": {"type": ["integer", "null"], "minimum": 0, "maximum": 127}
       }
     },
     "event": {

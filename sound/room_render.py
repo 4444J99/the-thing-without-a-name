@@ -97,7 +97,7 @@ def plan_control(
         "layout_contract_sha256": registry["identity"]["contract_sha256"],
         "layout": layout["id"],
         "channels": (
-            [speaker["id"] for speaker in layout["speakers"]]
+            [speaker["id"] for speaker in sorted(layout["speakers"], key=lambda speaker: speaker["channel"])]
             if output == "multichannel"
             else layout["stereo_fold_down"]["outputs"]
         ),

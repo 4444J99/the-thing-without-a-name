@@ -60,6 +60,7 @@ class RoomPosition(TypedDict):
 class RoomAudio(TypedDict):
     role: str | None
     source_sha256: str | None
+    pitch: int | None
 
 
 class RoomEvent(TypedDict):
@@ -249,8 +250,18 @@ def validate_room_bus(bus: Any) -> dict[str, Any]:
         audio = event.get("audio")
         if (
             not isinstance(audio, dict)
+            or set(audio) != {"role", "source_sha256", "pitch"}
             or not (audio.get("role") is None or isinstance(audio.get("role"), str) and audio["role"])
-            or not (audio.get("source_sha256") is None or SHA256.fullmatch(audio["source_sha256"]))
+            or not (
+                audio.get("source_sha256") is None
+                or isinstance(audio.get("source_sha256"), str)
+                and SHA256.fullmatch(audio["source_sha256"])
+            )
+            or not (
+                audio.get("pitch") is None
+                or type(audio.get("pitch")) is int
+                and 0 <= audio["pitch"] <= 127
+            )
         ):
             bad(f"event {index}.audio is invalid")
         if not isinstance(event.get("source"), dict):
@@ -466,7 +477,10 @@ def _route_event(event: dict[str, Any], registry: dict[str, Any], layout: dict[s
         )
     stereo = []
     for tap in multichannel:
-        row = layout["stereo_fold_down"]["matrix"][tap["channel"]]
+        speaker_index = next(
+            index for index, speaker in enumerate(layout["speakers"]) if speaker["id"] == tap["speaker"]
+        )
+        row = layout["stereo_fold_down"]["matrix"][speaker_index]
         for channel in range(2):
             gain = tap["gain"] * row[channel]
             if gain != 0:
@@ -547,13 +561,13 @@ def calibration_bus(
                 "index": -1,
                 "id": f"0:calibration.impulse:{index}",
                 "type": "calibration.impulse",
-                "at": _rounded(t0 + index * spacing, 9),
+                "at": t0 + index * spacing,
                 "source_second": _rounded(index * spacing, 9),
                 "position": {"x": x, "y": y, "z": z},
                 "depth": _rounded((z + 1) / 2, 6),
                 "intensity": 0.25,
                 "passage": {**passage},
-                "audio": {"role": "calibration-impulse", "source_sha256": None},
+                "audio": {"role": "calibration-impulse", "source_sha256": None, "pitch": None},
                 "source": {"kind": "diagnostic-only", "layout": layout["id"], "speaker": speaker["id"]},
                 "target_speaker": speaker["id"],
             }
@@ -567,7 +581,7 @@ def calibration_bus(
             "time": {
                 "basis": "absolute-river-seconds",
                 "t0": t0,
-                "t1": _rounded(t0 + seconds, 9),
+                "t1": t0 + seconds,
                 "seconds": seconds,
             },
             "provenance": {

@@ -7,6 +7,7 @@ import copy
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -109,6 +110,10 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertTrue({"passage.start", "movement.start", "plane.assembly", "score.cue", "plane.recast", "score.note"} <= types)
         self.assertTrue(all(-1 <= event["position"][axis] <= 1 for event in self.bus["events"] for axis in ("x", "y", "z")))
         self.assertTrue(all(0 <= event["depth"] <= 1 and 0 <= event["intensity"] <= 1 for event in self.bus["events"]))
+        notes = [event for event in self.bus["events"] if event["type"] == "score.note"]
+        self.assertTrue(notes)
+        self.assertTrue(all(event["audio"]["pitch"] == event["source"]["pitch"] for event in notes))
+        self.assertTrue(all(event["audio"]["pitch"] is None for event in self.bus["events"] if event["type"] != "score.note"))
         serialized = json.dumps(self.bus)
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn(".work", serialized)
@@ -227,7 +232,10 @@ class RoomEventContractTest(unittest.TestCase):
             self.assertLessEqual(math_hypot(tap["gain"] for tap in event["multichannel"]), self.layouts["safety"]["max_event_gain"] + 1e-9)
             expected = []
             for tap in event["multichannel"]:
-                for channel, coefficient in enumerate(layout["stereo_fold_down"]["matrix"][tap["channel"]]):
+                speaker_index = next(
+                    index for index, speaker in enumerate(layout["speakers"]) if speaker["id"] == tap["speaker"]
+                )
+                for channel, coefficient in enumerate(layout["stereo_fold_down"]["matrix"][speaker_index]):
                     if coefficient:
                         expected.append((channel, tap["speaker"], round_js(tap["gain"] * coefficient, 12), tap["delay_ms"]))
             actual = [(tap["channel"], tap["source_speaker"], tap["gain"], tap["delay_ms"]) for tap in event["stereo"]]
@@ -261,6 +269,22 @@ class RoomEventContractTest(unittest.TestCase):
         amplified_fold["identity"]["contract_sha256"] = layout_contract_sha256(amplified_fold)
         with self.assertRaisesRegex(ValueError, "stereo fold-down is invalid"):
             validate_room_layouts(amplified_fold)
+
+        unordered = copy.deepcopy(self.layouts)
+        stereo_layout = next(row for row in unordered["layouts"] if row["id"] == "stereo")
+        stereo_layout["speakers"].reverse()
+        stereo_layout["stereo_fold_down"]["matrix"].reverse()
+        unordered["identity"]["contract_sha256"] = layout_contract_sha256(unordered)
+        validate_room_layouts(unordered)
+        unordered_python = plan_room_render(self.bus, unordered, "stereo", PASSAGE["t0"], PASSAGE["t0"] + 1)
+        unordered_script = f"""
+          import {{ planRoomRender, validateRoomLayouts }} from './engine/room-events.js';
+          const registry = validateRoomLayouts({json.dumps(unordered)});
+          console.log(JSON.stringify(planRoomRender({json.dumps(self.bus)}, registry, 'stereo', {PASSAGE['t0']}, {PASSAGE['t0'] + 1})));
+        """
+        self.assertEqual(node_json(unordered_script), unordered_python)
+        for event in unordered_python["events"]:
+            self.assertTrue(all(tap["output"] == tap["source_speaker"] for tap in event["stereo"]))
 
         excessive = copy.deepcopy(self.layouts)
         excessive["coordinate_system"]["meters_per_unit"] = 100
@@ -303,21 +327,51 @@ class RoomEventContractTest(unittest.TestCase):
           const disabled = scheduleRoomWebAudio(forbidden, bus, layouts, 'reference-quad', {{}}, start, end, {{enabled:false}});
           const direct = planRoomRender(bus, layouts, 'reference-quad', start, end);
 
+          const staleBus = JSON.parse(JSON.stringify(bus));
+          staleBus.events[0].intensity = 0.123;
+          let staleBusRejected = false;
+          try {{ scheduleRoomWebAudio(forbidden, staleBus, layouts, 'reference-quad', {{}}, start, end, {{enabled:false}}); }}
+          catch (error) {{ staleBusRejected = /contract_sha256 is stale/.test(error.message); }}
+          const staleLayouts = JSON.parse(JSON.stringify(layouts));
+          staleLayouts.safety.max_event_gain = 0.5;
+          let staleLayoutsRejected = false;
+          try {{ scheduleRoomWebAudio(forbidden, bus, staleLayouts, 'reference-quad', {{}}, start, end, {{enabled:false}}); }}
+          catch (error) {{ staleLayoutsRejected = /contract_sha256 is stale/.test(error.message); }}
+
           let nodeCalls = 0;
-          const node = () => ({{ connect() {{ nodeCalls += 1; }} }});
+          const destination = {{kind:'destination'}};
+          let directDestination = false;
+          let limiterNode = null;
+          let sourceNode = null;
+          const node = (kind) => ({{
+            kind,
+            connect(target) {{
+              nodeCalls += 1;
+              if (kind === 'merger' && target === destination) directDestination = true;
+            }},
+          }});
           const context = {{
             currentTime: 0,
-            destination: {{}},
-            createChannelMerger() {{ nodeCalls += 1; return node(); }},
-            createBufferSource() {{ nodeCalls += 1; return {{...node(), buffer:null, start() {{}}, stop() {{}}}}; }},
-            createDelay() {{ nodeCalls += 1; return {{...node(), delayTime:{{value:0}}}}; }},
-            createGain() {{ nodeCalls += 1; return {{...node(), gain:{{value:0}}}}; }},
+            destination,
+            createChannelMerger() {{ nodeCalls += 1; return node('merger'); }},
+            createWaveShaper() {{
+              nodeCalls += 1;
+              limiterNode = {{...node('limiter'), curve:null, oversample:'none'}};
+              return limiterNode;
+            }},
+            createBufferSource() {{
+              nodeCalls += 1;
+              sourceNode = {{...node('source'), buffer:null, playbackRate:{{value:1}}, start() {{}}, stop() {{}}}};
+              return sourceNode;
+            }},
+            createDelay() {{ nodeCalls += 1; return {{...node('delay'), delayTime:{{value:0}}}}; }},
+            createGain() {{ nodeCalls += 1; return {{...node('gain'), gain:{{value:0}}}}; }},
           }};
           const blocked = scheduleRoomWebAudio(context, bus, layouts, 'reference-quad', {{}}, start, end);
           const callsAfterBlocked = nodeCalls;
 
           const admittedBus = JSON.parse(JSON.stringify(bus));
-          const admittedEvent = admittedBus.events.find((event) => event.type === 'score.note');
+          const admittedEvent = admittedBus.events.find((event) => event.type === 'score.note' && event.audio.pitch > 60);
           const digest = 'a'.repeat(64);
           admittedEvent.audio.source_sha256 = digest;
           admittedBus.identity.contract_sha256 = roomContractSha256(admittedBus);
@@ -333,21 +387,37 @@ class RoomEventContractTest(unittest.TestCase):
           console.log(JSON.stringify({{
             disabledPlanMatches: JSON.stringify(disabled.plan) === JSON.stringify(direct),
             disabledEvents: disabled.disabled.length,
+            staleBusRejected,
+            staleLayoutsRejected,
             blocked: blocked.blocked.length,
             silent: blocked.silent.length,
             callsAfterBlocked,
             scheduled: admitted.scheduled.length,
             nodeCalls,
+            playbackRate: sourceNode.playbackRate.value,
+            expectedPlaybackRate: 2 ** ((admittedEvent.audio.pitch - 60) / 12),
+            limiterMax: Math.max(...limiterNode.curve),
+            limiterCeiling: 10 ** (layouts.safety.limiter_ceiling_dbfs / 20),
+            limiterOversample: limiterNode.oversample,
+            directDestination,
+            limiterReceipt: admitted.limiter,
           }}));
         """
         observed = node_json(script)
         self.assertTrue(observed["disabledPlanMatches"])
         self.assertEqual(observed["disabledEvents"], len(self.bus["events"]))
+        self.assertTrue(observed["staleBusRejected"])
+        self.assertTrue(observed["staleLayoutsRejected"])
         self.assertGreater(observed["blocked"], 0)
         self.assertGreater(observed["silent"], 0)
         self.assertEqual(observed["callsAfterBlocked"], 0)
         self.assertEqual(observed["scheduled"], 1)
         self.assertGreater(observed["nodeCalls"], 0)
+        self.assertAlmostEqual(observed["playbackRate"], observed["expectedPlaybackRate"], places=12)
+        self.assertLessEqual(observed["limiterMax"], observed["limiterCeiling"] + 1e-7)
+        self.assertEqual(observed["limiterOversample"], "4x")
+        self.assertFalse(observed["directDestination"])
+        self.assertEqual(observed["limiterReceipt"]["ceiling_dbfs"], self.layouts["safety"]["limiter_ceiling_dbfs"])
 
     def test_control_live_stereo_offline_and_multichannel_share_exact_bus_events(self) -> None:
         result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
@@ -367,6 +437,53 @@ class RoomEventContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "undeclared audio source bytes"):
             plan_control(control, self.layouts, "reference-quad", "stereo", require_cleared=True)
 
+        later_result = run(
+            "node",
+            "sound/control.mjs",
+            "--rate",
+            "0",
+            "--score",
+            "music/score.json",
+            "--window",
+            "midnight-moment",
+            "--from",
+            "350",
+        )
+        self.assertEqual(later_result.returncode, 0, later_result.stderr)
+        later_control = json.loads(later_result.stdout)
+        later_buses = validate_control_room(later_control, self.layouts)
+        self.assertTrue(later_buses)
+        for bus in later_buses:
+            starts = [event for event in bus["events"] if event["type"] == "passage.start"]
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(starts[0]["at"], bus["time"]["t0"])
+
+        with tempfile.TemporaryDirectory(dir=ROOT / "sound") as temporary:
+            alternate_path = Path(temporary) / "alternate-room-layout.json"
+            alternate = copy.deepcopy(self.layouts)
+            alternate["identity"]["id"] = "alternate-test-room-layouts"
+            alternate["safety"]["max_event_gain"] = 0.5
+            alternate["identity"]["contract_sha256"] = layout_contract_sha256(alternate)
+            alternate_path.write_text(json.dumps(alternate))
+            alternate_control = copy.deepcopy(control)
+            alternate_control["room"]["layout_registry_path"] = alternate_path.relative_to(ROOT).as_posix()
+            alternate_control["room"]["layout_identity"] = alternate["identity"]
+            alternate_plan = room_event_plan(alternate_control, "reference-quad", "multichannel")
+            self.assertEqual(alternate_plan["layout_contract_sha256"], alternate["identity"]["contract_sha256"])
+            self.assertEqual(alternate_plan["safety"]["max_event_gain"], 0.5)
+
+            link = Path(temporary) / "linked-room-layout.json"
+            link.symlink_to(ROOT / "sound/room-layout.json")
+            linked_control = copy.deepcopy(control)
+            linked_control["room"]["layout_registry_path"] = link.relative_to(ROOT).as_posix()
+            with self.assertRaisesRegex(ValueError, "regular file, not a symlink"):
+                room_event_plan(linked_control)
+
+        escaped_control = copy.deepcopy(control)
+        escaped_control["room"]["layout_registry_path"] = "../outside-room-layout.json"
+        with self.assertRaisesRegex(ValueError, "outside the Danse repository"):
+            room_event_plan(escaped_control)
+
     def test_tampered_bus_and_control_identity_fail_before_rendering(self) -> None:
         stale = copy.deepcopy(self.bus)
         stale["events"][0]["intensity"] = 0.1
@@ -378,6 +495,21 @@ class RoomEventContractTest(unittest.TestCase):
         malformed["identity"]["contract_sha256"] = room_contract_sha256(malformed)
         with self.assertRaisesRegex(ValueError, "position is invalid"):
             validate_room_bus(malformed)
+
+        passage_script = f"""
+          import fs from 'node:fs';
+          import {{ compileRoomBus, validateRoomBus }} from './engine/room-events.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const reordered = compileRoomBus(score, {json.dumps(PASSAGE)});
+          reordered.events[0].passage = Object.fromEntries(Object.entries(reordered.events[0].passage).reverse());
+          validateRoomBus(reordered);
+          const extra = JSON.parse(JSON.stringify(reordered));
+          extra.events[0].passage.untrusted = true;
+          let rejected = false;
+          try {{ validateRoomBus(extra); }} catch (error) {{ rejected = /passage does not match identity/.test(error.message); }}
+          console.log(JSON.stringify({{reordered: true, rejected}}));
+        """
+        self.assertEqual(node_json(passage_script), {"reordered": True, "rejected": True})
 
         control = {
             "t0": PASSAGE["t0"],

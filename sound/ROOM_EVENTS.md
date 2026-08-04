@@ -16,7 +16,8 @@ validated musical score. Every event carries:
 - absolute river time and immutable passage identity;
 - normalized room position, depth, and bounded intensity;
 - the originating score row and score/MIDI contract digests; and
-- an audio role plus exact source digest, or `null` when no cleared bytes exist.
+- an audio role plus exact source digest, or `null` when no cleared bytes exist;
+  score notes also retain their authored MIDI pitch for identical playback rate.
 
 The bus has one-second event-start lookup buckets. `roomEventsBetween()` and its
 Python twin query only intersecting buckets and retain the half-open
@@ -36,12 +37,15 @@ an exceeded latency budget fails before scheduling.
 ## Consumers
 
 - `scheduleRoomWebAudio()` schedules the same renderer-neutral plan to stereo or
-  multichannel WebAudio nodes. With `enabled: false` it returns that exact plan
-  without touching an `AudioContext`.
+  multichannel WebAudio nodes. It revalidates both contract digests at this
+  byte-owning boundary and routes the merger through the declared hard sample
+  ceiling. With `enabled: false` it returns that exact plan without touching an
+  `AudioContext`.
 - `sound/room_render.py` emits offline stereo or multichannel render
   instructions from the buses in `sound/control.mjs` output.
-- `sound/score.py` validates and routes the same stereo plan before its
-  byte-owning renderer proceeds.
+- `sound/score.py` securely loads the registry named by the control receipt,
+  then validates and routes the same stereo plan before its byte-owning renderer
+  proceeds.
 
 Every byte-owning path fails closed. A role without `source_sha256` is blocked;
 a supplied buffer must carry the same digest. The committed fixture therefore
@@ -65,9 +69,9 @@ python3 scripts/tests/room-events.test.py
 `calibrationBus()` emits one direct-to-speaker `calibration.impulse` event per
 declared channel. Those events are marked `diagnostic-only`, have no recording
 digest, and are never part of the artwork. A later venue-owned harness may
-supply an explicitly diagnostic impulse buffer; this repository records only
-the deterministic test scene and expected route, not a claim that it played in
-a physical room.
+compile a distinct diagnostic bus bound to an exact admitted impulse digest;
+this repository records only the deterministic test scene and expected route,
+not a claim that it played in a physical room.
 
 ## Archived predecessor disposition
 

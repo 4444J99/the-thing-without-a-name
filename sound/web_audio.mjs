@@ -8,7 +8,12 @@
  */
 
 import { eventsBetween } from "../engine/score.js";
-import { planRoomRender, roomLayout } from "../engine/room-events.js";
+import {
+  planRoomRender,
+  roomLayout,
+  validateRoomBus,
+  validateRoomLayouts,
+} from "../engine/room-events.js";
 
 export function planWebAudio(score, start, end, window = null) {
   const stems = new Map(score.orchestration.map((stem) => [stem.id, stem]));
@@ -76,7 +81,25 @@ export function scheduleWebAudio(context, score, buffers, start, end, { window =
 
 /** Renderer-neutral room plan used unchanged with or without an AudioContext. */
 export function planRoomWebAudio(bus, registry, layoutId, start, end) {
-  return planRoomRender(bus, registry, layoutId, start, end);
+  return planRoomRender(validateRoomBus(bus), validateRoomLayouts(registry), layoutId, start, end);
+}
+
+function hardLimiter(context, input, ceilingDbfs) {
+  if (typeof context.createWaveShaper !== "function") {
+    throw new TypeError("room audio requires a WaveShaper ceiling stage");
+  }
+  const ceiling = 10 ** (ceilingDbfs / 20);
+  const curve = new Float32Array(4097);
+  for (let index = 0; index < curve.length; index++) {
+    const sample = index / (curve.length - 1) * 2 - 1;
+    curve[index] = Math.max(-ceiling, Math.min(ceiling, sample));
+  }
+  const limiter = context.createWaveShaper();
+  limiter.curve = curve;
+  limiter.oversample = "4x";
+  input.connect(limiter);
+  limiter.connect(context.destination);
+  return { ceiling_dbfs: ceilingDbfs, ceiling_linear: ceiling };
 }
 
 /** Schedule verified room-event sources into the declared speaker field.
@@ -110,6 +133,7 @@ export function scheduleRoomWebAudio(
       blocked: [],
       silent: [],
       disabled: plan.events,
+      limiter: null,
     };
   }
   if (!context) throw new TypeError("enabled room audio requires an AudioContext");
@@ -122,6 +146,7 @@ export function scheduleRoomWebAudio(
   const blocked = [];
   const silent = [];
   let merger = null;
+  let limiter = null;
   for (const event of plan.events) {
     if (!event.audio.role) {
       silent.push(event);
@@ -148,10 +173,11 @@ export function scheduleRoomWebAudio(
     }
     if (!merger) {
       merger = context.createChannelMerger(outputChannels);
-      merger.connect(context.destination);
+      limiter = hardLimiter(context, merger, registry.safety.limiter_ceiling_dbfs);
     }
     const source = context.createBufferSource();
     source.buffer = buffer;
+    source.playbackRate.value = event.audio.pitch === null ? 1 : 2 ** ((event.audio.pitch - 60) / 12);
     const taps = event[output];
     for (const tap of taps) {
       const delay = context.createDelay(registry.safety.latency_budget_ms / 1000);
@@ -175,5 +201,6 @@ export function scheduleRoomWebAudio(
     blocked,
     silent,
     disabled: [],
+    limiter,
   };
 }

@@ -91,7 +91,7 @@ function eventBase(passage, type, sourceIndex, sourceSecond, intensity, audio, s
     index: -1,
     id: `${passage.index}:${type}:${sourceIndex}`,
     type,
-    at: rounded(passage.t0 + sourceSecond * scale, 9),
+    at: passage.t0 + sourceSecond * scale,
     source_second: rounded(sourceSecond, 9),
     position: {
       x: rounded(clamp(point.x, -1, 1), 6),
@@ -101,7 +101,7 @@ function eventBase(passage, type, sourceIndex, sourceSecond, intensity, audio, s
     depth: rounded((clamp(point.z, -1, 1) + 1) / 2, 6),
     intensity: rounded(clamp(intensity, 0, 1), 6),
     passage: { ...passage },
-    audio,
+    audio: { ...audio, pitch: audio.pitch ?? null },
     source,
   };
 }
@@ -188,7 +188,7 @@ export function compileRoomBus(score, declaredPassage) {
       { role: null, source_sha256: null },
       { kind: "score-movement", index: movement.index, id: movement.id },
     );
-    movementEvent.at = rounded(passage.t0 + sourceSecond * absoluteScale, 9);
+    movementEvent.at = passage.t0 + sourceSecond * absoluteScale;
     movementEvent.source_second = rounded(sourceSecond, 9);
     events.push(movementEvent);
     if (movement.id === "ASSEMBLY") {
@@ -220,8 +220,8 @@ export function compileRoomBus(score, declaredPassage) {
       { role: `room-cue:${cue.id}`, source_sha256: null },
       { kind: "score-cue", index: cue.index, id: cue.id },
     );
-    cueEvent.at = rounded(passage.t0 + sourceSecond * absoluteScale, 9);
-    cueEvent.end = rounded(passage.t0 + Number(cue.end_second) * absoluteScale, 9);
+    cueEvent.at = passage.t0 + sourceSecond * absoluteScale;
+    cueEvent.end = passage.t0 + Number(cue.end_second) * absoluteScale;
     cueEvent.source_second = rounded(sourceSecond, 9);
     events.push(cueEvent);
     if (cue.visual?.recast) {
@@ -253,12 +253,19 @@ export function compileRoomBus(score, declaredPassage) {
       Number(note.index),
       normalizedSecond,
       Number(note.velocity) / 127,
-      { role: note.stem, source_sha256: stem?.audio_source_sha256 ?? null },
-      { kind: "score-note", index: note.index, stem: note.stem, midi_sha256: score.identity.midi_sha256 },
+      { role: note.stem, source_sha256: stem?.audio_source_sha256 ?? null, pitch: note.pitch },
+      {
+        kind: "score-note",
+        index: note.index,
+        stem: note.stem,
+        pitch: note.pitch,
+        velocity: note.velocity,
+        midi_sha256: score.identity.midi_sha256,
+      },
       { x, y, z },
     );
-    noteEvent.at = rounded(passage.t0 + sourceSecond * absoluteScale, 9);
-    noteEvent.end = rounded(passage.t0 + Number(note.end_second) * absoluteScale, 9);
+    noteEvent.at = passage.t0 + sourceSecond * absoluteScale;
+    noteEvent.end = passage.t0 + Number(note.end_second) * absoluteScale;
     noteEvent.source_second = rounded(sourceSecond, 9);
     events.push(noteEvent);
   }
@@ -275,7 +282,7 @@ export function compileRoomBus(score, declaredPassage) {
     time: {
       basis: "absolute-river-seconds",
       t0: passage.t0,
-      t1: rounded(passage.t0 + passage.seconds, 9),
+      t1: passage.t0 + passage.seconds,
       seconds: passage.seconds,
     },
     provenance: {
@@ -318,6 +325,7 @@ export function validateRoomBus(bus) {
   if (!Array.isArray(bus.events) || !bus.events.length) bad("events must be non-empty");
   let previous = -Infinity;
   const ids = new Set();
+  const passageIdentity = canonicalSha256(passage);
   for (let index = 0; index < bus.events.length; index++) {
     const event = bus.events[index];
     if (!isObject(event) || event.index !== index || !EVENT_TYPES.has(event.type)
@@ -332,12 +340,17 @@ export function validateRoomBus(bus) {
       .some((value) => !finite(value) || value < -1 || value > 1)) bad(`event ${index}.position is invalid`);
     if (!finite(event.depth) || event.depth < 0 || event.depth > 1
         || !finite(event.intensity) || event.intensity < 0 || event.intensity > 1) bad(`event ${index} bounds are invalid`);
-    if (!isObject(event.audio) || !(event.audio.role === null || (typeof event.audio.role === "string" && event.audio.role))
-        || !(event.audio.source_sha256 === null || SHA256.test(event.audio.source_sha256))) {
+    if (!isObject(event.audio) || Object.keys(event.audio).sort().join(",") !== "pitch,role,source_sha256"
+        || !(event.audio.role === null || (typeof event.audio.role === "string" && event.audio.role))
+        || !(event.audio.source_sha256 === null || SHA256.test(event.audio.source_sha256))
+        || !(event.audio.pitch === null
+          || (Number.isInteger(event.audio.pitch) && event.audio.pitch >= 0 && event.audio.pitch <= 127))) {
       bad(`event ${index}.audio is invalid`);
     }
     if (!isObject(event.source)) bad(`event ${index}.source is invalid`);
-    if (JSON.stringify(event.passage) !== JSON.stringify(passage)) bad(`event ${index}.passage does not match identity`);
+    if (!isObject(event.passage) || canonicalSha256(event.passage) !== passageIdentity) {
+      bad(`event ${index}.passage does not match identity`);
+    }
     if (event.end !== undefined && (!finite(event.end) || event.end < event.at || event.end > bus.time.t1 + 1e-6)) {
       bad(`event ${index}.end is invalid`);
     }
@@ -495,7 +508,8 @@ function routeEvent(event, registry, layout) {
   }
   const stereo = [];
   for (const tap of multichannel) {
-    const row = layout.stereo_fold_down.matrix[tap.channel];
+    const speakerIndex = layout.speakers.findIndex((speaker) => speaker.id === tap.speaker);
+    const row = layout.stereo_fold_down.matrix[speakerIndex];
     for (let channel = 0; channel < 2; channel++) {
       const gain = tap.gain * row[channel];
       if (gain !== 0) {
@@ -553,7 +567,7 @@ export function calibrationBus(registry, layoutId, { t0 = 0, spacing = 0.25 } = 
       { kind: "diagnostic-only", layout: layout.id, speaker: speaker.id },
       { x: speaker.position[0], y: speaker.position[1], z: speaker.position[2] },
     );
-    event.at = rounded(t0 + index * spacing, 9);
+    event.at = t0 + index * spacing;
     event.source_second = rounded(index * spacing, 9);
     event.target_speaker = speaker.id;
     return event;
@@ -563,7 +577,7 @@ export function calibrationBus(registry, layoutId, { t0 = 0, spacing = 0.25 } = 
     semantics: "authored-start-events",
     release_status: "diagnostic-only",
     identity: { score_contract_sha256: null, midi_sha256: null, passage },
-    time: { basis: "absolute-river-seconds", t0, t1: rounded(t0 + seconds, 9), seconds },
+    time: { basis: "absolute-river-seconds", t0, t1: t0 + seconds, seconds },
     provenance: {
       policy: "declared-source-bytes-only",
       score_work_id: null,
