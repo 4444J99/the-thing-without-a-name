@@ -1084,8 +1084,11 @@ def validate_release_manifest(
     rights_gate = release_gates.get("rights-register")
     if not rights_gate or rights_gate.get("state") != "satisfied":
         blockers.append("release manifest rights-register gate is not satisfied")
-    elif phase not in (rights_gate.get("required_for") or []):
-        blockers.append(f"release manifest rights-register gate is not required for {phase}")
+    elif (
+        not isinstance(rights_gate.get("required_for"), list)
+        or sorted(rights_gate["required_for"]) != ["public", "release"]
+    ):
+        blockers.append("release manifest rights-register gate must govern public and release phases")
     else:
         evidence = rights_gate.get("evidence")
         expected_path = register_path.resolve()

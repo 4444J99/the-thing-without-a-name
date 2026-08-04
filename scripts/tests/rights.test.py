@@ -393,6 +393,12 @@ class RightsContractTest(unittest.TestCase):
             self.assertTrue(any("phase scope disagrees" in blocker for blocker in blockers), blockers)
 
             manifest = json.loads(make_release(Path(temporary), candidate).read_text())
+            manifest["gates"][0]["required_for"] = ["release"]
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "public")
+            self.assertTrue(any("must govern public and release" in blocker for blocker in blockers), blockers)
+
+            manifest = json.loads(make_release(Path(temporary), candidate).read_text())
             manifest["media"].append(copy.deepcopy(manifest["media"][0]))
             manifest["credits"].append(copy.deepcopy(manifest["credits"][0]))
             manifest["gates"].append(copy.deepcopy(manifest["gates"][0]))
