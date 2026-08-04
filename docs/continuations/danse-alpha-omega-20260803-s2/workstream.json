@@ -1,0 +1,56 @@
+{
+  "branch": "work/danse-alpha-omega-20260803-s2",
+  "contract": {
+    "authorization": {
+      "approval_mode": "never",
+      "mode": "full_non_destructive",
+      "retained_gates": [
+        "destructive",
+        "credential",
+        "paid_spend",
+        "public_send",
+        "runtime_or_host_mutation"
+      ],
+      "reversible_in_scope": "proceed_without_confirmation",
+      "sandbox": "workspace-write"
+    },
+    "conductor": {
+      "boundary_rule": "recheck_remaining_runway_before_each_packet",
+      "expiry_rule": "stop_or_emit_successor_before_zero",
+      "lane_selection": "derive_from_live_capabilities",
+      "mode": "route_bounded_packets",
+      "provider_and_model": "provider_neutral"
+    },
+    "runway": {
+      "deadline_at": "2026-08-17T19:22:22+00:00",
+      "deadline_epoch": 1786994542,
+      "duration_seconds": 1209600,
+      "requested": "14d",
+      "started_at": "2026-08-03T19:22:22+00:00",
+      "started_epoch": 1785784942
+    },
+    "schema": "limen.workstream.contract.v1"
+  },
+  "predecessor": {
+    "branch": "work/danse-alpha-omega-20260803",
+    "receipt_sha256": "0a71bad89ea706bbeb04645b54898d2414273b90d6c77a6f3878dc1b2e9c89fd",
+    "slug": "danse-alpha-omega-20260803"
+  },
+  "private_capsule": {
+    "content": "redacted",
+    "modules": [
+      "README.md",
+      "manifest.md",
+      "workstream.json",
+      "workstream-contract.py",
+      "intent.md",
+      "runtime.md",
+      "closeout.md",
+      "kickstart.sh",
+      "capsule.identity"
+    ]
+  },
+  "schema": "limen.workstream.receipt.v1",
+  "slug": "danse-alpha-omega-20260803-s2",
+  "workstream": "artist"
+}
