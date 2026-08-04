@@ -29,6 +29,7 @@ import { fromData } from "../engine/corpus.js";
 import { step } from "../engine/engine.js";
 import { captureOf, passageAt, validate } from "../engine/program.js";
 import { camera, scatter, viewDepth } from "../engine/room.js";
+import { compileRoomBus, validateRoomLayouts } from "../engine/room-events.js";
 import { eventsBetween, validate as validateScore } from "../engine/score.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,10 @@ const DANSE_REAL = fs.realpathSync(DANSE);
 
 function inside(root, candidate) {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function portableRelative(root, candidate) {
+  return path.relative(root, candidate).split(path.sep).join("/");
 }
 
 /** How many planes the score actually voices.
@@ -54,7 +59,16 @@ function readJSON(p) {
 }
 
 function args(argv) {
-  const out = { window: "passage", rate: 30, seed: null, stream: 0, out: null, from: 0, score: null };
+  const out = {
+    window: "passage",
+    rate: 30,
+    seed: null,
+    stream: 0,
+    out: null,
+    from: 0,
+    score: null,
+    room: "sound/room-layout.json",
+  };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, "");
     if (!(key in out)) throw new Error(`unknown option ${argv[i]}`);
@@ -79,6 +93,8 @@ validate(program);
 let musicalScore = null;
 let musicalScorePath = null;
 let musicalScoreFileSha256 = null;
+let roomLayouts = null;
+let roomLayoutsPath = null;
 if (opt.score) {
   const lexicalPath = path.resolve(DANSE, opt.score);
   if (!inside(DANSE, lexicalPath)) {
@@ -95,6 +111,14 @@ if (opt.score) {
   const bytes = fs.readFileSync(musicalScorePath);
   musicalScore = validateScore(JSON.parse(bytes.toString("utf8")));
   musicalScoreFileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+
+  const lexicalRoomPath = path.resolve(DANSE, opt.room);
+  if (!inside(DANSE, lexicalRoomPath)) throw new Error("--room must stay inside the Danse repository");
+  const roomStat = fs.lstatSync(lexicalRoomPath);
+  if (roomStat.isSymbolicLink() || !roomStat.isFile()) throw new Error("--room must be a regular file, not a symlink");
+  roomLayoutsPath = fs.realpathSync(lexicalRoomPath);
+  if (!inside(DANSE_REAL, roomLayoutsPath)) throw new Error("--room resolves outside the Danse repository");
+  roomLayouts = validateRoomLayouts(readJSON(roomLayoutsPath));
 }
 
 
@@ -104,6 +128,9 @@ const solved = manifest.score ? readJSON(path.join(corpusDir, manifest.score)) :
 const corpus = fromData(`${corpusDir}/`, manifest, solved);
 
 const seed = opt.seed === null ? (program.seed ?? 0) : Number(opt.seed);
+if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
+  throw new Error("--seed/program seed must be a 32-bit unsigned integer");
+}
 
 // The same span resolution film.html uses: a `seconds` capture starts exactly
 // where it is told, a `passages` capture snaps to a passage boundary so the
@@ -220,6 +247,7 @@ function round(x, places) {
 }
 
 const musicEvents = [];
+const roomBuses = [];
 if (musicalScore) {
   let cursor = t0;
   while (cursor < t1) {
@@ -228,6 +256,14 @@ if (musicalScore) {
     musicEvents.push(
       ...eventsBetween(musicalScore, cursor, end, { t0: passage.t0, seconds: passage.seconds }),
     );
+    roomBuses.push(compileRoomBus(musicalScore, {
+      river_seed: seed >>> 0,
+      stream: opt.stream,
+      index: passage.index,
+      seed: passage.seed,
+      t0: passage.t0,
+      seconds: passage.seconds,
+    }));
     if (!(end > cursor)) throw new Error("score passage traversal did not advance");
     cursor = end;
   }
@@ -251,12 +287,19 @@ const payload = {
   ...(musicalScore
     ? {
         music: {
-          score_path: path.relative(DANSE_REAL, musicalScorePath),
+          score_path: portableRelative(DANSE_REAL, musicalScorePath),
           score_file_sha256: musicalScoreFileSha256,
           identity: musicalScore.identity,
           provenance: musicalScore.provenance,
           stems: musicalScore.orchestration,
           events: musicEvents,
+        },
+        room: {
+          schema: "danse.room.control.v1",
+          semantics: "authored-start-events",
+          layout_registry_path: portableRelative(DANSE_REAL, roomLayoutsPath),
+          layout_identity: roomLayouts.identity,
+          buses: roomBuses,
         },
       }
     : {}),

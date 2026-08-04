@@ -1,0 +1,53 @@
+{
+  "schema": "danse.room.layouts.v1",
+  "identity": {
+    "id": "danse-reference-room-layouts",
+    "status": "reference-simulation",
+    "contract_sha256": "c3374ef888accf526985488d280ccfbeeeffa57b1403fecb6bac9f1b07e5679d"
+  },
+  "coordinate_system": {
+    "units": "normalized-room",
+    "axes": {
+      "x": "left-to-right",
+      "y": "floor-to-ceiling",
+      "z": "far-to-near"
+    },
+    "listener": [0, 0, 0],
+    "meters_per_unit": 2
+  },
+  "safety": {
+    "max_event_gain": 0.85,
+    "limiter_ceiling_dbfs": -1,
+    "latency_budget_ms": 25,
+    "speed_of_sound_mps": 343
+  },
+  "default_layout": "stereo",
+  "layouts": [
+    {
+      "id": "stereo",
+      "status": "portable-fallback",
+      "speakers": [
+        {"id": "left", "channel": 0, "position": [-1, 0, 0]},
+        {"id": "right", "channel": 1, "position": [1, 0, 0]}
+      ],
+      "stereo_fold_down": {
+        "outputs": ["left", "right"],
+        "matrix": [[1, 0], [0, 1]]
+      }
+    },
+    {
+      "id": "reference-quad",
+      "status": "reference-simulation",
+      "speakers": [
+        {"id": "front-left", "channel": 0, "position": [-1, 0, 1]},
+        {"id": "front-right", "channel": 1, "position": [1, 0, 1]},
+        {"id": "rear-left", "channel": 2, "position": [-1, 0, -1]},
+        {"id": "rear-right", "channel": 3, "position": [1, 0, -1]}
+      ],
+      "stereo_fold_down": {
+        "outputs": ["left", "right"],
+        "matrix": [[1, 0], [0, 1], [0.707106781187, 0], [0, 0.707106781187]]
+      }
+    }
+  ]
+}

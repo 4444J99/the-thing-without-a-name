@@ -47,8 +47,8 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 48
+FLOOR = 49
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -133,6 +133,28 @@ def check_rights_contract() -> None:
         lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
         detail = lines[-1] if lines else f"exit {done.returncode}"
     check("rights and attribution fail closed on every uncleared use", done.returncode == 0, detail)
+
+
+def check_room_event_contract() -> None:
+    """Run the typed room bus, routing, safety, provenance, and parity regressions."""
+    test = ROOT / "scripts/tests/room-events.test.py"
+    try:
+        done = subprocess.run(
+            [sys.executable, str(test)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        check("one room-event bus serves every sound renderer", False, "room-event regressions exceeded 120s")
+        return
+    detail = "typed passage buses, bucket seeks, JS/Python parity, fold-down, safety, and source gates"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("one room-event bus serves every sound renderer", done.returncode == 0, detail)
 
 
 # ── 1. the score partitions the frame exactly ──────────────────────────────────
@@ -1131,6 +1153,8 @@ def main() -> int:
     check_music_contract()
     print("\n rights and attribution bind the exact work")
     check_rights_contract()
+    print("\n sound and image occupy one deterministic room")
+    check_room_event_contract()
 
     # Counted BEFORE these checks run, so the floor never counts itself and the
     # numbers below stay the number of real invariants.
