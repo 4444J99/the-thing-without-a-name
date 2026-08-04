@@ -185,9 +185,18 @@
         "score": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["source_midi", "cue_bindings"],
+          "required": ["source_midi", "dynamics_source", "cue_bindings"],
           "properties": {
             "source_midi": {"$ref": "#/$defs/trackedSource"},
+            "dynamics_source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["track", "channel"],
+              "properties": {
+                "track": {"type": "integer", "minimum": 0},
+                "channel": {"type": "integer", "minimum": 0, "maximum": 15}
+              }
+            },
             "cue_bindings": {"type": "object"}
           }
         },

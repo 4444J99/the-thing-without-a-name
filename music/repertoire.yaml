@@ -90,6 +90,10 @@ works:
       source_midi:
         path: music/fixtures/generated-study.mid
         sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+      # CC11 is channel-local MIDI data. This explicit source alone becomes the
+      # score's global visual/audio dynamic; expression on other stems is not
+      # silently collapsed into it.
+      dynamics_source: {track: 1, channel: 0}
       cue_bindings:
         division-entry:
           window_beats: 1.0
@@ -140,4 +144,4 @@ works:
     derived_artifacts:
       - kind: fixture-score-contract
         path: music/score.json
-        sha256: 0de634786519c5ad246c4f37cce340b28ba967e99bd1afa0eb4ca23a70eb5b9d
+        sha256: bdf3f1c988f67ac8ee5e5ffc0da67a4efb8ed0d8c61cb047bad3c1748f5f06fe

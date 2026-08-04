@@ -85,6 +85,29 @@ function programState(seed, t, program, stream, score) {
   const musicalChannel = (name) => channel(movement, name, u) + (music?.visual.channel_offsets[name] ?? 0);
   const divergence = musicalChannel("divergence");
 
+  let turnoverRate = musicalChannel("turnover");
+  let turnoverAt = null;
+  let materialIndex = index;
+  let materialEpoch = epoch;
+  let materialRecast = music?.visual.recast;
+  if (music?.visual.hold) {
+    const holdCue = music.cues
+      .filter((cue) => cue.visual.hold)
+      .reduce((latest, cue) => (!latest || cue.second > latest.second ? cue : latest), null);
+    if (!holdCue) throw new Error("music score declares a hold without an active hold cue");
+    turnoverAt = passage.t0 + holdCue.second * music.scale;
+    const heldMusic = scoreAt(score, turnoverAt, { t0: passage.t0, seconds: passage.seconds });
+    const heldMovement = movementsIn(program, seed, passage.index, stream)[heldMusic.movement.index];
+    if (!heldMovement || heldMovement.id !== heldMusic.movement.id) {
+      throw new Error(`music score hold movement ${heldMusic.movement.id} does not match program movement ${heldMovement?.id}`);
+    }
+    turnoverRate = channel(heldMovement, "turnover", heldMusic.movement.u)
+      + (heldMusic.visual.channel_offsets.turnover ?? 0);
+    materialIndex = heldMusic.movement.index;
+    materialEpoch = epochAt(heldMovement, heldMusic.movement.u);
+    materialRecast = heldMusic.visual.recast;
+  }
+
   // Every passage draws from its own seed, so the phrase recurs and the material
   // never does. The passage ORDINAL goes into the derivation too: a 32-bit seed
   // has a birthday bound around 65,000 passages — roughly nine months of
@@ -92,7 +115,7 @@ function programState(seed, t, program, stream, score) {
   // show the same passage twice. Including it makes recurrence impossible rather
   // than merely unlikely, which is the whole claim the piece makes.
   const material = music
-    ? hash(passage.seed, passage.index, epoch, index, music.visual.recast)
+    ? hash(passage.seed, passage.index, materialEpoch, materialIndex, materialRecast)
     : hash(passage.seed, passage.index, epoch, index);
 
   // Seeded drift on top of the programmed arc, so two seeds trace different paths
@@ -114,7 +137,10 @@ function programState(seed, t, program, stream, score) {
     projK: musicalChannel("projK"),
     // Everything the grammar needs to cast this frame.
     cut: movement.cut,
-    turnover: music?.visual.hold ? 0 : musicalChannel("turnover"),
+    // A hold retains the exact cast at its deterministic cue onset. Setting a
+    // rate to zero would instead reset turnover() to epoch zero and recast it.
+    turnover: turnoverRate,
+    turnoverAt,
     movement: movement.id,
     epoch,
     material,

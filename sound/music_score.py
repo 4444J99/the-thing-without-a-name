@@ -128,18 +128,20 @@ def score_at(score: dict[str, Any], absolute_second: float, window: dict[str, fl
     phrase = score["phrases"][_advance(score["phrases"], bucket["phrase"], source_second, "start_second")]
     dynamic = score["dynamics"][_advance(score["dynamics"], bucket["dynamic"], source_second)]
     movement = score["movements"][_advance(score["movements"], bucket["movement"], source_second, "start_second")]
+    bucket_cues = [score["cues"][index] for index in bucket["active_cues"]]
     cues = [
-        score["cues"][index]
-        for index in bucket["active_cues"]
-        if float(score["cues"][index]["second"]) <= source_second < float(score["cues"][index]["end_second"])
+        cue
+        for cue in bucket_cues
+        if float(cue["second"]) <= source_second < float(cue["end_second"])
     ]
     offsets: dict[str, float] = {}
     hold = False
     recast = int(bucket["recast"])
+    for cue in bucket_cues:
+        if cue["visual"]["recast"] and float(cue["second"]) <= source_second:
+            recast = max(recast, int(cue["visual"]["recast_index"]))
     for cue in cues:
         hold = hold or bool(cue["visual"]["hold"])
-        if cue["visual"]["recast"]:
-            recast = max(recast, int(cue["visual"]["recast_index"]))
         for channel, value in cue["visual"]["channel_offsets"].items():
             offsets[channel] = offsets.get(channel, 0.0) + float(value) * float(cue["strength"])
     next_beat = score["beats"][beat["index"] + 1] if beat["index"] + 1 < len(score["beats"]) else None

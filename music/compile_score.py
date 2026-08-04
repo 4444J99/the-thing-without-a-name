@@ -303,7 +303,10 @@ def meter_rows(events: list[Event], duration_tick: int, division: int, timeline:
                 }
             )
             beat_index += 1
-        if count and count % numerator:
+        # `bar` names the last bar emitted in this meter section. A following
+        # meter change always begins a new bar, whether this section ended on a
+        # complete bar or interrupted one part-way through.
+        if count:
             bar += 1
     return meters, beats
 
@@ -311,6 +314,7 @@ def meter_rows(events: list[Event], duration_tick: int, division: int, timeline:
 def cue_rows(
     events: list[Event],
     bindings: dict[str, Any],
+    duration_tick: int,
     division: int,
     timeline: Timeline,
 ) -> list[dict[str, Any]]:
@@ -340,6 +344,10 @@ def cue_rows(
         if visual.get("recast"):
             recast_count += 1
         end_tick = event.tick + int(window_ticks)
+        if end_tick > duration_tick:
+            raise ValueError(
+                f"cue {cue_id} window ends at tick {end_tick}, beyond MIDI duration {duration_tick}"
+            )
         cues.append(
             {
                 "index": len(cues),
@@ -367,11 +375,31 @@ def cue_rows(
     return cues
 
 
-def dynamics_rows(events: list[Event], division: int, timeline: Timeline) -> list[dict[str, Any]]:
+def dynamics_rows(
+    events: list[Event],
+    division: int,
+    timeline: Timeline,
+    declared_source: dict[str, Any],
+) -> list[dict[str, Any]]:
+    track = declared_source.get("track")
+    channel = declared_source.get("channel")
+    if type(track) is not int or track < 0 or type(channel) is not int or not 0 <= channel <= 15:
+        raise ValueError("score dynamics_source must declare a non-negative track and MIDI channel 0..15")
+    expression = [
+        event
+        for event in events
+        if event.kind == "control"
+        and event.track == track
+        and int(event.data[0]) == channel
+        and int(event.data[1]) == 11
+    ]
+    if not expression:
+        raise ValueError(f"MIDI has no CC11 expression on declared dynamics source track {track}, channel {channel}")
     by_tick: dict[int, int] = {}
-    for event in events:
-        if event.kind == "control" and event.data[1] == 11:
-            by_tick[event.tick] = int(event.data[2])
+    for event in expression:
+        # Multiple messages at one tick on the one declared source retain MIDI
+        # event order: the last authored message is the state at that tick.
+        by_tick[event.tick] = int(event.data[2])
     if 0 not in by_tick:
         by_tick[0] = 127
     return [
@@ -380,6 +408,8 @@ def dynamics_rows(events: list[Event], division: int, timeline: Timeline) -> lis
             "tick": tick,
             "quarter": rounded(Fraction(tick, division)),
             "second": rounded(timeline.seconds(tick)),
+            "track": track,
+            "channel": channel,
             "midi_expression": value,
             "level": rounded(Fraction(value, 127)),
         }
@@ -425,6 +455,8 @@ def note_and_orchestration_rows(
                     "end_quarter": rounded(Fraction(event.tick, division)),
                     "start_second": rounded(timeline.seconds(start.tick)),
                     "end_second": rounded(timeline.seconds(event.tick)),
+                    "track": start.track,
+                    "source_order": start.order,
                     "pitch": pitch,
                     "velocity": int(start.data[2]),
                     "channel": channel,
@@ -435,7 +467,9 @@ def note_and_orchestration_rows(
     unfinished = [key for key, stack in active.items() if stack]
     if unfinished:
         raise ValueError(f"unterminated MIDI note(s): {unfinished[:3]}")
-    notes.sort(key=lambda row: (row["start_tick"], row["channel"], row["pitch"], row["index"]))
+    # At an identical tick the authored note-on order is semantic. Track order
+    # follows the Standard MIDI File, then each track's original event order.
+    notes.sort(key=lambda row: (row["start_tick"], row["track"], row["source_order"]))
     for index, note in enumerate(notes):
         note["index"] = index
     orchestration = [
@@ -541,8 +575,9 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
     meter, beats = meter_rows(events, duration_tick, division, timeline)
     phrases = marker_rows(events, "phrase:", duration_tick, division, timeline)
     movements = marker_rows(events, "movement:", duration_tick, division, timeline)
-    cues = cue_rows(events, work["score"]["cue_bindings"], division, timeline)
-    dynamics = dynamics_rows(events, division, timeline)
+    cues = cue_rows(events, work["score"]["cue_bindings"], duration_tick, division, timeline)
+    dynamics_source = work["score"]["dynamics_source"]
+    dynamics = dynamics_rows(events, division, timeline, dynamics_source)
     notes, orchestration = note_and_orchestration_rows(events, names, division, timeline, midi_digest)
 
     program_ids = [movement["id"] for movement in program.get("movements", [])]
@@ -591,6 +626,10 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
         "beats": beats,
         "phrases": phrases,
         "cues": cues,
+        "dynamics_source": {
+            "track": int(dynamics_source["track"]),
+            "channel": int(dynamics_source["channel"]),
+        },
         "dynamics": dynamics,
         "orchestration": orchestration,
         "notes": notes,

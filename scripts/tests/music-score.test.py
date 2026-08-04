@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,17 @@ sys.path.insert(0, str(ROOT / "sound"))
 sys.path.insert(0, str(ROOT / "render"))
 sys.path.insert(0, str(ROOT / "pipeline"))
 
-from compile_score import canonical_sha256, compile_contract, output_bytes  # noqa: E402
+from compile_score import (  # noqa: E402
+    Event,
+    Timeline,
+    canonical_sha256,
+    compile_contract,
+    cue_rows,
+    dynamics_rows,
+    meter_rows,
+    note_and_orchestration_rows,
+    output_bytes,
+)
 from music_score import events_between, load_score, score_at, validate as validate_score  # noqa: E402
 from validate_repertoire import load_register, sha256, validate_document  # noqa: E402
 
@@ -141,6 +152,80 @@ class MusicScoreContractTest(unittest.TestCase):
         )
         self.assertTrue(any("selected repertoire requires" in error and "recording" in error for error in errors), errors)
 
+    def test_declared_schema_and_evidence_source_bytes_are_enforced(self) -> None:
+        unknown = copy.deepcopy(self.register)
+        unknown["works"][0]["undeclared"] = True
+        self.assertTrue(
+            any("works[0].undeclared: additional property" in error for error in validate_document(unknown, check_derived=False))
+        )
+
+        missing = copy.deepcopy(self.register)
+        missing["works"][0]["edition"].pop("editor")
+        self.assertTrue(
+            any("works[0].edition.editor: is required" in error for error in validate_document(missing, check_derived=False))
+        )
+
+        wrong_type = copy.deepcopy(self.register)
+        wrong_type["works"][0]["selection"]["evidence"] = []
+        self.assertTrue(
+            any("works[0].selection.evidence: must have JSON type" in error for error in validate_document(wrong_type, check_derived=False))
+        )
+
+        stale_evidence = copy.deepcopy(self.register)
+        stale_evidence["works"][0]["composition"]["evidence"][0]["source"] = {
+            "path": "music/generate_fixture_midi.py",
+            "sha256": "0" * 64,
+        }
+        self.assertTrue(
+            any("composition.evidence[0].source.sha256" in error and "actual" in error for error in validate_document(stale_evidence, check_derived=False))
+        )
+
+    def test_compiler_boundaries_global_dynamics_and_authored_note_order(self) -> None:
+        division = 480
+        tempo = Event(0, 0, 0, "tempo", (500_000,))
+        timeline = Timeline(division, [tempo])
+
+        meters = [
+            Event(0, 0, 1, "meter", (4, 2, 24, 8)),
+            Event(1920, 0, 2, "meter", (3, 2, 24, 8)),
+        ]
+        _meter_rows, beats = meter_rows(meters, 3360, division, timeline)
+        self.assertEqual(
+            [(beat["tick"], beat["bar"]) for beat in beats if beat["downbeat"]],
+            [(0.0, 1), (1920.0, 2)],
+        )
+
+        tail = Event(1000, 0, 1, "marker", ("cue:tail:cue:100",))
+        with self.assertRaisesRegex(ValueError, "beyond MIDI duration"):
+            cue_rows([tail], {"tail": {"window_beats": 1}}, 1200, division, timeline)
+
+        expression = [
+            Event(0, 0, 1, "control", (0, 11, 25)),
+            Event(0, 1, 1, "control", (0, 11, 99)),
+            Event(480, 0, 2, "control", (0, 11, 50)),
+        ]
+        dynamics = dynamics_rows(expression, division, timeline, {"track": 0, "channel": 0})
+        self.assertEqual(
+            [(row["track"], row["channel"], row["midi_expression"]) for row in dynamics],
+            [(0, 0, 25), (0, 0, 50)],
+        )
+        with self.assertRaisesRegex(ValueError, "no CC11 expression"):
+            dynamics_rows(expression, division, timeline, {"track": 3, "channel": 0})
+
+        notes, _stems = note_and_orchestration_rows(
+            [
+                Event(0, 1, 0, "note_on", (0, 72, 100)),
+                Event(0, 1, 1, "note_on", (0, 60, 100)),
+                Event(480, 1, 2, "note_off", (0, 72, 0)),
+                Event(480, 1, 3, "note_off", (0, 60, 0)),
+            ],
+            {1: "authored-order"},
+            division,
+            timeline,
+            "a" * 64,
+        )
+        self.assertEqual([(note["pitch"], note["source_order"]) for note in notes], [(72, 0), (60, 1)])
+
     def test_js_and_python_queries_are_value_identical(self) -> None:
         window = {"t0": 17.25, "seconds": 312.54}
         times = [17.25, 49.304, 113.4, 119.85, 120.1, 145.45, 248.0, 329.79]
@@ -179,6 +264,7 @@ class MusicScoreContractTest(unittest.TestCase):
             [at(128.0), at(132.0)],
             [at(225.0), at(228.0)],
             [at(226.0), at(226.5)],
+            [at(120.25), at(120.4)],
             [at(128.0), at(128.0)],
         ]
         expected = [compact_events(events_between(self.score, start, end, window)) for start, end in queries]
@@ -193,7 +279,8 @@ class MusicScoreContractTest(unittest.TestCase):
         self.assertEqual([(row["type"], row["index"]) for row in expected[1]], [("cue", 3), ("note", 3)])
         self.assertEqual([(row["type"], row["index"]) for row in expected[2]], [("cue", 6), ("note", 6)])
         self.assertEqual(expected[3], [], "an already-active cue is not a new authored start")
-        self.assertEqual(expected[4], [])
+        self.assertEqual(expected[4], [], "an already-active note is not a second note-on event")
+        self.assertEqual(expected[5], [])
 
         script = f"""
           import fs from 'node:fs';
@@ -209,6 +296,28 @@ class MusicScoreContractTest(unittest.TestCase):
           }}));
           const queries = {json.dumps(queries)};
           console.log(JSON.stringify(queries.map(([start, end]) => compact(eventsBetween(score, start, end, window)))));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_subsecond_recast_remains_cumulative_after_its_cue_window(self) -> None:
+        score = copy.deepcopy(self.score)
+        cue = score["cues"][3]
+        cue["second"] = 128.25
+        cue["end_second"] = 128.5
+        score["lookup"]["buckets"][128]["recast"] = 1
+        expected = [score_at(score, at)["visual"]["recast"] for at in (128.2, 128.3, 128.6)]
+        self.assertEqual(expected, [1, 2, 2])
+
+        script = """
+          import fs from 'node:fs';
+          import { scoreAt } from './engine/score.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          score.cues[3].second = 128.25;
+          score.cues[3].end_second = 128.5;
+          score.lookup.buckets[128].recast = 1;
+          console.log(JSON.stringify([128.2, 128.3, 128.6].map((at) => scoreAt(score, at).visual.recast)));
         """
         result = run("node", "--input-type=module", "--eval", script)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -351,6 +460,7 @@ class MusicScoreContractTest(unittest.TestCase):
             planned: audio.plan.length,
             scheduled: audio.scheduled.length,
             missing: audio.missing.length,
+            blocked: audio.blocked.length,
             movement: before.movement,
             cue: before.music.cues.map((row) => row.id),
           }));
@@ -363,11 +473,57 @@ class MusicScoreContractTest(unittest.TestCase):
                 "identical": True,
                 "planned": 4,
                 "scheduled": 0,
-                "missing": 4,
+                "missing": 0,
+                "blocked": 4,
                 "movement": "PHRASE",
                 "cue": ["phrase-accent-a"],
             },
         )
+
+    def test_hold_freezes_the_authored_turnover_state_instead_of_resetting_epoch_zero(self) -> None:
+        script = """
+          import fs from 'node:fs';
+          import { state, turnover } from './engine/clock.js';
+          import { passageAt } from './engine/program.js';
+          const program = JSON.parse(fs.readFileSync('render/program.json'));
+          const baselineScore = JSON.parse(fs.readFileSync('music/score.json'));
+          const heldScore = JSON.parse(JSON.stringify(baselineScore));
+          heldScore.cues[3].visual.hold = true;
+          const seed = 0x12345678;
+          const stream = 7;
+          const passage = passageAt(program, seed, 0, stream);
+          const absolute = (source) => passage.t0 + (source / 390) * passage.seconds;
+          const startAt = absolute(128);
+          const laterAt = absolute(128.125);
+          const baseline = state(seed, startAt, program, stream, baselineScore);
+          const heldStart = state(seed, startAt, program, stream, heldScore);
+          const heldLater = state(seed, laterAt, program, stream, heldScore);
+          const photoState = (snapshot, at) => turnover(
+            23,
+            snapshot.material,
+            snapshot.turnoverAt ?? at,
+            snapshot.turnover,
+          );
+          console.log(JSON.stringify({
+            start: photoState(heldStart, startAt),
+            baseline: photoState(baseline, startAt),
+            later: photoState(heldLater, laterAt),
+            rates: [baseline.turnover, heldStart.turnover, heldLater.turnover],
+            anchors: [heldStart.turnoverAt, heldLater.turnoverAt],
+            material: [baseline.material, heldStart.material, heldLater.material],
+          }));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["start"], payload["baseline"])
+        self.assertEqual(payload["later"], payload["baseline"])
+        self.assertEqual(payload["rates"][0], payload["rates"][1])
+        self.assertEqual(payload["rates"][1], payload["rates"][2])
+        self.assertGreater(payload["rates"][0], 0)
+        self.assertEqual(payload["anchors"][0], payload["anchors"][1])
+        self.assertEqual(payload["material"][0], payload["material"][1])
+        self.assertEqual(payload["material"][1], payload["material"][2])
 
     def test_control_and_segment_receipts_emit_score_and_source_identity_without_local_paths(self) -> None:
         result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
@@ -399,6 +555,92 @@ class MusicScoreContractTest(unittest.TestCase):
         self.assertEqual(identity["contract_sha256"], self.score["identity"]["contract_sha256"])
         self.assertNotIn(str(ROOT), json.dumps(identity))
         self.assertTrue(all(set(stem) == {"id", "midi_source_sha256", "audio_source_sha256"} for stem in identity["stems"]))
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_control_rejects_a_repository_score_symlink_to_external_bytes(self) -> None:
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory() as outside, tempfile.TemporaryDirectory(dir=work) as inside:
+            external = Path(outside) / "external-score.json"
+            external.write_bytes((ROOT / "music/score.json").read_bytes())
+            link = Path(inside) / "score-link.json"
+            link.symlink_to(external)
+            result = run(
+                "node",
+                "sound/control.mjs",
+                "--rate",
+                "0",
+                "--score",
+                str(link.relative_to(ROOT)),
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a symlink", result.stderr)
+
+    def test_webaudio_requires_matching_cleared_source_identity_before_scheduling(self) -> None:
+        script = """
+          import fs from 'node:fs';
+          import { scheduleWebAudio } from './sound/web_audio.mjs';
+          const fixture = JSON.parse(fs.readFileSync('music/score.json'));
+          let created = 0;
+          const context = {
+            currentTime: 0,
+            destination: {},
+            createBufferSource() {
+              created += 1;
+              return {
+                playbackRate: {value: 1},
+                connect() {},
+                start() {},
+                stop() {},
+              };
+            },
+            createGain() {
+              return {gain: {value: 1}, connect() {}};
+            },
+          };
+          const stem = fixture.orchestration[0].id;
+          const uncleared = scheduleWebAudio(context, fixture, {[stem]: {}}, 120, 121);
+
+          const cleared = JSON.parse(JSON.stringify(fixture));
+          const digest = 'a'.repeat(64);
+          cleared.orchestration[0].audio_source_sha256 = digest;
+          const mismatch = scheduleWebAudio(
+            context,
+            cleared,
+            {[stem]: {buffer: {}, audio_source_sha256: 'b'.repeat(64)}},
+            120,
+            121,
+          );
+          const absent = scheduleWebAudio(context, cleared, {}, 120, 121);
+          const admitted = scheduleWebAudio(
+            context,
+            cleared,
+            {[stem]: {buffer: {}, audio_source_sha256: digest}},
+            120,
+            121,
+          );
+          console.log(JSON.stringify({
+            uncleared: [uncleared.scheduled.length, uncleared.blocked.length],
+            mismatch: [mismatch.scheduled.length, mismatch.blocked.length],
+            absent: [absent.scheduled.length, absent.missing.length],
+            admitted: [admitted.scheduled.length, admitted.blocked.length],
+            created,
+            planDigest: admitted.plan[0].audio_source_sha256,
+          }));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "uncleared": [0, 1],
+                "mismatch": [0, 1],
+                "absent": [0, 1],
+                "admitted": [1, 0],
+                "created": 1,
+                "planDigest": "a" * 64,
+            },
+        )
 
     def test_python_renderer_exposes_the_same_event_plan_and_fails_closed_on_uncleared_stems(self) -> None:
         score_renderer = load_module("danse_fixture_score_renderer_test", ROOT / "sound/score.py")

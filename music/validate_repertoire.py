@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Validate Danse's layered music rights/provenance register.
 
-The JSON Schema describes the interchange shape.  This dependency-free semantic
-validator additionally resolves tracked paths, verifies SHA-256 bytes, and keeps
-composition status from being mistaken for edition, MIDI, performance,
-recording, or sample clearance.
+The declared JSON Schema is enforced by a dependency-free validator for every
+keyword the register uses. Semantic checks additionally resolve tracked paths,
+verify SHA-256 bytes, and keep composition status from being mistaken for
+edition, MIDI, performance, recording, or sample clearance.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,123 @@ SELECTABLE = {
 VISUAL_CHANNELS = {"divergence", "spread", "azimuth", "elevation", "projK", "turnover"}
 
 
+def _schema_type_matches(value: Any, expected: str) -> bool:
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": type(value) is int,
+        "number": type(value) in (int, float) and math.isfinite(float(value)),
+        "boolean": type(value) is bool,
+        "null": value is None,
+    }.get(expected, False)
+
+
+def _resolve_local_ref(schema: dict[str, Any], reference: str) -> dict[str, Any]:
+    if not reference.startswith("#/"):
+        raise ValueError(f"unsupported non-local schema reference {reference!r}")
+    node: Any = schema
+    for raw in reference[2:].split("/"):
+        key = raw.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, dict) or key not in node:
+            raise ValueError(f"unresolved schema reference {reference!r}")
+        node = node[key]
+    if not isinstance(node, dict):
+        raise ValueError(f"schema reference {reference!r} is not an object")
+    return node
+
+
+def _schema_errors(
+    value: Any,
+    rule: dict[str, Any],
+    schema: dict[str, Any],
+    location: str,
+) -> list[str]:
+    """Validate the Draft 2020-12 keyword subset used by repertoire.schema.json."""
+    if "$ref" in rule:
+        try:
+            target = _resolve_local_ref(schema, rule["$ref"])
+        except ValueError as exc:
+            return [f"schema document: {exc}"]
+        return _schema_errors(value, target, schema, location)
+
+    errors: list[str] = []
+    for child in rule.get("allOf", []):
+        errors.extend(_schema_errors(value, child, schema, location))
+    alternatives = rule.get("anyOf")
+    if alternatives and not any(not _schema_errors(value, child, schema, location) for child in alternatives):
+        errors.append(f"{location}: does not match any allowed schema")
+
+    if "const" in rule and value != rule["const"]:
+        errors.append(f"{location}: must equal {rule['const']!r}")
+    if "enum" in rule and value not in rule["enum"]:
+        errors.append(f"{location}: must be one of {rule['enum']!r}")
+
+    declared_types = rule.get("type")
+    if declared_types is not None:
+        allowed = [declared_types] if isinstance(declared_types, str) else declared_types
+        if not isinstance(allowed, list) or not any(_schema_type_matches(value, name) for name in allowed):
+            errors.append(f"{location}: must have JSON type {' or '.join(map(str, allowed))}")
+            return errors
+
+    if isinstance(value, dict):
+        properties = rule.get("properties", {})
+        required = rule.get("required", [])
+        for name in value:
+            if not isinstance(name, str):
+                errors.append(f"{location}: object property names must be strings; got {name!r}")
+        for name in required:
+            if name not in value:
+                errors.append(f"{location}.{name}: is required")
+        for name, child in properties.items():
+            if name in value:
+                errors.extend(_schema_errors(value[name], child, schema, f"{location}.{name}"))
+        if rule.get("additionalProperties") is False:
+            unknown = [name for name in value if isinstance(name, str) and name not in properties]
+            for name in sorted(unknown):
+                errors.append(f"{location}.{name}: additional property is not allowed")
+
+    if isinstance(value, list):
+        minimum = rule.get("minItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            errors.append(f"{location}: must contain at least {minimum} item(s)")
+        child = rule.get("items")
+        if isinstance(child, dict):
+            for index, item in enumerate(value):
+                errors.extend(_schema_errors(item, child, schema, f"{location}[{index}]"))
+
+    if isinstance(value, str):
+        minimum = rule.get("minLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            errors.append(f"{location}: must contain at least {minimum} character(s)")
+        pattern = rule.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            errors.append(f"{location}: does not match {pattern!r}")
+
+    if type(value) in (int, float) and not isinstance(value, bool):
+        if "minimum" in rule and value < rule["minimum"]:
+            errors.append(f"{location}: must be at least {rule['minimum']}")
+        if "maximum" in rule and value > rule["maximum"]:
+            errors.append(f"{location}: must be at most {rule['maximum']}")
+        if "exclusiveMinimum" in rule and value <= rule["exclusiveMinimum"]:
+            errors.append(f"{location}: must be greater than {rule['exclusiveMinimum']}")
+
+    return errors
+
+
+def validate_schema_instance(
+    register: Any,
+    path: Path = DEFAULT_SCHEMA,
+) -> list[str]:
+    try:
+        schema = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"schema document: {exc}"]
+    if not isinstance(schema, dict):
+        return ["schema document: root must be an object"]
+    return _schema_errors(register, schema, schema, "register")
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -71,7 +189,7 @@ def validate_document(
     root: Path = ROOT,
     check_derived: bool = True,
 ) -> list[str]:
-    errors: list[str] = []
+    errors = validate_schema_instance(register)
 
     def error(location: str, message: str) -> None:
         errors.append(f"{location}: {message}")
@@ -93,6 +211,8 @@ def validate_document(
                 error(f"{location}.evidence[{index}].kind", "must be non-empty")
             if not isinstance(row.get("citation"), str) or not row["citation"].strip():
                 error(f"{location}.evidence[{index}].citation", "must be non-empty")
+            if row.get("source") is not None:
+                source(row.get("source"), f"{location}.evidence[{index}].source", required=False)
 
     def source(value: Any, location: str, *, required: bool) -> tuple[str, str] | None:
         if value is None:
@@ -210,6 +330,11 @@ def validate_document(
             error(f"{location}.score.source_midi", "must identify the exact arrangement/MIDI bytes")
         if performance_source and midi_source and performance_source != midi_source:
             error(f"{location}.performance.source", "must identify the exact performed MIDI bytes")
+        dynamics_source = mapping(score.get("dynamics_source"), f"{location}.score.dynamics_source")
+        if type(dynamics_source.get("track")) is not int or dynamics_source["track"] < 0:
+            error(f"{location}.score.dynamics_source.track", "must be a non-negative MIDI track index")
+        if type(dynamics_source.get("channel")) is not int or not 0 <= dynamics_source["channel"] <= 15:
+            error(f"{location}.score.dynamics_source.channel", "must be a MIDI channel from 0 through 15")
         bindings = score.get("cue_bindings")
         if not isinstance(bindings, dict):
             error(f"{location}.score.cue_bindings", "must be a mapping")

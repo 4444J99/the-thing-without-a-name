@@ -18,6 +18,7 @@
     "phrases",
     "cues",
     "dynamics",
+    "dynamics_source",
     "orchestration",
     "notes",
     "movements",
@@ -64,6 +65,15 @@
     "phrases": {"type": "array", "minItems": 1, "items": {"type": "object"}},
     "cues": {"type": "array", "items": {"type": "object"}},
     "dynamics": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "dynamics_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["track", "channel"],
+      "properties": {
+        "track": {"type": "integer", "minimum": 0},
+        "channel": {"type": "integer", "minimum": 0, "maximum": 15}
+      }
+    },
     "orchestration": {"type": "array", "items": {"type": "object"}},
     "notes": {"type": "array", "items": {"type": "object"}},
     "movements": {"type": "array", "minItems": 1, "items": {"type": "object"}},

@@ -33,6 +33,11 @@ import { eventsBetween, validate as validateScore } from "../engine/score.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DANSE = path.join(HERE, "..");
+const DANSE_REAL = fs.realpathSync(DANSE);
+
+function inside(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
 
 /** How many planes the score actually voices.
  *
@@ -75,9 +80,17 @@ let musicalScore = null;
 let musicalScorePath = null;
 let musicalScoreFileSha256 = null;
 if (opt.score) {
-  musicalScorePath = path.resolve(DANSE, opt.score);
-  if (musicalScorePath !== DANSE && !musicalScorePath.startsWith(`${DANSE}${path.sep}`)) {
+  const lexicalPath = path.resolve(DANSE, opt.score);
+  if (!inside(DANSE, lexicalPath)) {
     throw new Error("--score must stay inside the Danse repository");
+  }
+  const scoreStat = fs.lstatSync(lexicalPath);
+  if (scoreStat.isSymbolicLink() || !scoreStat.isFile()) {
+    throw new Error("--score must be a regular file, not a symlink");
+  }
+  musicalScorePath = fs.realpathSync(lexicalPath);
+  if (!inside(DANSE_REAL, musicalScorePath)) {
+    throw new Error("--score resolves outside the Danse repository");
   }
   const bytes = fs.readFileSync(musicalScorePath);
   musicalScore = validateScore(JSON.parse(bytes.toString("utf8")));
@@ -238,7 +251,7 @@ const payload = {
   ...(musicalScore
     ? {
         music: {
-          score_path: path.relative(DANSE, musicalScorePath),
+          score_path: path.relative(DANSE_REAL, musicalScorePath),
           score_file_sha256: musicalScoreFileSha256,
           identity: musicalScore.identity,
           provenance: musicalScore.provenance,

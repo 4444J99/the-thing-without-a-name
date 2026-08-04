@@ -20,7 +20,8 @@ export function step(corpus, seed, t, program = null, { quantise = 0, stream = 0
   const s = state(seed, t, program, stream, score);
   // The state is always sampled at the exact t; only the cast may be held.
   const ct = quantise > 0 ? Math.floor(t / quantise) * quantise : t;
-  const cast = cells(corpus, s.material, ct, { reveal: s.reveal, cut: s.cut, rate: s.turnover });
+  const castAt = s.turnoverAt ?? ct;
+  const cast = cells(corpus, s.material, castAt, { reveal: s.reveal, cut: s.cut, rate: s.turnover });
   return { state: s, cast };
 }
 

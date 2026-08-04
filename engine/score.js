@@ -122,15 +122,23 @@ export function scoreAt(score, absoluteSecond, window = null) {
   const phrase = score.phrases[advance(score.phrases, bucket.phrase, mapped.sourceSecond, "start_second")];
   const dynamic = score.dynamics[advance(score.dynamics, bucket.dynamic, mapped.sourceSecond)];
   const movement = score.movements[advance(score.movements, bucket.movement, mapped.sourceSecond, "start_second")];
-  const cues = bucket.active_cues
-    .map((index) => score.cues[index])
-    .filter((cue) => cue.second <= mapped.sourceSecond && mapped.sourceSecond < cue.end_second);
+  const bucketCues = bucket.active_cues.map((index) => score.cues[index]);
+  const cues = bucketCues.filter(
+    (cue) => cue.second <= mapped.sourceSecond && mapped.sourceSecond < cue.end_second,
+  );
   const offsets = {};
   let hold = false;
   let recast = bucket.recast;
+  // A recast beginning between bucket boundaries remains cumulative after its
+  // short cue window ends. active_cues is a bucket-wide candidate index, so it
+  // can advance the snapshot without scanning the complete cue array.
+  for (const cue of bucketCues) {
+    if (cue.visual.recast && cue.second <= mapped.sourceSecond) {
+      recast = Math.max(recast, cue.visual.recast_index);
+    }
+  }
   for (const cue of cues) {
     hold ||= cue.visual.hold;
-    if (cue.visual.recast) recast = Math.max(recast, cue.visual.recast_index);
     for (const [channel, value] of Object.entries(cue.visual.channel_offsets)) {
       offsets[channel] = (offsets[channel] ?? 0) + value * cue.strength;
     }

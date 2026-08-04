@@ -25,10 +25,20 @@ contract contains:
 - movement boundaries bound in order to the existing program;
 - fixed lookup buckets for random access independent of elapsed river time.
 
+CC11 expression is channel-local, so each register entry must name one explicit
+`score.dynamics_source` track/channel for the global score clock. Expression on
+other stems is never silently folded into that value. Notes beginning at the same
+tick retain their authored Standard MIDI File track/event order.
+
 The program still owns each passage's varying absolute duration. At query time,
 the nominal score is restarted and affinely mapped over that passage. Both image
 and audio-event consumers use the same absolute `{t0, seconds}` window; no clock,
 entropy, or accumulated playback state enters `engine/`.
+
+The interval API is deliberately a half-open stream of authored note-ons and cue
+starts. A note already sounding at an arbitrary seek boundary is not emitted as
+a second note-on. Sustained-voice restoration would require its own declared
+voice-allocation and buffer-offset contract; this fixture does not invent one.
 
 ## Reproduce and verify
 
@@ -50,9 +60,11 @@ python3 render/render.py --score music/score.json --segment 0 --codec preview
 ```
 
 `sound/web_audio.mjs` creates a deterministic plan and schedules only supplied,
-declared `AudioBuffer` sources. It never creates an oscillator. The Python sound
-renderer exposes the same mapped event plan, but deliberately refuses to render
-this fixture: its orchestration declares no cleared audio source bytes.
+declared `AudioBuffer` sources. Each supplied stem is paired with its
+`audio_source_sha256`, which must match the cleared orchestration identity before
+the adapter creates a source node. It never creates an oscillator. The Python
+sound renderer exposes the same mapped event plan, but deliberately refuses to
+render this fixture: its orchestration declares no cleared audio source bytes.
 
 ## Remaining gates
 

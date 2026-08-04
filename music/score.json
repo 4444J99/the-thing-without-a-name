@@ -9,9 +9,9 @@
   },
   "identity": {
     "work_id": "generated-contract-study",
-    "repertoire_entry_sha256": "104724c9775997fd7bcecbf12e62cbc3b2c12aba771dd3853b38c5b122fb217a",
+    "repertoire_entry_sha256": "d68a7176d56c2c183f3a2ab59fa65654e6ea7ac97202e5853dd68ecf94b0b024",
     "midi_sha256": "c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d",
-    "contract_sha256": "b18eb336b5d8fdbfe044356090423a9e08b17130adc59f53d9876850c3c1ea40"
+    "contract_sha256": "08c331eec73555fc70cc1dd99af2feae0712c21931b058e0d21fcf6108ffb499"
   },
   "time": {
     "basis": "absolute-seconds",
@@ -7381,12 +7381,18 @@
       }
     }
   ],
+  "dynamics_source": {
+    "track": 1,
+    "channel": 0
+  },
   "dynamics": [
     {
       "index": 0,
       "tick": 0,
       "quarter": 0.0,
       "second": 0.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 48,
       "level": 0.377953
     },
@@ -7395,6 +7401,8 @@
       "tick": 38400,
       "quarter": 80.0,
       "second": 40.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 56,
       "level": 0.440945
     },
@@ -7403,6 +7411,8 @@
       "tick": 62400,
       "quarter": 130.0,
       "second": 65.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 76,
       "level": 0.598425
     },
@@ -7411,6 +7421,8 @@
       "tick": 115200,
       "quarter": 240.0,
       "second": 120.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 104,
       "level": 0.818898
     },
@@ -7419,6 +7431,8 @@
       "tick": 216000,
       "quarter": 450.0,
       "second": 225.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 36,
       "level": 0.283465
     },
@@ -7427,6 +7441,8 @@
       "tick": 273600,
       "quarter": 570.0,
       "second": 285.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 92,
       "level": 0.724409
     },
@@ -7435,6 +7451,8 @@
       "tick": 370560,
       "quarter": 772.0,
       "second": 386.0,
+      "track": 1,
+      "channel": 0,
       "midi_expression": 24,
       "level": 0.188976
     }
@@ -7461,6 +7479,8 @@
       "end_quarter": 1.0,
       "start_second": 0.0,
       "end_second": 0.5,
+      "track": 1,
+      "source_order": 3,
       "pitch": 60,
       "velocity": 100,
       "channel": 0,
@@ -7475,6 +7495,8 @@
       "end_quarter": 131.0,
       "start_second": 65.0,
       "end_second": 65.5,
+      "track": 1,
+      "source_order": 7,
       "pitch": 61,
       "velocity": 100,
       "channel": 0,
@@ -7489,6 +7511,8 @@
       "end_quarter": 241.0,
       "start_second": 120.0,
       "end_second": 120.5,
+      "track": 1,
+      "source_order": 10,
       "pitch": 62,
       "velocity": 100,
       "channel": 0,
@@ -7503,6 +7527,8 @@
       "end_quarter": 257.0,
       "start_second": 128.0,
       "end_second": 128.5,
+      "track": 1,
+      "source_order": 12,
       "pitch": 63,
       "velocity": 96,
       "channel": 0,
@@ -7517,6 +7543,8 @@
       "end_quarter": 265.0,
       "start_second": 132.0,
       "end_second": 132.5,
+      "track": 1,
+      "source_order": 14,
       "pitch": 64,
       "velocity": 112,
       "channel": 0,
@@ -7531,6 +7559,8 @@
       "end_quarter": 273.0,
       "start_second": 136.0,
       "end_second": 136.5,
+      "track": 1,
+      "source_order": 16,
       "pitch": 65,
       "velocity": 127,
       "channel": 0,
@@ -7545,6 +7575,8 @@
       "end_quarter": 451.0,
       "start_second": 225.0,
       "end_second": 225.5,
+      "track": 1,
+      "source_order": 19,
       "pitch": 66,
       "velocity": 72,
       "channel": 0,
@@ -7559,6 +7591,8 @@
       "end_quarter": 571.0,
       "start_second": 285.0,
       "end_second": 285.5,
+      "track": 1,
+      "source_order": 22,
       "pitch": 67,
       "velocity": 110,
       "channel": 0,
@@ -7573,6 +7607,8 @@
       "end_quarter": 617.0,
       "start_second": 308.0,
       "end_second": 308.5,
+      "track": 1,
+      "source_order": 24,
       "pitch": 60,
       "velocity": 116,
       "channel": 0,
@@ -7587,6 +7623,8 @@
       "end_quarter": 681.0,
       "start_second": 340.0,
       "end_second": 340.5,
+      "track": 1,
+      "source_order": 26,
       "pitch": 61,
       "velocity": 124,
       "channel": 0,
@@ -7601,6 +7639,8 @@
       "end_quarter": 773.0,
       "start_second": 386.0,
       "end_second": 386.5,
+      "track": 1,
+      "source_order": 29,
       "pitch": 62,
       "velocity": 64,
       "channel": 0,
