@@ -2,19 +2,39 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>danse</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Danse — a room that never repeats</title>
+<meta name="description" content="Danse is Anthony J. Padavano’s unbounded generative screendance, composed from 162 photographs made in one room on 20 June 2017.">
+<meta name="author" content="Anthony J. Padavano">
+<meta name="application-name" content="Danse">
+<meta name="theme-color" content="#0e0e10">
+<link rel="canonical" href="https://organvm.github.io/the-thing-without-a-name/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Danse">
+<meta property="og:title" content="Danse — a room that never repeats">
+<meta property="og:description" content="An unbounded generative screendance composed from one afternoon in 2017.">
+<meta property="og:url" content="https://organvm.github.io/the-thing-without-a-name/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Danse — a room that never repeats">
+<meta name="twitter:description" content="An unbounded generative screendance composed from one afternoon in 2017.">
 <style>
   :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; background: #0e0e10; overflow: hidden; }
+  html, body { width: 100%; height: 100%; background: #0e0e10; overflow: hidden; }
   body { font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #b9b9c4; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  main, canvas { display: block; width: 100%; height: 100%; }
+  canvas { touch-action: none; }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
 
   #veil {
-    position: fixed; inset: 0; display: grid; place-content: center; gap: 14px;
+    position: fixed; z-index: 3; inset: 0; display: grid; place-content: center; gap: 14px;
     background: #0e0e10; text-align: center; transition: opacity .8s ease;
   }
+  #veil[hidden] { display: none; }
   #veil.gone { opacity: 0; pointer-events: none; }
   #veil h1 { font: 300 34px/1 ui-serif, Georgia, serif; letter-spacing: .32em; color: #e8e8ee; }
   #veil p { color: #6a6a78; letter-spacing: .12em; }
@@ -22,31 +42,80 @@
   #bar i { display: block; height: 100%; width: 0; background: #cfcfe0; transition: width .2s; }
 
   #hud {
-    position: fixed; left: 14px; bottom: 12px; display: flex; gap: 16px; align-items: baseline;
-    color: #55555f; letter-spacing: .06em; user-select: none;
+    position: fixed; z-index: 2;
+    left: max(12px, env(safe-area-inset-left));
+    right: max(68px, calc(env(safe-area-inset-right) + 56px));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    max-width: 960px; max-height: min(50vh, 320px); overflow: auto;
+    padding: 12px 14px; border: 1px solid rgba(232, 232, 238, .24); border-radius: 4px;
+    background: rgba(14, 14, 16, .88); color: #b9b9c4; letter-spacing: .045em;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, .3); user-select: none;
   }
+  #hud[hidden] { display: none; }
+  #state { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 7px; }
   #hud b { font-weight: 400; color: #9a9aa8; }
-  #hud kbd { color: #3c3c46; }
-  #hud.hide { opacity: 0; }
-  a { color: inherit; }
+  #hud p + p { margin-top: 3px; }
+  #hud kbd { color: #e0e0e8; }
+  #touch-instructions { color: #8d8d9a; }
+
+  #hud-toggle {
+    position: fixed; z-index: 4;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    min-width: 48px; min-height: 48px; padding: 0 12px;
+    border: 1px solid rgba(232, 232, 238, .34); border-radius: 999px;
+    background: rgba(14, 14, 16, .82); color: #e8e8ee;
+    font: inherit; letter-spacing: .045em; cursor: pointer;
+  }
+  #hud-toggle:hover { background: rgba(38, 38, 46, .92); }
+  #hud-toggle:focus-visible { outline: 2px solid #e8e8ee; outline-offset: 3px; }
+
+  #toast {
+    position: fixed; z-index: 5; left: 50%; top: max(16px, env(safe-area-inset-top));
+    transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
+    padding: 9px 12px; border-radius: 4px; background: rgba(14, 14, 16, .94);
+    color: #e8e8ee; overflow-wrap: anywhere; text-align: center;
+  }
+  #toast[hidden] { display: none; }
+
+  @media (max-width: 640px) {
+    #hud { right: max(64px, calc(env(safe-area-inset-right) + 52px)); font-size: 11px; }
+    #state { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #hud-toggle { min-width: 48px; padding: 0 10px; }
+    #hud-toggle .wide-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #veil, #bar i { transition: none; }
+  }
 </style>
 </head>
 <body>
-<canvas id="stage"></canvas>
+<main aria-label="Danse live artwork">
+  <canvas id="stage" role="img" aria-label="Danse, a continuously generated photographic room" aria-describedby="stage-description"></canvas>
+  <p id="stage-description" class="sr-only">Fragments from 162 photographs of a dancer share one evolving room. The arrangement changes deterministically with your river and time. Visitors who prefer reduced motion arrive on a held frame.</p>
+</main>
 
-<div id="veil">
-  <h1>danse</h1>
-  <p>20 june 2017 &middot; 162 photographs</p>
+<div id="veil" role="status" aria-label="Loading Danse">
+  <h1>Danse</h1>
+  <p>20 June 2017 &middot; 162 photographs</p>
   <div id="bar"><i></i></div>
 </div>
 
-<div id="hud">
-  <span><b id="river">—</b> <span id="passage"></span></span>
-  <span><b id="clock">0:00</b></span>
-  <span><b id="cut">—</b></span>
-  <span><b id="planes">0</b> planes</span>
-  <span id="keys"><kbd>space</kbd> hold &middot; <kbd>n</kbd> new river &middot; <kbd>s</kbd> share &middot; <kbd>f</kbd> free &middot; <kbd>1-7</kbd> movement &middot; <kbd>m</kbd> matte &middot; <kbd>h</kbd> hud</span>
-</div>
+<section id="hud" hidden aria-hidden="true" aria-label="Danse controls and current state">
+  <div id="state">
+    <span><b id="river">—</b> <span id="passage"></span></span>
+    <span><b id="clock">0:00</b></span>
+    <span><b id="cut">—</b></span>
+    <span><b id="planes">0</b> planes</span>
+  </div>
+  <p id="keyboard-instructions">Keyboard: <kbd>Space</kbd> hold or resume &middot; <kbd>N</kbd> new river &middot; <kbd>S</kbd> share &middot; <kbd>F</kbd> free &middot; <kbd>1–7</kbd> movement &middot; <kbd>M</kbd> matte &middot; <kbd>H</kbd> controls &middot; <kbd>Escape</kbd> close</p>
+  <p id="touch-instructions">Touch: use the Controls button to show or hide this panel. The artwork advances automatically; reduced-motion settings open on a held frame.</p>
+</section>
+<button id="hud-toggle" type="button" aria-controls="hud" aria-expanded="false" aria-label="Show Danse controls" aria-keyshortcuts="H">
+  <span aria-hidden="true">H</span><span class="wide-label"> &middot; Controls</span>
+</button>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
 <script type="module">
 import * as Arrival from "./arrival.js";
@@ -73,18 +142,37 @@ let navigationGeneration = 0;
 
 const canvas = document.getElementById("stage");
 const el = (id) => document.getElementById(id);
+const hud = el("hud");
+const hudToggle = el("hud-toggle");
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+function setHudVisible(visible) {
+  hud.hidden = !visible;
+  hud.setAttribute("aria-hidden", String(!visible));
+  hudToggle.setAttribute("aria-expanded", String(visible));
+  hudToggle.setAttribute("aria-label", `${visible ? "Hide" : "Show"} Danse controls`);
+  hudToggle.querySelector(".wide-label").textContent = visible ? " · Hide controls" : " · Controls";
+}
+
+setHudVisible(false);
+hudToggle.addEventListener("click", () => setHudVisible(hud.hidden));
 
 const corpus = await Corpus.load();
 const renderer = new Renderer(canvas, corpus);
 await corpus.prime(renderer.gl, {
   onProgress: (p) => { el("bar").firstElementChild.style.width = `${p * 100}%`; },
 });
-el("veil").classList.add("gone");
+const veil = el("veil");
+veil.classList.add("gone");
+veil.setAttribute("aria-hidden", "true");
+if (reducedMotion.matches) veil.hidden = true;
+else setTimeout(() => { veil.hidden = true; }, 800);
 
 // Non-null ⟺ frozen at that offset. Releasing does NOT resume from there: the
 // river kept flowing while you looked, so it snaps forward to now. The pause is
-// yours, not the river's.
-let heldAt = null;
+// yours, not the river's. A reduced-motion visit begins held; Space is still an
+// explicit opt-in to motion, and an OS preference change takes effect at once.
+let heldAt = reducedMotion.matches ? Arrival.now(river) : null;
 let matteK = 0;
 
 // The cast is held for an eighth of a second rather than rebuilt every frame:
@@ -96,6 +184,11 @@ const RECAST = 1 / 8;
 /** Where the river is right now — or where it is frozen. The only reader of time
  *  in the whole page, so there is exactly one answer to "when is it". */
 const at = () => heldAt ?? Arrival.now(river);
+
+reducedMotion.addEventListener("change", ({ matches }) => {
+  heldAt = matches ? Arrival.now(river) : null;
+  flash(matches ? "reduced motion · frame held" : "motion resumed");
+});
 
 function frame() {
   const t = at();
@@ -149,32 +242,56 @@ addEventListener("hashchange", async () => {
   if (generation !== navigationGeneration) return;
   river = nextRiver;
   shifted = nextRiver.shifted;
-  heldAt = null;
+  heldAt = reducedMotion.matches ? Arrival.now(river) : null;
 });
 
 /** Wind this river to `to` without renaming it. Every jump in the piece is this. */
 function jump(to) {
   river = { ...Arrival.shiftTo(river, to), minted: false, shifted: true };
   shifted = true;
-  heldAt = null;
+  heldAt = reducedMotion.matches ? to : null;
 }
 
-/** Say something in the HUD for a moment, then give the keys back. */
+/** Announce temporary feedback without replacing the controls or live state. */
+let toastTimer = null;
 function flash(msg) {
-  const keys = el("keys");
-  const was = keys.innerHTML;
-  keys.textContent = msg;
-  setTimeout(() => { keys.innerHTML = was; }, 2200);
+  const toast = el("toast");
+  clearTimeout(toastTimer);
+  toast.textContent = msg;
+  toast.hidden = false;
+  toastTimer = setTimeout(() => {
+    toast.hidden = true;
+    toast.textContent = "";
+  }, 2200);
 }
 
 addEventListener("keydown", async (e) => {
+  const key = e.key.toLowerCase();
+  const isControl = e.target instanceof Element && e.target.closest("button, input, select, textarea, a, [contenteditable]");
+  if (isControl && key !== "h" && e.key !== "Escape") return;
+  if ((e.altKey || e.ctrlKey || e.metaKey) && e.key !== "Escape") return;
+  if (key === "h") {
+    if (!e.repeat) setHudVisible(hud.hidden);
+    e.preventDefault();
+    return;
+  }
+  if (e.key === "Escape") {
+    if (!hud.hidden) {
+      setHudVisible(false);
+      e.preventDefault();
+    }
+    return;
+  }
   if (e.key === " ") { heldAt = heldAt === null ? at() : null; e.preventDefault(); }
-  if (e.key === "n") { river = { ...Arrival.mint(), minted: true, shifted: false }; shifted = false; heldAt = null; }
-  if (e.key === "m") { matteK = matteK > 0 ? 0 : 1; }
-  if (e.key === "h") { el("hud").classList.toggle("hide"); }
+  if (key === "n") {
+    river = { ...Arrival.mint(), minted: true, shifted: false };
+    shifted = false;
+    heldAt = reducedMotion.matches ? Arrival.now(river) : null;
+  }
+  if (key === "m") { matteK = matteK > 0 ? 0 : 1; }
   // Hand someone your river. They land in the same water, in sync, having
   // exchanged nothing with you but the river identity in the link.
-  if (e.key === "s") {
+  if (key === "s") {
     const link = Arrival.href(river, { mode: program ? null : "free" });
     try {
       await navigator.clipboard.writeText(link);
@@ -185,14 +302,14 @@ addEventListener("keydown", async (e) => {
   }
   // Let the piece roam instead of running the phrase — the older dwell cycle the
   // 2017 reproduction is pinned to.
-  if (e.key === "f") { program = program ? null : await Program.load(); }
+  if (key === "f") { program = program ? null : await Program.load(); }
   // Jump to the head of each movement OF THE PASSAGE YOU ARE IN — the fastest
   // way to judge a program edit. Movements have no fixed times any more, so this
   // has to ask the passage where its own movements start.
-  if (program && /^[1-9]$/.test(e.key)) {
+  if (program && /^[1-9]$/.test(key)) {
     const t = at();
     const p = Program.passageAt(program, river.seed, t, river.stream);
-    const m = Program.movementsIn(program, river.seed, p.index, river.stream)[Number(e.key) - 1];
+    const m = Program.movementsIn(program, river.seed, p.index, river.stream)[Number(key) - 1];
     if (m) jump(p.t0 + m.t0);
   }
 });
