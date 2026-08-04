@@ -83,10 +83,11 @@ an external venue receipt. It:
 
 - refuses developer checkouts, Git metadata, symlinks, special files, absolute
   executables, stale or incomplete release inventories, and launchers absent from
-  the manifest,
-  unverified hardware, failed calibration, non-loopback health URLs, and
-  unapproved launchers; health probes use numeric loopback addresses directly
-  and bypass ambient proxy settings;
+  the manifest, unverified hardware, failed calibration, non-loopback health
+  URLs, and unapproved launchers; health probes use numeric loopback addresses
+  directly and bypass ambient proxy settings;
+- requires trailing file arguments to remain release-relative so they resolve
+  inside the verified snapshot;
 - passes the approved river seed, stream, epoch, output IDs, evidence ID, and
   contract digest through environment variables;
 - opens and hashes every manifested release file through no-follow directory

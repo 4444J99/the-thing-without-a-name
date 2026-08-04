@@ -32,6 +32,7 @@ try:
         load_json_bytes,
         load_reference_contracts,
         runtime_plan,
+        validate_snapshot_argument,
     )
 except ImportError:  # Direct `python3 installation/runtime.py` execution.
     from contract import (  # type: ignore[no-redef]
@@ -40,6 +41,7 @@ except ImportError:  # Direct `python3 installation/runtime.py` execution.
         load_json_bytes,
         load_reference_contracts,
         runtime_plan,
+        validate_snapshot_argument,
     )
 
 TELEMETRY_SCHEMA = "danse.installation.telemetry.v1"
@@ -280,6 +282,8 @@ def snapshot_verified_release(
         or launcher.get("executable") is not True
     ):
         raise ContractError("runtime launcher disagrees with the release inventory")
+    for index, argument in enumerate(argv[1:], start=1):
+        validate_snapshot_argument(argument, index)
 
     temporary = tempfile.TemporaryDirectory(prefix="danse-release-")
     snapshot_root = Path(temporary.name)
@@ -474,9 +478,18 @@ def supervise(
                     terminate(process)
                     returncode = process.poll()
             duration = max(0.0, clock() - started)
+            if (
+                forced_failure is None
+                and plan["health_url"] is not None
+                and not ever_healthy
+            ):
+                forced_failure = "startup-exit"
             if forced_failure is not None:
                 telemetry.emit(
-                    "launcher-unhealthy", attempt=attempt, reason=forced_failure
+                    "launcher-unhealthy",
+                    attempt=attempt,
+                    reason=forced_failure,
+                    returncode=returncode,
                 )
             elif returncode == 0:
                 telemetry.emit("launcher-exit", attempt=attempt, returncode=0)

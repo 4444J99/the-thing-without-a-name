@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -314,7 +315,17 @@ class InstallationContractTest(unittest.TestCase):
         self.assertIsNotNone(
             re.fullmatch(timestamp_pattern, "2026-08-04T12:34:56.789Z")
         )
+        self.assertIsNotNone(re.fullmatch(timestamp_pattern, "2024-02-29T12:34:56Z"))
         self.assertIsNone(re.fullmatch(timestamp_pattern, "garbageZ"))
+        self.assertIsNone(re.fullmatch(timestamp_pattern, "2026-02-31T12:34:56Z"))
+        self.assertIsNone(re.fullmatch(timestamp_pattern, "1900-02-29T12:34:56Z"))
+
+    def test_source_documents_are_reused_from_authenticated_buffers(self) -> None:
+        with patch(
+            "installation.contract.load_json",
+            side_effect=AssertionError("source pathname was reopened"),
+        ):
+            self.assertEqual(validate_digital_twin(copy.deepcopy(self.spec)), self.spec)
 
     def test_projector_camera_is_value_identical_to_engine_room(self) -> None:
         script = """
@@ -481,6 +492,20 @@ class InstallationContractTest(unittest.TestCase):
                     evidence, self.spec, phase="runtime", release_root=release
                 )
 
+            for escaping_argument in (
+                str(release / "config/fixture.txt"),
+                "--config=../outside.json",
+            ):
+                evidence = evidence_for(self.spec, release)
+                evidence["runtime"]["argv"].append(escaping_argument)
+                evidence["runtime"]["argv_sha256"] = canonical_sha256(
+                    evidence["runtime"]["argv"]
+                )
+                with self.assertRaisesRegex(ContractError, "verified release snapshot"):
+                    validate_evidence(
+                        evidence, self.spec, phase="runtime", release_root=release
+                    )
+
     def test_release_and_launcher_paths_reject_developer_roots_symlinks_and_stale_bytes(
         self,
     ) -> None:
@@ -577,6 +602,16 @@ class InstallationContractTest(unittest.TestCase):
                 )
 
             evidence = evidence_for(self.spec, release)
+            front_role = evidence["geometry"]["surfaces"][0]["hardware_role"]
+            rear_role = evidence["geometry"]["surfaces"][1]["hardware_role"]
+            evidence["geometry"]["surfaces"][0]["hardware_role"] = rear_role
+            evidence["geometry"]["surfaces"][1]["hardware_role"] = front_role
+            with self.assertRaisesRegex(ContractError, "wrong surface hardware role"):
+                validate_evidence(
+                    evidence, self.spec, phase="runtime", release_root=release
+                )
+
+            evidence = evidence_for(self.spec, release)
             evidence["calibration"]["output_skew_ms"] = 16.668
             with self.assertRaisesRegex(
                 ContractError, "exceeds the admitted threshold"
@@ -627,6 +662,43 @@ class InstallationContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "distinct telemetry"):
                 validate_evidence(
                     duplicate, self.spec, phase="complete", release_root=release
+                )
+
+            duplicate_time = copy.deepcopy(evidence)
+            duplicate_time["wall_plug_proofs"][1]["observer"] = "Another Observer"
+            duplicate_time["wall_plug_proofs"][1]["observed_at"] = duplicate_time[
+                "wall_plug_proofs"
+            ][0]["observed_at"]
+            with self.assertRaisesRegex(ContractError, "distinct observation times"):
+                validate_evidence(
+                    duplicate_time,
+                    self.spec,
+                    phase="complete",
+                    release_root=release,
+                )
+
+            duplicate_proof_receipt = copy.deepcopy(evidence)
+            duplicate_proof_receipt["wall_plug_proofs"][1]["receipt_sha256"] = (
+                duplicate_proof_receipt["wall_plug_proofs"][0]["receipt_sha256"]
+            )
+            with self.assertRaisesRegex(ContractError, "distinct observation receipts"):
+                validate_evidence(
+                    duplicate_proof_receipt,
+                    self.spec,
+                    phase="complete",
+                    release_root=release,
+                )
+
+            duplicate_restore_receipt = copy.deepcopy(evidence)
+            duplicate_restore_receipt["restore_rehearsal"]["strike_receipt_sha256"] = (
+                duplicate_restore_receipt["restore_rehearsal"]["setup_receipt_sha256"]
+            )
+            with self.assertRaisesRegex(ContractError, "receipts must be distinct"):
+                validate_evidence(
+                    duplicate_restore_receipt,
+                    self.spec,
+                    phase="complete",
+                    release_root=release,
                 )
 
             no_restore = copy.deepcopy(evidence)
@@ -810,16 +882,30 @@ import io
 import json
 import sys
 from pathlib import Path
+from installation.contract import ContractError, _stable_file_bytes
 from installation.runtime import Telemetry, supervise
 
 plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+try:
+    _stable_file_bytes(Path(sys.argv[3]), "FIFO fixture", descriptor_bound=True)
+except ContractError:
+    print("READER=BLOCKED")
+else:
+    print("READER=UNSAFE")
 output = io.StringIO()
 result = supervise(plan, Path(sys.argv[2]), Telemetry(output))
 sys.stdout.write(output.getvalue())
 print(f"RESULT={result}")
 """
             child = subprocess.run(
-                [sys.executable, "-c", script, str(plan_path), str(release)],
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    str(plan_path),
+                    str(release),
+                    str(configuration),
+                ],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -827,8 +913,9 @@ print(f"RESULT={result}")
                 timeout=5,
             )
             self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertEqual(child.stdout.splitlines()[0], "READER=BLOCKED")
             self.assertEqual(child.stdout.splitlines()[-1], "RESULT=78")
-            record = json.loads(child.stdout.splitlines()[0])
+            record = json.loads(child.stdout.splitlines()[1])
             self.assertEqual(record["event"], "release-integrity-failed")
 
     def test_verified_snapshot_survives_a_path_replacement_race(self) -> None:
@@ -922,6 +1009,38 @@ print(f"RESULT={result}")
             self.assertEqual(len(unhealthy), 4)
             self.assertTrue(all(row["reason"] == "startup-health" for row in unhealthy))
             self.assertEqual(records[-1]["event"], "recovery-budget-exhausted")
+
+    def test_zero_exit_before_health_never_claims_runtime_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            evidence = evidence_for(self.spec, release)
+            evidence["runtime"]["health_url"] = "http://127.0.0.1:8787/health"
+            plan = runtime_plan(evidence, self.spec, release)
+            clock = FakeClock()
+            output = io.StringIO()
+
+            result = supervise(
+                plan,
+                release,
+                Telemetry(output, clock=clock),
+                clock=clock,
+                sleep=clock.sleep,
+                popen=lambda *_args, **_kwargs: SuccessfulProcess(),
+                health_probe=lambda _url, _timeout: True,
+            )
+            self.assertEqual(result, 75)
+            records = [json.loads(line) for line in output.getvalue().splitlines()]
+            unhealthy = [row for row in records if row["event"] == "launcher-unhealthy"]
+            self.assertEqual(len(unhealthy), 4)
+            self.assertTrue(all(row["reason"] == "startup-exit" for row in unhealthy))
+            self.assertTrue(all(row["returncode"] == 0 for row in unhealthy))
+            self.assertFalse(
+                any(
+                    row["event"] == "launcher-exit" and row.get("returncode") == 0
+                    for row in records
+                )
+            )
 
     def test_runtime_source_has_no_persistent_host_mutation_path(self) -> None:
         source = (ROOT / "installation/runtime.py").read_text(encoding="utf-8")

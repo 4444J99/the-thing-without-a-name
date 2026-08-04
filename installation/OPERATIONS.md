@@ -14,6 +14,8 @@ insurance, and public-operation decisions.
 3. Obtain written venue approval for measured room dimensions, egress, mounting,
    surface material, projector/lens/throw, power distribution, ventilation,
    interface/speaker routing, cabling, level limits, and the foreground launcher.
+   Keep every launcher file argument canonical and release-relative; absolute,
+   parent-traversing, home-relative, and `file:` arguments fail admission.
 4. Confirm that the release contains no Git metadata or developer-only tooling,
    and that its manifest inventories every delivered file. The approved launcher
    path, bytes, digest, and executable mode must match that inventory exactly.

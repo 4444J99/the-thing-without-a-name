@@ -17,7 +17,7 @@ import re
 import stat
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +58,10 @@ REQUIRED_ARCHIVE_DECISIONS = {
     "visitor-audio-panning": "rejected",
 }
 FORBIDDEN_HOST_MUTATIONS = {"LaunchAgent", "LaunchDaemon", "cron", "systemd-user"}
+REFERENCE_SURFACE_HARDWARE_ROLES = {
+    "reference-front-plane": "surface-front",
+    "reference-rear-plane": "surface-rear",
+}
 
 
 class ContractError(ValueError):
@@ -207,11 +211,40 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _stable_file_bytes(path: Path, label: str) -> bytes:
+def _stable_stream(path: Path, label: str, *, descriptor_bound: bool) -> BinaryIO:
+    """Open a candidate without following links or blocking on special files."""
+    if not descriptor_bound:
+        try:
+            return path.open("rb")
+        except OSError as exc:
+            raise ContractError(f"{label} cannot be opened") from exc
+    required = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
+    if os.name != "posix" or not all(hasattr(os, name) for name in required):
+        raise ContractError(f"{label} requires descriptor-bound admission")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+        )
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        return stream
+    except OSError as exc:
+        raise ContractError(f"{label} cannot be opened safely") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _stable_file_bytes(
+    path: Path, label: str, *, descriptor_bound: bool = False
+) -> bytes:
     """Read one regular file once and reject identity drift during the read."""
     try:
-        with path.open("rb") as stream:
+        with _stable_stream(path, label, descriptor_bound=descriptor_bound) as stream:
             before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ContractError(f"{label} must remain a regular file")
             data = stream.read()
             after = os.fstat(stream.fileno())
     except OSError as exc:
@@ -237,12 +270,16 @@ def _stable_file_bytes(path: Path, label: str) -> bytes:
     return data
 
 
-def _stable_file_digest(path: Path, label: str) -> tuple[int, str, bool]:
+def _stable_file_digest(
+    path: Path, label: str, *, descriptor_bound: bool = False
+) -> tuple[int, str, bool]:
     """Hash one regular file through one descriptor and return its bound mode."""
     digest = hashlib.sha256()
     try:
-        with path.open("rb") as stream:
+        with _stable_stream(path, label, descriptor_bound=descriptor_bound) as stream:
             before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ContractError(f"{label} must remain a regular file")
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(block)
             after = os.fstat(stream.fileno())
@@ -265,6 +302,29 @@ def _stable_file_digest(path: Path, label: str) -> tuple[int, str, bool]:
     ):
         raise ContractError(f"{label} changed while being hashed")
     return before.st_size, digest.hexdigest(), bool(before.st_mode & 0o111)
+
+
+def validate_snapshot_argument(value: Any, index: int) -> str:
+    """Require every trailing file argument to resolve inside the snapshot."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ContractError(f"runtime argv[{index}] is invalid")
+    candidate = (
+        value.split("=", 1)[1] if value.startswith("-") and "=" in value else value
+    )
+    if not candidate:
+        return value
+    pure = PurePosixPath(candidate)
+    if (
+        candidate.startswith(("~", "file:"))
+        or "\\" in candidate
+        or re.match(r"^[A-Za-z]:[/\\]", candidate)
+        or pure.is_absolute()
+        or ".." in pure.parts
+    ):
+        raise ContractError(
+            f"runtime argv[{index}] may not escape the verified release snapshot"
+        )
+    return value
 
 
 def _objects(value: Any, label: str, *, minimum: int = 1) -> list[dict[str, Any]]:
@@ -333,6 +393,7 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
     by_source = _unique(sources, "id", "source_contracts")
     if set(by_source) != REQUIRED_SOURCE_CONTRACTS:
         raise ContractError("digital twin source contract inventory is incomplete")
+    source_documents: dict[str, dict[str, Any]] = {}
     for source_id, source in by_source.items():
         extras = {
             "program": {"embedded_schema"},
@@ -347,14 +408,20 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
             source["sha256"], f"source_contracts.{source_id}.sha256"
         ):
             raise ContractError(f"source contract {source_id} bytes drifted")
-        if "embedded_schema" in source:
+        document: dict[str, Any] | None = None
+        if extras:
             document = load_json_bytes(source_bytes, f"source contract {source_id}")
+            source_documents[source_id] = document
+        if "embedded_schema" in source:
+            if document is None:
+                raise ContractError(f"source contract {source_id} was not parsed")
             if document.get("schema") != source["embedded_schema"]:
                 raise ContractError(
                     f"source contract {source_id} embedded schema drifted"
                 )
         if "embedded_contract_sha256" in source:
-            document = load_json_bytes(source_bytes, f"source contract {source_id}")
+            if document is None:
+                raise ContractError(f"source contract {source_id} was not parsed")
             embedded = (document.get("identity") or {}).get("contract_sha256")
             if embedded != _sha256(
                 source["embedded_contract_sha256"],
@@ -451,6 +518,8 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
 
     surfaces = _objects(value["surfaces"], "surfaces", minimum=2)
     by_surface = _unique(surfaces, "id", "surfaces")
+    if set(by_surface) != set(REFERENCE_SURFACE_HARDWARE_ROLES):
+        raise ContractError("reference surface inventory drifted")
     for surface_id, surface in by_surface.items():
         _exact_keys(
             surface,
@@ -567,9 +636,7 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
         raise ContractError(
             "audio must remain bound to the reference room layout and venue-gated"
         )
-    layout_registry = load_json(
-        safe_file(root, by_source["room-layout"]["path"], "room layout path")
-    )
+    layout_registry = source_documents["room-layout"]
     layout = next(
         (
             item
@@ -669,8 +736,7 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
         raise ContractError("hardware_roles must be unique and sorted")
     derived_roles = {
         "display-host",
-        "surface-front",
-        "surface-rear",
+        *REFERENCE_SURFACE_HARDWARE_ROLES.values(),
         "audio-interface",
         "power-distribution",
         "ventilation-path",
@@ -1055,7 +1121,9 @@ def _validate_release(
     manifest = safe_file(
         root, release["manifest_path"], "evidence.release.manifest_path"
     )
-    manifest_bytes = _stable_file_bytes(manifest, "canonical release manifest")
+    manifest_bytes = _stable_file_bytes(
+        manifest, "canonical release manifest", descriptor_bound=True
+    )
     if hashlib.sha256(manifest_bytes).hexdigest() != _receipt_sha(
         release["manifest_sha256"], "evidence.release.manifest_sha256"
     ):
@@ -1116,7 +1184,7 @@ def _validate_release(
                 f"canonical release file executable mode drifted: {relative}"
             )
         actual_bytes, actual_digest, actual_executable = _stable_file_digest(
-            path, f"canonical release file {relative}"
+            path, f"canonical release file {relative}", descriptor_bound=True
         )
         if actual_bytes != byte_count:
             raise ContractError(
@@ -1253,9 +1321,7 @@ def validate_evidence(
     reference_surfaces = {surface["id"]: surface for surface in spec["surfaces"]}
     if set(by_reference_surface) != set(reference_surfaces):
         raise ContractError("venue geometry does not map every reference surface")
-    declared_surface_roles = {
-        role for role in spec["hardware_roles"] if role.startswith("surface-")
-    }
+    declared_surface_roles = set(REFERENCE_SURFACE_HARDWARE_ROLES.values())
     if set(by_surface_role) != declared_surface_roles:
         raise ContractError(
             "venue geometry must map every declared surface hardware role exactly once"
@@ -1274,11 +1340,9 @@ def validate_evidence(
             },
             f"measured surface {surface_id}",
         )
-        if measured["hardware_role"] not in spec["hardware_roles"] or not measured[
-            "hardware_role"
-        ].startswith("surface-"):
+        if measured["hardware_role"] != REFERENCE_SURFACE_HARDWARE_ROLES[surface_id]:
             raise ContractError(
-                f"measured surface {surface_id} lacks a declared surface hardware role"
+                f"measured surface {surface_id} has the wrong surface hardware role"
             )
         reference_surface = reference_surfaces[surface_id]
         expected_center = [
@@ -1519,6 +1583,8 @@ def validate_evidence(
         runtime["argv_sha256"], "runtime argv digest"
     ):
         raise ContractError("runtime argv digest is stale")
+    for index, argument in enumerate(argv[1:], start=1):
+        validate_snapshot_argument(argument, index)
     launcher = release_files.get(argv[0])
     if launcher is None or launcher["executable"] is not True:
         raise ContractError(
@@ -1575,8 +1641,9 @@ def validate_evidence(
         )
     if proofs:
         by_proof = _unique(proofs, "id", "wall_plug_proofs")
-        observers: set[tuple[str, str]] = set()
+        observed_times: set[str] = set()
         telemetry: set[str] = set()
+        proof_receipts: set[str] = set()
         for proof_id, proof in by_proof.items():
             _exact_keys(
                 proof,
@@ -1594,17 +1661,15 @@ def validate_evidence(
                 },
                 f"wall-plug proof {proof_id}",
             )
-            observer = _nonempty(
-                proof["observer"], f"wall-plug proof {proof_id}.observer"
-            )
+            _nonempty(proof["observer"], f"wall-plug proof {proof_id}.observer")
             observed_at = _timestamp(
                 proof["observed_at"], f"wall-plug proof {proof_id}.observed_at"
             )
-            if (observer, observed_at) in observers:
+            if observed_at in observed_times:
                 raise ContractError(
-                    "wall-plug proofs must be distinct human observations"
+                    "wall-plug proofs must have distinct observation times"
                 )
-            observers.add((observer, observed_at))
+            observed_times.add(observed_at)
             _finite(
                 proof["power_removed_seconds"],
                 f"wall-plug proof {proof_id}.power_removed_seconds",
@@ -1644,7 +1709,14 @@ def validate_evidence(
                     "wall-plug proofs must preserve distinct telemetry receipts"
                 )
             telemetry.add(telemetry_sha)
-            _receipt_sha(proof["receipt_sha256"], f"wall-plug proof {proof_id} receipt")
+            proof_receipt = _receipt_sha(
+                proof["receipt_sha256"], f"wall-plug proof {proof_id} receipt"
+            )
+            if proof_receipt in proof_receipts:
+                raise ContractError(
+                    "wall-plug proofs must preserve distinct observation receipts"
+                )
+            proof_receipts.add(proof_receipt)
     restore_flags = (
         "setup_passed",
         "strike_passed",
@@ -1665,8 +1737,13 @@ def validate_evidence(
             _approved(restore[key], f"restore rehearsal {key}")
         _nonempty(restore["observer"], "restore_rehearsal.observer")
         _timestamp(restore["observed_at"], "restore_rehearsal.observed_at")
+        receipt_values: list[str] = []
         for receipt in restore_receipts:
-            _receipt_sha(restore[receipt], f"restore rehearsal {receipt}")
+            receipt_values.append(
+                _receipt_sha(restore[receipt], f"restore rehearsal {receipt}")
+            )
+        if len(set(receipt_values)) != len(receipt_values):
+            raise ContractError("setup, strike, and restore receipts must be distinct")
     return value
 
 
