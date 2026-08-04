@@ -545,6 +545,36 @@ def _material_inventory(source: Path) -> _MaterialProof:
     return proof
 
 
+def _tracked_checkout_bytes(source: Path, head: str) -> int:
+    """Return the immutable byte count of every blob checked out from one commit."""
+    raw = _git(
+        source,
+        "ls-tree",
+        "-r",
+        "-l",
+        "-z",
+        "--full-tree",
+        head,
+        text=False,
+    ).stdout
+    total = 0
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, _path = record.partition(b"\t")
+        fields = metadata.split()
+        if separator != b"\t" or len(fields) != 4 or fields[1] != b"blob":
+            raise CustodyError("source tracked checkout inventory is malformed")
+        try:
+            size = int(fields[3])
+        except ValueError as exc:
+            raise CustodyError("source tracked checkout inventory is malformed") from exc
+        if size < 0:
+            raise CustodyError("source tracked checkout inventory is malformed")
+        total += size
+    return total
+
+
 def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dict:
     remote_ref = _safe_remote_ref(remote_ref)
     if source.is_symlink():
@@ -585,9 +615,13 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
             raise CustodyError("source head is not reachable from the admitted remote reference")
     else:
         raise CustodyError("remote mode must be equal or ancestor")
-    fetch_url = str(_git(resolved, "remote", "get-url", "origin").stdout).strip()
-    push_url = str(_git(resolved, "remote", "get-url", "--push", "origin").stdout).strip()
-    if not fetch_url or fetch_url != push_url:
+    fetch_urls = frozenset(
+        str(_git(resolved, "remote", "get-url", "--all", "origin").stdout).splitlines()
+    )
+    push_urls = frozenset(
+        str(_git(resolved, "remote", "get-url", "--push", "--all", "origin").stdout).splitlines()
+    )
+    if not fetch_urls or "" in fetch_urls or fetch_urls != push_urls:
         raise CustodyError("origin fetch/push parity is not proven")
     branch_result = subprocess.run(
         [GIT, "-C", str(resolved), "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -599,6 +633,7 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
     return {
         "head": head,
         "branch": branch,
+        "checkout_bytes": _tracked_checkout_bytes(resolved, head),
         "tracked_clean": True,
         "remote_ref": remote_ref,
         "remote_head": remote_head,
@@ -729,6 +764,7 @@ def create_snapshot(
         "schema": SCHEMA,
         "snapshot_id": snapshot_id,
         "source_head": identity["head"],
+        "checkout_bytes": identity["checkout_bytes"],
         "remote_ref": identity["remote_ref"],
         "remote_head": identity["remote_head"],
         "remote_mode": identity["remote_mode"],
@@ -836,6 +872,7 @@ def verify_snapshot(snapshot: Path) -> dict:
         "schema",
         "snapshot_id",
         "source_head",
+        "checkout_bytes",
         "remote_ref",
         "remote_head",
         "remote_mode",
@@ -851,6 +888,8 @@ def verify_snapshot(snapshot: Path) -> dict:
     if (
         not GIT_SHA.fullmatch(str(control.get("source_head", "")))
         or not GIT_SHA.fullmatch(str(control.get("remote_head", "")))
+        or type(control.get("checkout_bytes")) is not int
+        or control["checkout_bytes"] < 0
         or control.get("remote_mode") not in {"equal", "ancestor"}
         or control.get("tracked_clean") is not True
         or type(control.get("inventory_entries")) is not int
@@ -945,6 +984,7 @@ def _manifest_entries(snapshot: Path, control: dict) -> list[dict]:
     if not isinstance(source, dict) or set(source) != {
         "head",
         "branch",
+        "checkout_bytes",
         "tracked_clean",
         "remote_ref",
         "remote_head",
@@ -954,6 +994,7 @@ def _manifest_entries(snapshot: Path, control: dict) -> list[dict]:
         raise CustodyError("private manifest source identity is malformed")
     if (
         source["head"] != control["source_head"]
+        or source["checkout_bytes"] != control["checkout_bytes"]
         or source["remote_ref"] != control["remote_ref"]
         or source["remote_head"] != control["remote_head"]
         or source["remote_mode"] != control["remote_mode"]
@@ -1032,6 +1073,7 @@ def audit_source_snapshot(source: Path, snapshot: Path, control: dict | None = N
     stable_keys = {
         "head",
         "branch",
+        "checkout_bytes",
         "tracked_clean",
         "remote_ref",
         "remote_mode",
@@ -1137,10 +1179,26 @@ def _verify_restored_inventory(target: Path, entries: list[dict]) -> None:
             raise CustodyError("restored material file disagrees with its private manifest")
 
 
+def _restore_required_bytes(control: dict) -> int:
+    payload = (
+        control["inventory_bytes"]
+        + control["checkout_bytes"]
+        + control["artifacts"]["source.bundle"]["bytes"]
+    )
+    return payload + max(1 << 30, payload // 20)
+
+
 def restore_snapshot(snapshot: Path, target: Path) -> dict:
     _require_new_path(target, "restore target")
     _require_disjoint(snapshot, target)
     control = verify_snapshot(snapshot)
+    entries = _manifest_entries(snapshot, control)
+    try:
+        free = shutil.disk_usage(target.parent).free
+    except OSError as exc:
+        raise CustodyError("restore target capacity could not be determined") from exc
+    if free <= _restore_required_bytes(control):
+        raise CustodyError("restore target has insufficient free space")
     target.mkdir(mode=0o700)
     if GIT is None:
         raise CustodyError("required command is unavailable: git")
@@ -1150,7 +1208,6 @@ def restore_snapshot(snapshot: Path, target: Path) -> dict:
     restored_head = str(_git(target, "rev-parse", "HEAD").stdout).strip()
     if restored_head != control["source_head"]:
         raise CustodyError("restored source head disagrees with snapshot control")
-    entries = _manifest_entries(snapshot, control)
     _extract_materials(snapshot, target, entries, control["inventory_bytes"])
     _verify_restored_inventory(target, entries)
     status = str(_git(target, "status", "--porcelain=v1", "--untracked-files=no").stdout)
@@ -1288,6 +1345,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.secondary_id,
             )
             _write_new(args.receipt, _json_bytes(receipt))
+            _fsync_directory(args.receipt.parent)
             print("custody: wrote one redacted restore receipt", flush=True)
     except CustodyError as exc:
         print(f"custody: BLOCKED — {exc}", file=sys.stderr)

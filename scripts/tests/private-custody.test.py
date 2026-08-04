@@ -167,6 +167,32 @@ class PrivateCustodyTest(unittest.TestCase):
             )
         self.assertEqual(list(self.fixture.primary.iterdir()), [])
 
+    def test_every_fetch_and_push_url_must_have_exact_set_parity(self) -> None:
+        mirror = self.fixture.root / "mirror.git"
+        exfiltration = self.fixture.root / "unapproved.git"
+        git(self.fixture.source, "config", "--add", "remote.origin.url", str(mirror))
+        git(self.fixture.source, "config", "--add", "remote.origin.pushurl", str(mirror))
+        git(
+            self.fixture.source,
+            "config",
+            "--add",
+            "remote.origin.pushurl",
+            str(self.fixture.remote),
+        )
+        identity = CUSTODY._repository_identity(self.fixture.source, "origin/main", "equal")
+        self.assertTrue(identity["remote_fetch_push_parity"])
+
+        git(self.fixture.source, "config", "--add", "remote.origin.pushurl", str(exfiltration))
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "fetch/push parity"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "extra-push-url",
+                "origin/main",
+                "equal",
+            )
+        self.assertEqual(list(self.fixture.primary.iterdir()), [])
+
     def test_escaping_material_symlink_fails_before_snapshot_creation(self) -> None:
         payload = self.fixture.source / ".work/nested/payload.bin"
         payload.unlink()
@@ -404,6 +430,41 @@ class PrivateCustodyTest(unittest.TestCase):
             CUSTODY.restore_snapshot(secondary, target)
         self.assertFalse(target.exists())
 
+    def test_restore_capacity_includes_checkout_and_fails_before_target_creation(self) -> None:
+        primary, _ = self.fixture.snapshot()
+        control = CUSTODY.verify_snapshot(primary)
+        expected_checkout = sum(
+            (self.fixture.source / name).stat().st_size for name in (".gitignore", "README.md")
+        )
+        self.assertEqual(control["checkout_bytes"], expected_checkout)
+        undercount = (
+            control["inventory_bytes"]
+            + control["artifacts"]["source.bundle"]["bytes"]
+            + (1 << 30)
+        )
+        self.assertLess(undercount, CUSTODY._restore_required_bytes(control))
+
+        target = self.fixture.restore_parent / "insufficient-capacity"
+        with mock.patch.object(
+            CUSTODY.shutil,
+            "disk_usage",
+            return_value=mock.Mock(free=undercount),
+        ), mock.patch.object(CUSTODY, "_run") as run, self.assertRaisesRegex(
+            CUSTODY.CustodyError, "insufficient free space"
+        ):
+            CUSTODY.restore_snapshot(primary, target)
+        run.assert_not_called()
+        self.assertFalse(target.exists())
+
+        unknown = self.fixture.restore_parent / "unknown-capacity"
+        with mock.patch.object(
+            CUSTODY.shutil,
+            "disk_usage",
+            side_effect=OSError("injected capacity failure"),
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "could not be determined"):
+            CUSTODY.restore_snapshot(primary, unknown)
+        self.assertFalse(unknown.exists())
+
     def test_control_symlink_cannot_escape_the_snapshot(self) -> None:
         primary, _ = self.fixture.snapshot()
         control = primary / "control.json"
@@ -461,6 +522,73 @@ class PrivateCustodyTest(unittest.TestCase):
                 "recovery-medium",
             )
         self.assertFalse(target.exists())
+
+    def test_receipt_parent_is_synced_before_success_is_reported(self) -> None:
+        receipt = self.fixture.root / "durable-receipt.json"
+        events = []
+        original_write = CUSTODY._write_new
+
+        def write(path, payload):
+            events.append(("write", path))
+            original_write(path, payload)
+
+        def sync(path):
+            events.append(("sync", path))
+
+        def report(*args, **kwargs):
+            events.append(("print", args[0], kwargs.get("file")))
+
+        argv = [
+            "restore",
+            "--source",
+            str(self.fixture.source),
+            "--primary",
+            str(self.fixture.primary / "unused"),
+            "--secondary",
+            str(self.fixture.secondary / "unused"),
+            "--primary-id",
+            "archive-medium",
+            "--secondary-id",
+            "recovery-medium",
+            "--target",
+            str(self.fixture.restore_parent / "unused"),
+            "--receipt",
+            str(receipt),
+        ]
+        with mock.patch.object(
+            CUSTODY, "redacted_receipt", return_value={"receipt": "fixture"}
+        ), mock.patch.object(CUSTODY, "_write_new", side_effect=write), mock.patch.object(
+            CUSTODY, "_fsync_directory", side_effect=sync
+        ), mock.patch("builtins.print", side_effect=report):
+            self.assertEqual(CUSTODY.main(argv), 0)
+        self.assertEqual(
+            events,
+            [
+                ("write", receipt),
+                ("sync", receipt.parent),
+                ("print", "custody: wrote one redacted restore receipt", None),
+            ],
+        )
+
+        blocked = self.fixture.root / "unsynced-receipt.json"
+        blocked_argv = [*argv[:-1], str(blocked)]
+        events.clear()
+        with mock.patch.object(
+            CUSTODY, "redacted_receipt", return_value={"receipt": "fixture"}
+        ), mock.patch.object(
+            CUSTODY,
+            "_fsync_directory",
+            side_effect=CUSTODY.CustodyError("injected receipt-parent fsync failure"),
+        ), mock.patch("builtins.print", side_effect=report):
+            self.assertEqual(CUSTODY.main(blocked_argv), 1)
+        self.assertTrue(blocked.is_file())
+        self.assertFalse(
+            any(
+                event[0] == "print"
+                and event[1] == "custody: wrote one redacted restore receipt"
+                for event in events
+            )
+        )
 
     def test_unsafe_remote_reference_is_rejected_without_git_option_injection(self) -> None:
         for value in ("--help", "origin/../main", "upstream/main", "origin/main.lock"):
