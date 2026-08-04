@@ -45,6 +45,7 @@ INTERACTION_MODULES = (
 )
 VENDOR_BASE = "interaction/vendor/mediapipe"
 VENDOR_MANIFEST = f"{VENDOR_BASE}/manifest.json"
+RELEASE_MANIFEST = "release/manifest.json"
 RUNTIME_FILES = (
     ".nojekyll",
     "index.html",
@@ -242,6 +243,113 @@ def vendor_files(root: Path) -> set[str]:
     return {VENDOR_MANIFEST, *paths}
 
 
+def release_files(root: Path) -> set[str]:
+    """Resolve the exact cleared public release assets, without publishing the manifest."""
+    candidate = root / RELEASE_MANIFEST
+    if candidate.is_symlink():
+        raise ArtifactError("release manifest must not be a symlink")
+    if not candidate.exists():
+        return set()
+    manifest_path = source_file(root, RELEASE_MANIFEST)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArtifactError(f"cannot read the release manifest: {exc}") from exc
+    compact_top = {"schema", "release_id", "status", "media", "credits", "gates"}
+    full_top = {
+        "schema",
+        "release_id",
+        "version",
+        "status",
+        "opportunity_snapshot",
+        "identity",
+        "copy",
+        "installation",
+        "accessibility",
+        "press",
+        "claims",
+        "credits",
+        "media",
+        "gates",
+    }
+    if not isinstance(manifest, dict) or set(manifest) not in (compact_top, full_top):
+        raise ArtifactError("release manifest has fields outside its closed schema")
+    if manifest.get("schema") != "danse.release.v1":
+        raise ArtifactError("unsupported release manifest schema")
+    media = manifest.get("media")
+    if not isinstance(media, list):
+        raise ArtifactError("release manifest has no media inventory")
+
+    paths: set[str] = set()
+    media_ids: set[str] = set()
+    for row in media:
+        if not isinstance(row, dict):
+            raise ArtifactError("release manifest contains malformed media")
+        row_keys = set(row)
+        if row_keys not in (
+            {"id", "required_for", "status", "source", "clearance"},
+            {"id", "kind", "label", "required_for", "status", "source", "clearance", "alt_text"},
+        ):
+            raise ArtifactError("release manifest media has fields outside its closed schema")
+        media_id = row.get("id")
+        if not isinstance(media_id, str) or not media_id or media_id in media_ids:
+            raise ArtifactError("release manifest media ids must be non-empty and unique")
+        media_ids.add(media_id)
+        phases = row.get("required_for")
+        if (
+            not isinstance(phases, list)
+            or not phases
+            or not all(isinstance(item, str) for item in phases)
+            or len(phases) != len(set(phases))
+        ):
+            raise ArtifactError(f"release media {media_id} has invalid phase scope")
+        if "public" not in phases:
+            continue
+        clearance = row.get("clearance")
+        if not isinstance(clearance, dict) or set(clearance) not in (
+            {"status"},
+            {"status", "owner", "evidence"},
+        ):
+            raise ArtifactError(f"release media {media_id} has malformed clearance")
+        ready = row.get("status") == "ready"
+        cleared = clearance.get("status") == "cleared"
+        if not ready and not cleared:
+            continue
+        if not ready or not cleared:
+            raise ArtifactError(f"release media {media_id} has inconsistent public readiness")
+        source = row.get("source")
+        if not isinstance(source, dict) or set(source) != {
+            "path",
+            "destination",
+            "sha256",
+            "bytes",
+        }:
+            raise ArtifactError(f"release media {media_id} has malformed source identity")
+        source_relative = safe_relative(source.get("path"), f"release media {media_id} source")
+        destination = safe_relative(
+            source.get("destination"),
+            f"release media {media_id} destination",
+        )
+        if source_relative != destination or not destination.startswith("media/assets/"):
+            raise ArtifactError(f"release media {media_id} is outside its public destination")
+        if destination in paths:
+            raise ArtifactError(f"release media destination is duplicated: {destination}")
+        path = source_file(root, source_relative)
+        size = source.get("bytes")
+        digest = source.get("sha256")
+        if (
+            type(size) is not int
+            or size < 0
+            or size != path.stat().st_size
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or digest != sha256(path)
+        ):
+            raise ArtifactError(f"release media {media_id} source identity is stale")
+        paths.add(destination)
+    return paths
+
+
 def validate_module_closure(root: Path, files: set[str]) -> None:
     """Fail when a published module refers to a local module outside the boundary."""
     for relative in sorted(files):
@@ -268,7 +376,7 @@ def source_files(root: Path) -> tuple[str, ...]:
     root = root.resolve()
     if not root.is_dir():
         raise ArtifactError(f"source root is not a regular directory: {root}")
-    files = set(RUNTIME_FILES) | corpus_files(root) | vendor_files(root)
+    files = set(RUNTIME_FILES) | corpus_files(root) | vendor_files(root) | release_files(root)
     for relative in files:
         source_file(root, relative)
     validate_module_closure(root, files)
