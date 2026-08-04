@@ -1,0 +1,143 @@
+schema: danse.music.repertoire.v1
+
+# Anthony has not selected repertoire. This register contains only a generated
+# contract fixture so the reversible implementation can be tested now.
+artistic_gate:
+  status: pending
+  authority: Anthony J. Padavano
+  evidence: null
+  note: A fixture is not an artistic choice; no score-driven cut is approved for release.
+
+works:
+  - id: generated-contract-study
+    role: fixture
+    selection:
+      status: not-selected
+      authority: Anthony J. Padavano
+      evidence: null
+
+    composition:
+      title: Generated contract study
+      composer: Deterministic fixture generator
+      date: "2026-08-03"
+      status: fixture-only
+      license: null
+      source:
+        path: music/generate_fixture_midi.py
+        sha256: 4d403e0885d9af874bdefa2f3795246c3f212190ab4183eab108eef2a9d980ac
+      evidence:
+        - kind: repository-source
+          citation: Generated test instructions tracked with the fixture; no authorship or release claim is inferred.
+
+    edition:
+      title: null
+      editor: null
+      status: not-applicable
+      license: null
+      source: null
+      evidence:
+        - kind: fixture-declaration
+          citation: The generated study has no separately sourced edition.
+
+    arrangement_midi:
+      author: Deterministic fixture generator
+      status: fixture-only
+      license: null
+      source:
+        path: music/fixtures/generated-study.mid
+        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+      evidence:
+        - kind: byte-reproduction
+          citation: python3 music/generate_fixture_midi.py --check reproduces the exact tracked MIDI bytes.
+
+    performance:
+      performer: Deterministic fixture generator
+      status: fixture-only
+      license: null
+      source:
+        path: music/fixtures/generated-study.mid
+        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+      evidence:
+        - kind: midi-performance
+          citation: Note timing and velocity are generated test data, not a claimed human performance.
+
+    recording:
+      owner: null
+      status: absent
+      license: null
+      source: null
+      evidence:
+        - kind: no-recording
+          citation: No rendered audio, commercial recording, or private DAW session belongs to this fixture.
+
+    samples:
+      status: none
+      items: []
+      evidence:
+        - kind: no-samples
+          citation: The MIDI contract fixture embeds no sample or stem bytes.
+
+    dramatic_roles:
+      - ONE
+      - ASSEMBLY
+      - DIVISION
+      - PHRASE
+      - STILLNESS
+      - RESEED
+      - SIGNATURE
+
+    score:
+      source_midi:
+        path: music/fixtures/generated-study.mid
+        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+      cue_bindings:
+        division-entry:
+          window_beats: 1.0
+          visual:
+            channel_offsets: {divergence: 0.04, spread: 0.04}
+        phrase-entry:
+          window_beats: 1.0
+          visual:
+            recast: true
+            channel_offsets: {turnover: 0.18}
+        phrase-accent-a:
+          window_beats: 0.5
+          visual:
+            recast: true
+            channel_offsets: {spread: 0.05, turnover: 0.22}
+        phrase-accent-b:
+          window_beats: 0.5
+          visual:
+            recast: true
+            channel_offsets: {azimuth: -0.05, turnover: 0.26}
+        phrase-accent-c:
+          window_beats: 0.5
+          visual:
+            recast: true
+            channel_offsets: {elevation: 0.05, turnover: 0.30}
+        stillness-entry:
+          window_beats: 4.0
+          visual:
+            hold: true
+        reseed-entry:
+          window_beats: 1.0
+          visual:
+            recast: true
+            channel_offsets: {projK: 0.06}
+        reseed-accent-a:
+          window_beats: 0.5
+          visual:
+            recast: true
+            channel_offsets: {turnover: 0.32}
+        reseed-accent-b:
+          window_beats: 0.5
+          visual:
+            recast: true
+            channel_offsets: {turnover: 0.40}
+
+    # Filled with the byte digest of the deterministic compiler output. The
+    # validator checks it; it is not an approval or a release manifest.
+    derived_artifacts:
+      - kind: fixture-score-contract
+        path: music/score.json
+        sha256: 0de634786519c5ad246c4f37cce340b28ba967e99bd1afa0eb4ca23a70eb5b9d

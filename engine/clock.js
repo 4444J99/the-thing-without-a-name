@@ -18,8 +18,9 @@
  * keeps arriving at its own origin and leaving again.
  */
 
-import { channel, epochAt, movementAt } from "./program.js";
+import { channel, epochAt, movementAt, movementsIn, passageAt } from "./program.js";
 import { hash, range } from "./rng.js";
+import { scoreAt } from "./score.js";
 
 /** Seconds for one full departure-and-return. Long enough that the return reads
  *  as recognition rather than as a pulse. */
@@ -58,18 +59,31 @@ function dwell(phase, rest = 0.16) {
  * still a pure function of (seed, t), so an offline renderer can seek anywhere,
  * render segments out of order, and get bit-identical frames.
  */
-export function state(seed, t, program = null, stream = 0) {
-  return program ? programState(seed, t, program, stream) : freeState(seed, t);
+export function state(seed, t, program = null, stream = 0, score = null) {
+  return program ? programState(seed, t, program, stream, score) : freeState(seed, t);
 }
 
 /** Under a program, every channel is interpolated across its movement, and the
  *  MATERIAL seed changes at declared reseed points — which is how the closing
  *  movement restarts the engine with entirely different photographs while the
  *  structural moves stay the same. */
-function programState(seed, t, program, stream) {
-  const { movement, index, u, passage } = movementAt(program, seed, t, stream);
+function programState(seed, t, program, stream, score) {
+  let movement, index, u, passage, music;
+  if (score) {
+    passage = passageAt(program, seed, t, stream);
+    music = scoreAt(score, t, { t0: passage.t0, seconds: passage.seconds });
+    index = music.movement.index;
+    movement = movementsIn(program, seed, passage.index, stream)[index];
+    if (!movement || movement.id !== music.movement.id) {
+      throw new Error(`music score movement ${music.movement.id} does not match program movement ${movement?.id}`);
+    }
+    u = music.movement.u;
+  } else {
+    ({ movement, index, u, passage } = movementAt(program, seed, t, stream));
+  }
   const epoch = epochAt(movement, u);
-  const divergence = channel(movement, "divergence", u);
+  const musicalChannel = (name) => channel(movement, name, u) + (music?.visual.channel_offsets[name] ?? 0);
+  const divergence = musicalChannel("divergence");
 
   // Every passage draws from its own seed, so the phrase recurs and the material
   // never does. The passage ORDINAL goes into the derivation too: a 32-bit seed
@@ -77,14 +91,16 @@ function programState(seed, t, program, stream) {
   // continuous running — and without the ordinal a gallery could, eventually,
   // show the same passage twice. Including it makes recurrence impossible rather
   // than merely unlikely, which is the whole claim the piece makes.
-  const material = hash(passage.seed, passage.index, epoch, index);
+  const material = music
+    ? hash(passage.seed, passage.index, epoch, index, music.visual.recast)
+    : hash(passage.seed, passage.index, epoch, index);
 
   // Seeded drift on top of the programmed arc, so two seeds trace different paths
   // through the same dramaturgy rather than the same path twice.
   const w = movement.wander ?? 0;
   const drift = (k) => (w ? Math.sin((t / range(6.5, 13.5, seed, index, k) + range(0, 1, seed, index, k + 1)) * TAU) * w : 0);
 
-  return {
+  const result = {
     t,
     riverSeed: seed,
     riverStream: stream,
@@ -92,13 +108,13 @@ function programState(seed, t, program, stream) {
     // open. Under a program the cut is declared, so nothing infers it from here.
     reveal: divergence,
     divergence,
-    azimuth: channel(movement, "azimuth", u) + drift(111),
-    elevation: channel(movement, "elevation", u) + drift(113),
-    spread: channel(movement, "spread", u),
-    projK: channel(movement, "projK", u),
+    azimuth: musicalChannel("azimuth") + drift(111),
+    elevation: musicalChannel("elevation") + drift(113),
+    spread: musicalChannel("spread"),
+    projK: musicalChannel("projK"),
     // Everything the grammar needs to cast this frame.
     cut: movement.cut,
-    turnover: channel(movement, "turnover", u),
+    turnover: music?.visual.hold ? 0 : musicalChannel("turnover"),
     movement: movement.id,
     epoch,
     material,
@@ -110,6 +126,8 @@ function programState(seed, t, program, stream) {
     passageSeconds: passage.seconds,
     passageT0: passage.t0,
   };
+  if (music) result.music = music;
+  return result;
 }
 
 /** The free-running piece: no program, no end. Unchanged behaviour — the flat

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://danse.example/schemas/music-score.v1.json",
+  "title": "Danse immutable musical score",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "compiler",
+    "release_status",
+    "artistic_gate",
+    "identity",
+    "time",
+    "provenance",
+    "tempo",
+    "meter",
+    "beats",
+    "phrases",
+    "cues",
+    "dynamics",
+    "orchestration",
+    "notes",
+    "movements",
+    "lookup"
+  ],
+  "properties": {
+    "schema": {"const": "danse.music.score.v1"},
+    "compiler": {"const": "danse.music.compiler.v1"},
+    "release_status": {"enum": ["fixture-only", "artistic-gate-required"]},
+    "artistic_gate": {"type": "object"},
+    "identity": {
+      "type": "object",
+      "required": ["work_id", "repertoire_entry_sha256", "midi_sha256", "contract_sha256"],
+      "properties": {
+        "work_id": {"type": "string"},
+        "repertoire_entry_sha256": {"$ref": "#/$defs/sha256"},
+        "midi_sha256": {"$ref": "#/$defs/sha256"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "time": {
+      "type": "object",
+      "required": [
+        "basis",
+        "ticks_per_quarter",
+        "duration_ticks",
+        "duration_quarters",
+        "duration_seconds",
+        "passage_mapping"
+      ],
+      "properties": {
+        "basis": {"const": "absolute-seconds"},
+        "ticks_per_quarter": {"type": "integer", "minimum": 1},
+        "duration_ticks": {"type": "integer", "minimum": 1},
+        "duration_quarters": {"type": "number", "exclusiveMinimum": 0},
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "passage_mapping": {"const": "restart-and-affine-stretch"}
+      }
+    },
+    "provenance": {"type": "object"},
+    "tempo": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "meter": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "beats": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "phrases": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "cues": {"type": "array", "items": {"type": "object"}},
+    "dynamics": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "orchestration": {"type": "array", "items": {"type": "object"}},
+    "notes": {"type": "array", "items": {"type": "object"}},
+    "movements": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "lookup": {
+      "type": "object",
+      "required": ["quantum_seconds", "buckets", "maxima"],
+      "properties": {
+        "quantum_seconds": {"const": 1},
+        "buckets": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "maxima": {"type": "object"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

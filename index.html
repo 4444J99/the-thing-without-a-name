@@ -121,6 +121,7 @@
 import * as Arrival from "./arrival.js";
 import * as Corpus from "./engine/corpus.js";
 import * as Program from "./engine/program.js";
+import * as MusicalScore from "./engine/score.js";
 import { frameAt, hex } from "./engine/engine.js";
 import { cutAt } from "./engine/grammar.js";
 import { Renderer } from "./engine/renderer.js";
@@ -138,6 +139,8 @@ import { Renderer } from "./engine/renderer.js";
 let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
 let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
+const scoreUrl = new URLSearchParams(location.search).get("score");
+const musicalScore = scoreUrl ? await MusicalScore.load(scoreUrl) : null;
 let navigationGeneration = 0;
 
 const canvas = document.getElementById("stage");
@@ -196,7 +199,12 @@ function frame() {
   // restart: each passage of the phrase draws its own length and its own
   // material, so running longer means seeing further, never seeing again.
 
-  const r = frameAt(renderer, corpus, river.seed, t, program, { quantise: RECAST, stream: river.stream, matteK });
+  const r = frameAt(renderer, corpus, river.seed, t, program, {
+    quantise: RECAST,
+    stream: river.stream,
+    score: program ? musicalScore : null,
+    matteK,
+  });
 
   // Elapsed within the current passage, so the readout says where you are in
   // this one rather than counting up forever into a number nobody can hold.
@@ -317,6 +325,7 @@ addEventListener("keydown", async (e) => {
 // For the probe, the film renderer, and anyone reading the console.
 window.danse = {
   corpus, renderer, frameAt, hex, jump,
+  score: musicalScore,
   get program() { return program; },
   get t() { return at(); }, set t(v) { jump(v); },
   get river() { return river; },

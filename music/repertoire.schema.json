@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://danse.example/schemas/repertoire.v1.json",
+  "title": "Danse owned-source repertoire register",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "artistic_gate", "works"],
+  "properties": {
+    "schema": {"const": "danse.music.repertoire.v1"},
+    "artistic_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "authority", "note"],
+      "properties": {
+        "status": {"enum": ["pending", "accepted", "rejected"]},
+        "authority": {"type": "string", "minLength": 1},
+        "note": {"type": "string", "minLength": 1},
+        "evidence": {"type": ["string", "null"]}
+      }
+    },
+    "works": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/work"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "trackedSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "citation"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "citation": {"type": "string", "minLength": 1},
+        "source": {"$ref": "#/$defs/trackedSource"}
+      }
+    },
+    "rightsLayer": {
+      "type": "object",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {
+          "enum": [
+            "absent",
+            "fixture-only",
+            "project-authored",
+            "public-domain",
+            "licensed",
+            "restricted",
+            "unverified",
+            "not-applicable"
+          ]
+        },
+        "license": {"type": ["string", "null"]},
+        "source": {"anyOf": [{"$ref": "#/$defs/trackedSource"}, {"type": "null"}]},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "selection",
+        "composition",
+        "edition",
+        "arrangement_midi",
+        "performance",
+        "recording",
+        "samples",
+        "dramatic_roles",
+        "score",
+        "derived_artifacts"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "role": {"enum": ["fixture", "candidate", "repertoire"]},
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "authority", "evidence"],
+          "properties": {
+            "status": {"enum": ["not-selected", "pending", "selected", "rejected"]},
+            "authority": {"type": "string", "minLength": 1},
+            "evidence": {"type": ["string", "null"]}
+          }
+        },
+        "composition": {
+          "allOf": [
+            {"$ref": "#/$defs/rightsLayer"},
+            {
+              "type": "object",
+              "required": ["title", "composer", "date"],
+              "properties": {
+                "title": {"type": "string", "minLength": 1},
+                "composer": {"type": "string", "minLength": 1},
+                "date": {"type": ["string", "integer"]}
+              }
+            }
+          ]
+        },
+        "edition": {
+          "allOf": [
+            {"$ref": "#/$defs/rightsLayer"},
+            {
+              "type": "object",
+              "required": ["title", "editor"],
+              "properties": {
+                "title": {"type": ["string", "null"]},
+                "editor": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        },
+        "arrangement_midi": {
+          "allOf": [
+            {"$ref": "#/$defs/rightsLayer"},
+            {
+              "type": "object",
+              "required": ["author"],
+              "properties": {"author": {"type": "string", "minLength": 1}}
+            }
+          ]
+        },
+        "performance": {
+          "allOf": [
+            {"$ref": "#/$defs/rightsLayer"},
+            {
+              "type": "object",
+              "required": ["performer"],
+              "properties": {"performer": {"type": "string", "minLength": 1}}
+            }
+          ]
+        },
+        "recording": {
+          "allOf": [
+            {"$ref": "#/$defs/rightsLayer"},
+            {
+              "type": "object",
+              "required": ["owner"],
+              "properties": {"owner": {"type": ["string", "null"]}}
+            }
+          ]
+        },
+        "samples": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "items", "evidence"],
+          "properties": {
+            "status": {
+              "enum": ["none", "fixture-only", "project-authored", "licensed", "restricted", "unverified"]
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "license", "source"],
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "license": {"type": "string", "minLength": 1},
+                  "source": {"$ref": "#/$defs/trackedSource"}
+                }
+              }
+            },
+            "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+          }
+        },
+        "dramatic_roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "score": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_midi", "cue_bindings"],
+          "properties": {
+            "source_midi": {"$ref": "#/$defs/trackedSource"},
+            "cue_bindings": {"type": "object"}
+          }
+        },
+        "derived_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "path", "sha256"],
+            "properties": {
+              "kind": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
