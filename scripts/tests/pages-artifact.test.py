@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -64,6 +65,40 @@ def write(path: Path, data: bytes = b"fixture\n") -> None:
 def public_fixture(root: Path) -> None:
     for relative in PAGES.RUNTIME_FILES:
         write(root / relative)
+    vendor_leaf = "vision_bundle.mjs"
+    vendor_data = b"export const localFixture = true;\n"
+    write(root / PAGES.VENDOR_BASE / vendor_leaf, vendor_data)
+    vendor_manifest = {
+        "schema": "danse.vendor.v1",
+        "package": {
+            "name": "fixture",
+            "version": "1",
+            "source": "https://example.invalid/fixture.tgz",
+            "integrity": "sha512-fixture",
+            "sha512": "0" * 128,
+            "license": "Apache-2.0",
+        },
+        "model": {
+            "name": "fixture",
+            "version": "1",
+            "source": "https://example.invalid/fixture.task",
+            "license": "Apache-2.0",
+        },
+        "patch": {
+            "reason": "fixture is deterministic",
+            "transformations": ["fixture"],
+            "upstreamSha256": {vendor_leaf: hashlib.sha256(vendor_data).hexdigest()},
+        },
+        "files": [{
+            "path": vendor_leaf,
+            "bytes": len(vendor_data),
+            "sha256": hashlib.sha256(vendor_data).hexdigest(),
+        }],
+    }
+    write(
+        root / PAGES.VENDOR_MANIFEST,
+        (json.dumps(vendor_manifest, sort_keys=True) + "\n").encode(),
+    )
     manifest = {
         "schema": "danse.corpus.v1",
         "room": {"file": "room.webp"},
@@ -135,6 +170,25 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertNotIn("corpus/tier-receipts/browse.json", paths)
         self.assertNotIn("corpus/tier-receipts/screen.json", paths)
 
+    def test_pose_runtime_is_local_and_bound_to_its_vendor_manifest(self) -> None:
+        paths = {record["path"] for record in self.manifest["files"]}
+        vendor = json.loads((ROOT / PAGES.VENDOR_MANIFEST).read_text())
+        declared = {
+            f"{PAGES.VENDOR_BASE}/{record['path']}" for record in vendor["files"]
+        }
+        self.assertEqual(
+            {path for path in paths if path.startswith(f"{PAGES.VENDOR_BASE}/")},
+            declared | {PAGES.VENDOR_MANIFEST},
+        )
+        camera = (self.output / "interaction/camera.js").read_text(encoding="utf-8")
+        bundle = (self.output / PAGES.VENDOR_BASE / "vision_bundle.mjs").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("cdn.jsdelivr", camera)
+        self.assertNotIn("storage.googleapis.com", camera)
+        self.assertNotIn("odml.pa.googleapis.com", bundle)
+        self.assertIn('./vendor/mediapipe/vision_bundle.mjs', camera)
+
     def test_repository_docs_harnesses_and_future_project_route_are_absent(self) -> None:
         paths = PAGES.artifact_inventory(self.output)
         forbidden = {
@@ -144,6 +198,7 @@ class ProductionArtifactTest(unittest.TestCase):
             "README.md",
             "done.sh",
             "film.html",
+            "interaction-test.html",
             "join.html",
             "probe.html",
             "pyproject.toml",
@@ -248,6 +303,36 @@ class ArtifactBoundaryTest(unittest.TestCase):
         with self.assertRaisesRegex(PAGES.ArtifactError, "does not match expected"):
             PAGES.verify_artifact(self.output, "b" * 40)
 
+    def test_tampered_pose_vendor_source_fails_closed(self) -> None:
+        vendor = self.root / PAGES.VENDOR_BASE / "vision_bundle.mjs"
+        vendor.write_bytes(b"tampered\n")
+        with self.assertRaisesRegex(PAGES.ArtifactError, "pose vendor digest mismatch"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
+
+    def test_digest_valid_pose_vendor_with_external_runtime_fails_closed(self) -> None:
+        vendor = self.root / PAGES.VENDOR_BASE / "vision_bundle.mjs"
+        data = b'fetch("https://odml.pa.googleapis.com/v1/log");\n'
+        vendor.write_bytes(data)
+        manifest_path = self.root / PAGES.VENDOR_MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"][0]["bytes"] = len(data)
+        manifest["files"][0]["sha256"] = hashlib.sha256(data).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(PAGES.ArtifactError, "forbidden runtime CDN"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
+
+    def test_pose_vendor_module_cannot_import_outside_public_boundary(self) -> None:
+        vendor = self.root / PAGES.VENDOR_BASE / "vision_bundle.mjs"
+        data = b'import "../../../submission/private.js";\n'
+        vendor.write_bytes(data)
+        manifest_path = self.root / PAGES.VENDOR_MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["files"][0]["bytes"] = len(data)
+        manifest["files"][0]["sha256"] = hashlib.sha256(data).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(PAGES.ArtifactError, "imports non-public dependency"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
+
 
 class InterfaceContractTest(unittest.TestCase):
     @classmethod
@@ -325,6 +410,27 @@ class InterfaceContractTest(unittest.TestCase):
             "let heldAt = reducedMotion.matches ? Arrival.now(river) : null", self.script
         )
         self.assertIn('reducedMotion.addEventListener("change"', self.script)
+
+    def test_local_interaction_is_explicit_private_and_has_fallbacks(self) -> None:
+        _, video = self.markup.by_id["pose-video"]
+        self.assertIn("hidden", video)
+        self.assertEqual(video["aria-hidden"], "true")
+        for button_id in ("camera-start", "camera-retry", "fallback-start", "interaction-stop"):
+            tag, attrs = self.markup.by_id[button_id]
+            self.assertEqual(tag, "button")
+            self.assertEqual(attrs["type"], "button")
+        status_tag, status = self.markup.by_id["interaction-status"]
+        self.assertEqual(status_tag, "p")
+        self.assertEqual(status["role"], "status")
+        self.assertEqual(status["aria-live"], "polite")
+        for control_id in ("fallback-x", "fallback-y", "fallback-open", "fallback-reach"):
+            tag, attrs = self.markup.by_id[control_id]
+            self.assertEqual(tag, "input")
+            self.assertEqual(attrs["type"], "range")
+        self.assertIn('el("camera-start").addEventListener("click"', self.script)
+        self.assertNotIn("getUserMedia(", self.script)
+        self.assertIn("frames stay in memory on this device", self.html)
+        self.assertIn("raw landmarks are discarded immediately", self.html)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is unavailable")
     def test_inline_module_has_valid_javascript_syntax(self) -> None:

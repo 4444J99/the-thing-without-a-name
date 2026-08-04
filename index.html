@@ -58,6 +58,33 @@
   #hud kbd { color: #e0e0e8; }
   #touch-instructions { color: #8d8d9a; }
 
+  #interaction-controls {
+    margin-top: 11px; padding: 10px; border: 1px solid rgba(232, 232, 238, .18);
+  }
+  #interaction-controls legend { padding: 0 5px; color: #e0e0e8; }
+  #interaction-controls p { max-width: 78ch; }
+  #interaction-status { min-height: 3em; margin: 7px 0; color: #d1d1dc; }
+  .control-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+  .control-row button, .file-control {
+    min-height: 44px; padding: 7px 10px; border: 1px solid rgba(232, 232, 238, .3);
+    border-radius: 3px; background: #1b1b20; color: #e8e8ee; font: inherit;
+    cursor: pointer;
+  }
+  .control-row button:hover, .file-control:hover { background: #292930; }
+  .control-row button:focus-visible, .file-control:focus-within,
+  .fallback-grid input:focus-visible { outline: 2px solid #e8e8ee; outline-offset: 2px; }
+  .control-row button[hidden] { display: none; }
+  .control-row button:disabled { color: #777783; cursor: default; }
+  .file-control { position: relative; display: inline-flex; align-items: center; }
+  .file-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .fallback-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); gap: 8px 14px;
+    margin-top: 9px;
+  }
+  .fallback-grid label { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 8px; }
+  .fallback-grid input { width: 100%; min-height: 44px; accent-color: #cfcfe0; touch-action: pan-x; }
+  .privacy-note { color: #9a9aa8; }
+
   #hud-toggle {
     position: fixed; z-index: 4;
     right: max(12px, env(safe-area-inset-right));
@@ -79,8 +106,15 @@
   #toast[hidden] { display: none; }
 
   @media (max-width: 640px) {
-    #hud { right: max(64px, calc(env(safe-area-inset-right) + 52px)); font-size: 11px; }
+    #hud {
+      top: max(12px, env(safe-area-inset-top));
+      right: max(64px, calc(env(safe-area-inset-right) + 52px));
+      max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)));
+      font-size: 11px;
+    }
     #state { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .fallback-grid { grid-template-columns: 1fr; }
+    .control-row button, .file-control { flex: 1 1 132px; justify-content: center; }
     #hud-toggle { min-width: 48px; padding: 0 10px; }
     #hud-toggle .wide-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
   }
@@ -108,14 +142,37 @@
     <span><b id="clock">0:00</b></span>
     <span><b id="cut">—</b></span>
     <span><b id="planes">0</b> planes</span>
+    <span><b id="interaction-summary">interaction off</b></span>
   </div>
   <p id="keyboard-instructions">Keyboard: <kbd>Space</kbd> hold or resume &middot; <kbd>N</kbd> new river &middot; <kbd>S</kbd> share &middot; <kbd>F</kbd> free &middot; <kbd>1–7</kbd> movement &middot; <kbd>M</kbd> matte &middot; <kbd>H</kbd> controls &middot; <kbd>Escape</kbd> close</p>
   <p id="touch-instructions">Touch: use the Controls button to show or hide this panel. The artwork advances automatically; reduced-motion settings open on a held frame.</p>
+  <fieldset id="interaction-controls">
+    <legend>Room interaction (optional)</legend>
+    <p class="privacy-note">Off by default. If you choose camera input, frames stay in memory on this device, are never displayed or transmitted, and raw landmarks are discarded immediately. Only anonymous room-control values enter an explicitly saved receipt. Keyboard / touch is the no-camera, low-power, and pose-accessibility path.</p>
+    <p id="interaction-status" role="status" aria-live="polite" aria-atomic="true">Interaction is off. The unmodulated river is complete on its own.</p>
+    <div class="control-row">
+      <button id="camera-start" type="button">Use camera locally</button>
+      <button id="camera-retry" type="button" hidden>Retry camera</button>
+      <button id="fallback-start" type="button">Use keyboard / touch</button>
+      <button id="interaction-stop" type="button" disabled>Stop interaction</button>
+    </div>
+    <div class="fallback-grid" aria-label="Keyboard and touch fallback controls">
+      <label for="fallback-x">Left / right <input id="fallback-x" type="range" min="0" max="100" value="50"></label>
+      <label for="fallback-y">Up / down <input id="fallback-y" type="range" min="0" max="100" value="50"></label>
+      <label for="fallback-open">Openness <input id="fallback-open" type="range" min="0" max="100" value="35"></label>
+      <label for="fallback-reach">Reach <input id="fallback-reach" type="range" min="0" max="100" value="0"></label>
+    </div>
+    <div class="control-row">
+      <button id="receipt-save" type="button">Save derived receipt</button>
+      <label class="file-control">Replay receipt<input id="receipt-load" type="file" accept="application/json,.json"></label>
+    </div>
+  </fieldset>
 </section>
 <button id="hud-toggle" type="button" aria-controls="hud" aria-expanded="false" aria-label="Show Danse controls" aria-keyshortcuts="H">
   <span aria-hidden="true">H</span><span class="wide-label"> &middot; Controls</span>
 </button>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+<video id="pose-video" autoplay playsinline muted hidden aria-hidden="true"></video>
 
 <script type="module">
 import * as Arrival from "./arrival.js";
@@ -124,6 +181,8 @@ import * as Program from "./engine/program.js";
 import { frameAt, hex } from "./engine/engine.js";
 import { cutAt } from "./engine/grammar.js";
 import { Renderer } from "./engine/renderer.js";
+import { InteractionRenderer } from "./interaction/adapter.js";
+import { InteractionController } from "./interaction/controller.js";
 
 // ── Arriving IS the seed.
 //
@@ -158,8 +217,8 @@ setHudVisible(false);
 hudToggle.addEventListener("click", () => setHudVisible(hud.hidden));
 
 const corpus = await Corpus.load();
-const renderer = new Renderer(canvas, corpus);
-await corpus.prime(renderer.gl, {
+const baseRenderer = new Renderer(canvas, corpus);
+await corpus.prime(baseRenderer.gl, {
   onProgress: (p) => { el("bar").firstElementChild.style.width = `${p * 100}%`; },
 });
 const veil = el("veil");
@@ -175,6 +234,19 @@ else setTimeout(() => { veil.hidden = true; }, 800);
 let heldAt = reducedMotion.matches ? Arrival.now(river) : null;
 let matteK = 0;
 
+// Pose is an adapter around the pure engine, never an input to it. The adapter
+// receives the same absolute river time as frameAt; camera frames and raw
+// landmarks never cross this boundary.
+const interaction = new InteractionController({
+  river,
+  video: el("pose-video"),
+  camera: { hz: navigator.connection?.saveData ? 5 : 10 },
+});
+const renderer = new InteractionRenderer(baseRenderer, (t) => interaction.inputAt(t), {
+  enabled: () => heldAt === null,
+  reducedMotion: () => reducedMotion.matches && heldAt !== null,
+});
+
 // The cast is held for an eighth of a second rather than rebuilt every frame:
 // casting cells walks 162 index entries per cell, and at 60fps that is work
 // nobody can see. Geometry and camera still move every frame — only the CHOICE
@@ -187,11 +259,13 @@ const at = () => heldAt ?? Arrival.now(river);
 
 reducedMotion.addEventListener("change", ({ matches }) => {
   heldAt = matches ? Arrival.now(river) : null;
+  renderInteraction(interaction.snapshot());
   flash(matches ? "reduced motion · frame held" : "motion resumed");
 });
 
 function frame() {
   const t = at();
+  interaction.tick(t, river, { motion: heldAt === null });
   // Time is not wrapped. The piece has no duration to reach and nothing to
   // restart: each passage of the phrase draws its own length and its own
   // material, so running longer means seeing further, never seeing again.
@@ -210,6 +284,8 @@ function frame() {
     ? `${r.state.movement} · ${r.state.cut}${r.state.epoch ? ` · reseed ${r.state.epoch}` : ""}`
     : cutAt(river.seed, t, r.state.reveal) + (r.state.reveal < 0.02 ? " · 2017" : "");
   el("planes").textContent = r.missing ? `${r.planes}−${r.missing}` : r.planes;
+  const embodied = r.interaction?.count ? ` · ${r.interaction.count} present` : "";
+  el("interaction-summary").textContent = `${interaction.mode}${embodied}`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -265,6 +341,58 @@ function flash(msg) {
   }, 2200);
 }
 
+function renderInteraction(snapshot) {
+  const held = heldAt !== null;
+  const message = held && snapshot.mode !== "off"
+    ? `${snapshot.message} Influence is paused while this frame is held; press Space to opt into motion.`
+    : snapshot.message;
+  if (el("interaction-status").textContent !== message) el("interaction-status").textContent = message;
+  el("camera-start").hidden = snapshot.mode === "camera" || snapshot.retryable;
+  el("camera-retry").hidden = !snapshot.retryable;
+  el("interaction-stop").disabled = snapshot.mode === "off";
+}
+interaction.subscribe(renderInteraction);
+
+el("camera-start").addEventListener("click", () => { void interaction.startCamera(at()); });
+el("camera-retry").addEventListener("click", () => { void interaction.retryCamera(at()); });
+el("fallback-start").addEventListener("click", () => interaction.startFallback(at()));
+el("interaction-stop").addEventListener("click", () => interaction.stop(at()));
+
+const fallbackInputs = ["fallback-x", "fallback-y", "fallback-open", "fallback-reach"];
+function applyFallback() {
+  const value = (id) => Number(el(id).value) / 100;
+  interaction.setFallback({
+    center: [value("fallback-x"), value("fallback-y")],
+    openness: value("fallback-open"),
+    reach: value("fallback-reach"),
+  }, at());
+}
+for (const id of fallbackInputs) el(id).addEventListener("input", applyFallback);
+
+el("receipt-save").addEventListener("click", () => {
+  const receipt = interaction.receipt();
+  const url = URL.createObjectURL(new Blob([`${JSON.stringify(receipt, null, 2)}\n`], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `danse-interaction-${hex(receipt.river.seed).replace(/^0x/, "")}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  flash(`saved ${receipt.samples.length} anonymous interaction samples`);
+});
+
+el("receipt-load").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    interaction.loadReceipt(JSON.parse(await file.text()));
+    flash("derived interaction receipt loaded");
+  } catch (error) {
+    flash(`receipt rejected — ${error.message}`);
+  } finally {
+    event.target.value = "";
+  }
+});
+
 addEventListener("keydown", async (e) => {
   const key = e.key.toLowerCase();
   const isControl = e.target instanceof Element && e.target.closest("button, input, select, textarea, a, [contenteditable]");
@@ -282,7 +410,11 @@ addEventListener("keydown", async (e) => {
     }
     return;
   }
-  if (e.key === " ") { heldAt = heldAt === null ? at() : null; e.preventDefault(); }
+  if (e.key === " ") {
+    heldAt = heldAt === null ? at() : null;
+    renderInteraction(interaction.snapshot());
+    e.preventDefault();
+  }
   if (key === "n") {
     river = { ...Arrival.mint(), minted: true, shifted: false };
     shifted = false;
@@ -314,9 +446,11 @@ addEventListener("keydown", async (e) => {
   }
 });
 
+addEventListener("pagehide", () => interaction.stop(at()));
+
 // For the probe, the film renderer, and anyone reading the console.
 window.danse = {
-  corpus, renderer, frameAt, hex, jump,
+  corpus, renderer, baseRenderer, interaction, frameAt, hex, jump,
   get program() { return program; },
   get t() { return at(); }, set t(v) { jump(v); },
   get river() { return river; },
