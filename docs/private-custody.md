@@ -45,13 +45,15 @@ image-backed, ambiguous, and same-device volumes fail closed. The tracked tool
 currently refuses to claim physical independence on platforms where that proof
 cannot be derived with macOS `diskutil`.
 
-An interrupted or failed snapshot remains under its hidden `.incomplete`
-directory for inspection. The tool never deletes or resumes it and will not
-overwrite it on a later invocation. Before publication, every staged file, the
-staging directory, and its parent are `fsync`ed. Publication uses a kernel-level
-exclusive rename (`RENAME_EXCL` on macOS), so even an empty destination created
-after the preflight is preserved rather than replaced. The published directory
-and its parent are `fsync`ed again after the rename.
+An interrupted, corrupt, or failed snapshot remains under its hidden
+`.incomplete` directory for inspection. The tool never deletes or resumes it and
+will not overwrite it on a later invocation. Before publication, every staged
+file is flushed through `F_FULLFSYNC` on macOS (`fsync` elsewhere), the staging
+directory and its parent are `fsync`ed, and the complete staged snapshot is
+verified against its admitted control. Publication uses a kernel-level exclusive
+rename (`RENAME_EXCL` on macOS), so even an empty destination created after the
+preflight is preserved rather than replaced. The published directory and its
+parent are `fsync`ed again after the rename.
 
 ## Restore rehearsal
 

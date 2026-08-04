@@ -26,6 +26,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl module.
+    fcntl = None
+
 SCHEMA = "danse.private-custody.snapshot.v1"
 RECEIPT_SCHEMA = "danse.private-custody.restore-receipt.v1"
 ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,95}$")
@@ -35,6 +40,7 @@ CHUNK = 8 << 20
 PROGRESS_INTERVAL = 4 << 30
 GIT = shutil.which("git")
 DISKUTIL = shutil.which("diskutil")
+F_FULLFSYNC = getattr(fcntl, "F_FULLFSYNC", 51) if fcntl is not None else 51
 
 
 class CustodyError(RuntimeError):
@@ -72,6 +78,19 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
 
 
+def _sync_regular_descriptor(descriptor: int) -> None:
+    """Flush one regular file through the strongest supported durability boundary."""
+    try:
+        if sys.platform == "darwin":
+            if fcntl is None:
+                raise CustodyError("macOS full-file synchronization is unavailable")
+            fcntl.fcntl(descriptor, F_FULLFSYNC)
+        else:
+            os.fsync(descriptor)
+    except OSError as exc:
+        raise CustodyError("regular file could not be durably synchronized") from exc
+
+
 def _write_new(path: Path, payload: bytes) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(path, flags, 0o600)
@@ -79,7 +98,7 @@ def _write_new(path: Path, payload: bytes) -> None:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
             handle.flush()
-            os.fsync(handle.fileno())
+            _sync_regular_descriptor(handle.fileno())
     except BaseException:
         try:
             os.close(descriptor)
@@ -237,7 +256,7 @@ def _fsync_file(path: Path) -> None:
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise CustodyError("staged snapshot contains a non-regular file")
-            os.fsync(descriptor)
+            _sync_regular_descriptor(descriptor)
         finally:
             os.close(descriptor)
     except OSError as exc:
@@ -302,8 +321,8 @@ def _publish_directory_exclusive(staging: Path, final: Path) -> None:
     raise CustodyError(f"exclusive snapshot publication failed: {os.strerror(error)}")
 
 
-def _durable_publish_directory(staging: Path, final: Path) -> None:
-    """Flush a flat snapshot directory, publish it exclusively, and flush the rename."""
+def _durable_publish_directory(staging: Path, final: Path, expected_control: dict) -> None:
+    """Flush and verify a flat snapshot before exclusive publication."""
     staged = sorted(staging.iterdir(), key=lambda item: item.name)
     for path in staged:
         _fsync_file(path)
@@ -311,6 +330,9 @@ def _durable_publish_directory(staging: Path, final: Path) -> None:
         raise CustodyError("staged snapshot changed during durability synchronization")
     _fsync_directory(staging)
     _fsync_directory(staging.parent)
+    staged_control = verify_snapshot(staging)
+    if _json_bytes(staged_control) != _json_bytes(expected_control):
+        raise CustodyError("staged snapshot control differs from the admitted control")
     _publish_directory_exclusive(staging, final)
     _fsync_directory(final)
     _fsync_directory(final.parent)
@@ -774,7 +796,7 @@ def create_snapshot(
         "artifacts": artifacts,
     }
     _write_new(staging / "control.json", _json_bytes(control))
-    _durable_publish_directory(staging, final)
+    _durable_publish_directory(staging, final, control)
     print(
         f"custody: created {snapshot_id} ({len(entries)} private entries, {total} bytes)",
         flush=True,
@@ -948,7 +970,7 @@ def _copy_file(source: Path, destination: Path, label: str) -> None:
             writer.write(block)
             progress.add(len(block))
         writer.flush()
-        os.fsync(writer.fileno())
+        _sync_regular_descriptor(writer.fileno())
 
 
 def copy_snapshot(primary: Path, secondary_root: Path) -> Path:
@@ -966,7 +988,7 @@ def copy_snapshot(primary: Path, secondary_root: Path) -> Path:
     staging.mkdir(mode=0o700)
     for name in ("private-manifest.json", "materials.tar", "source.bundle", "control.json"):
         _copy_file(primary / name, staging / name, f"copying {name}")
-    _durable_publish_directory(staging, final)
+    _durable_publish_directory(staging, final, control)
     secondary_control = verify_snapshot(final)
     if _json_bytes(secondary_control) != _json_bytes(control):
         raise CustodyError("secondary snapshot control differs from primary")
@@ -1128,7 +1150,7 @@ def _extract_materials(snapshot: Path, target: Path, entries: list[dict], total:
                     digest.update(block)
                     progress.add(len(block))
                 writer.flush()
-                os.fsync(writer.fileno())
+                _sync_regular_descriptor(writer.fileno())
             os.chmod(destination, entry["mode"])
             if digest.hexdigest() != entry["sha256"]:
                 raise CustodyError("restored file digest disagrees with its private manifest")

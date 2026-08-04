@@ -342,6 +342,7 @@ class PrivateCustodyTest(unittest.TestCase):
         parent = self.fixture.root / "durable-publication"
         staging = parent / ".snapshot.incomplete"
         final = parent / "snapshot"
+        expected_control = {"control": "fixture"}
         staging.mkdir(parents=True)
         names = ("private-manifest.json", "materials.tar", "source.bundle", "control.json")
         for name in names:
@@ -355,6 +356,10 @@ class PrivateCustodyTest(unittest.TestCase):
         def sync_directory(path):
             events.append(("directory", path.name))
 
+        def verify(path):
+            events.append(("verify", path.name))
+            return expected_control
+
         def publish(source, destination):
             events.append(("publish", source.name, destination.name))
             os.rename(source, destination)
@@ -362,9 +367,11 @@ class PrivateCustodyTest(unittest.TestCase):
         with mock.patch.object(CUSTODY, "_fsync_file", side_effect=sync_file), mock.patch.object(
             CUSTODY, "_fsync_directory", side_effect=sync_directory
         ), mock.patch.object(
+            CUSTODY, "verify_snapshot", side_effect=verify
+        ), mock.patch.object(
             CUSTODY, "_publish_directory_exclusive", side_effect=publish
         ):
-            CUSTODY._durable_publish_directory(staging, final)
+            CUSTODY._durable_publish_directory(staging, final, expected_control)
 
         self.assertEqual(
             events,
@@ -372,6 +379,7 @@ class PrivateCustodyTest(unittest.TestCase):
                 *(("file", name) for name in sorted(names)),
                 ("directory", ".snapshot.incomplete"),
                 ("directory", "durable-publication"),
+                ("verify", ".snapshot.incomplete"),
                 ("publish", ".snapshot.incomplete", "snapshot"),
                 ("directory", "snapshot"),
                 ("directory", "durable-publication"),
@@ -381,10 +389,15 @@ class PrivateCustodyTest(unittest.TestCase):
         probe = self.fixture.root / "fsync-probe.bin"
         probe.write_bytes(b"durable")
         real_fsync = os.fsync
-        with mock.patch.object(CUSTODY.os, "fsync", wraps=real_fsync) as fsync:
+        fullsync_api = mock.Mock()
+        with mock.patch.object(CUSTODY.sys, "platform", "darwin"), mock.patch.object(
+            CUSTODY.os, "fsync", wraps=real_fsync
+        ) as fsync, mock.patch.object(CUSTODY, "fcntl", fullsync_api):
             CUSTODY._fsync_file(probe)
             CUSTODY._fsync_directory(self.fixture.root)
-        self.assertEqual(fsync.call_count, 2)
+        fsync.assert_called_once()
+        self.assertEqual(fullsync_api.fcntl.call_count, 1)
+        self.assertEqual(fullsync_api.fcntl.call_args.args[1], CUSTODY.F_FULLFSYNC)
 
         blocked_staging = parent / ".blocked.incomplete"
         blocked_final = parent / "blocked"
@@ -396,10 +409,58 @@ class PrivateCustodyTest(unittest.TestCase):
             side_effect=CUSTODY.CustodyError("injected fsync failure"),
         ), mock.patch.object(CUSTODY, "_publish_directory_exclusive") as publish:
             with self.assertRaisesRegex(CUSTODY.CustodyError, "injected fsync failure"):
-                CUSTODY._durable_publish_directory(blocked_staging, blocked_final)
+                CUSTODY._durable_publish_directory(
+                    blocked_staging,
+                    blocked_final,
+                    expected_control,
+                )
         publish.assert_not_called()
         self.assertTrue(blocked_staging.is_dir())
         self.assertFalse(blocked_final.exists())
+
+        fullsync_staging = parent / ".fullsync-blocked.incomplete"
+        fullsync_final = parent / "fullsync-blocked"
+        fullsync_staging.mkdir()
+        (fullsync_staging / "control.json").write_bytes(b"control")
+        failing_fullsync = mock.Mock()
+        failing_fullsync.fcntl.side_effect = OSError("injected fullfsync failure")
+        with mock.patch.object(CUSTODY.sys, "platform", "darwin"), mock.patch.object(
+            CUSTODY, "fcntl", failing_fullsync
+        ), mock.patch.object(CUSTODY, "_publish_directory_exclusive") as publish:
+            with self.assertRaisesRegex(CUSTODY.CustodyError, "durably synchronized"):
+                CUSTODY._durable_publish_directory(
+                    fullsync_staging,
+                    fullsync_final,
+                    expected_control,
+                )
+        publish.assert_not_called()
+        self.assertTrue(fullsync_staging.is_dir())
+        self.assertFalse(fullsync_final.exists())
+
+    def test_corrupted_secondary_is_verified_while_still_incomplete(self) -> None:
+        primary = CUSTODY.create_snapshot(
+            self.fixture.source,
+            self.fixture.primary,
+            "corrupted-secondary",
+            "origin/main",
+            "equal",
+        )
+        original = CUSTODY._copy_file
+
+        def corrupt_copy(source, destination, label):
+            original(source, destination, label)
+            if destination.name == "materials.tar":
+                with destination.open("ab") as handle:
+                    handle.write(b"corrupt-after-copy")
+
+        with mock.patch.object(
+            CUSTODY, "_copy_file", side_effect=corrupt_copy
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "byte count changed"):
+            CUSTODY.copy_snapshot(primary, self.fixture.secondary)
+        self.assertFalse((self.fixture.secondary / "corrupted-secondary").exists())
+        self.assertTrue(
+            (self.fixture.secondary / ".corrupted-secondary.incomplete").is_dir()
+        )
 
     def test_same_physical_device_cannot_count_twice(self) -> None:
         same = CUSTODY.MediumIdentity("a" * 64, "one-physical-device")
