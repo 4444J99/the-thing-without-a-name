@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -37,6 +38,7 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 REGISTER = HERE / "screendance-2027.yaml"
+OPPORTUNITY_CHECKER = HERE.parent / "scripts" / "check-opportunities.py"
 
 PASS, FAIL, OPEN, SKIP = "PASS", "FAIL", "OPEN", "SKIP"
 GLYPH = {PASS: "\033[32m ok \033[0m", FAIL: "\033[31mFAIL\033[0m", OPEN: "\033[33mOPEN\033[0m", SKIP: "skip"}
@@ -311,6 +313,33 @@ def check_requirement_phases(reg: dict, rep: Report) -> None:
         f"{len(reg.get('terms', []))} source-verified term(s)"
         if not term_errors
         else "; ".join(term_errors),
+    )
+
+
+def check_opportunity_snapshot(register_path: Path, rep: Report) -> None:
+    """Bind filing facts to the exact source-verified release snapshot.
+
+    The opportunity checker owns the schema, source census, digest receipt, and
+    issue #2/#12 consumer contract. Importing it here keeps those rules in one
+    executable home while making every submission phase fail closed on drift.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "danse_opportunity_checker", OPPORTUNITY_CHECKER
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("checker module could not be loaded")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        snapshot, receipt = checker.validate_all(consumer_path=register_path)
+    except Exception as exc:
+        rep.add("register", "frozen opportunity snapshot", FAIL, str(exc))
+        return
+    rep.add(
+        "register",
+        "frozen opportunity snapshot",
+        PASS,
+        f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}… · issue #2 bound / #12 pending",
     )
 
 
@@ -696,6 +725,7 @@ def main() -> int:
     print(f"\033[1m{reg['call']}\033[0m — {reg['presenter']}")
 
     check_requirement_phases(reg, rep)
+    check_opportunity_snapshot(args.register, rep)
     check_deadline(reg, args.phase, rep)
     check_unknowns(reg, rep)
 
