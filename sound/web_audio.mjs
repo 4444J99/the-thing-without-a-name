@@ -8,6 +8,7 @@
  */
 
 import { eventsBetween } from "../engine/score.js";
+import { planRoomRender, roomLayout } from "../engine/room-events.js";
 
 export function planWebAudio(score, start, end, window = null) {
   const stems = new Map(score.orchestration.map((stem) => [stem.id, stem]));
@@ -71,4 +72,108 @@ export function scheduleWebAudio(context, score, buffers, start, end, { window =
     scheduled.push(event);
   }
   return { identity: score.identity.contract_sha256, plan, scheduled, missing, blocked };
+}
+
+/** Renderer-neutral room plan used unchanged with or without an AudioContext. */
+export function planRoomWebAudio(bus, registry, layoutId, start, end) {
+  return planRoomRender(bus, registry, layoutId, start, end);
+}
+
+/** Schedule verified room-event sources into the declared speaker field.
+ *
+ * `enabled: false` is the accessibility/no-device path: it returns the exact
+ * same plan without constructing or touching any WebAudio node. Stereo is the
+ * registry's declared fold-down taps, including their source-speaker delays.
+ */
+export function scheduleRoomWebAudio(
+  context,
+  bus,
+  registry,
+  layoutId,
+  buffers,
+  start,
+  end,
+  {
+    when = null,
+    output = "stereo",
+    enabled = true,
+  } = {},
+) {
+  if (!new Set(["stereo", "multichannel"]).has(output)) throw new RangeError(`unknown room output ${output}`);
+  const plan = planRoomWebAudio(bus, registry, layoutId, start, end);
+  if (!enabled) {
+    return {
+      identity: bus.identity.contract_sha256,
+      plan,
+      scheduled: [],
+      missing: [],
+      blocked: [],
+      silent: [],
+      disabled: plan.events,
+    };
+  }
+  if (!context) throw new TypeError("enabled room audio requires an AudioContext");
+  const startWhen = when ?? context.currentTime;
+
+  const layout = roomLayout(registry, layoutId);
+  const outputChannels = output === "stereo" ? 2 : layout.speakers.length;
+  const scheduled = [];
+  const missing = [];
+  const blocked = [];
+  const silent = [];
+  let merger = null;
+  for (const event of plan.events) {
+    if (!event.audio.role) {
+      silent.push(event);
+      continue;
+    }
+    if (!/^[0-9a-f]{64}$/.test(event.audio.source_sha256 ?? "")) {
+      blocked.push({ ...event, reason: "room event has no cleared audio-source identity" });
+      continue;
+    }
+    const supplied = bufferFor(buffers, event.audio.role);
+    if (!supplied) {
+      missing.push(event);
+      continue;
+    }
+    const wrapped = Object.prototype.hasOwnProperty.call(supplied, "buffer");
+    const buffer = wrapped ? supplied.buffer : supplied;
+    if (!buffer) {
+      missing.push(event);
+      continue;
+    }
+    if (supplied.audio_source_sha256 !== event.audio.source_sha256) {
+      blocked.push({ ...event, reason: "supplied room buffer identity does not match the declared source" });
+      continue;
+    }
+    if (!merger) {
+      merger = context.createChannelMerger(outputChannels);
+      merger.connect(context.destination);
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    const taps = event[output];
+    for (const tap of taps) {
+      const delay = context.createDelay(registry.safety.latency_budget_ms / 1000);
+      const gain = context.createGain();
+      delay.delayTime.value = tap.delay_ms / 1000;
+      gain.gain.value = tap.gain;
+      source.connect(delay);
+      delay.connect(gain);
+      gain.connect(merger, 0, tap.channel);
+    }
+    const at = startWhen + (event.at - start);
+    source.start(at);
+    if (event.end !== undefined) source.stop(at + Math.max(0, event.end - event.at));
+    scheduled.push(event);
+  }
+  return {
+    identity: bus.identity.contract_sha256,
+    plan,
+    scheduled,
+    missing,
+    blocked,
+    silent,
+    disabled: [],
+  };
 }

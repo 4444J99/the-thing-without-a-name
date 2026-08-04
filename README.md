@@ -231,8 +231,9 @@ animating it toward `0` is literally its undoing.
   index.html   the living page          film.html    capture harness (no UI, no rAF)
   arrival.js   the ONE impure module — a visitor's river, and the only clock
   join.html    local camera/pose study   probe.html   projection go/no-go
-  engine/      gl · mat4 · rng · room · grammar · renderer · corpus · clock · program
+  engine/      gl · mat4 · rng · room · room-events · grammar · renderer · clock
   music/       layered repertoire provenance · MIDI compiler · immutable fixture score
+  sound/       shared room-event bus · stereo/WebAudio/offline/multichannel plans
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
@@ -292,6 +293,9 @@ photograph without creating output directories.
 The score-clock implementation is fixture-only until repertoire and its exact
 source layers are selected and cleared. See [`music/README.md`](music/README.md)
 for the opt-in query/render paths and the explicit remaining artistic gate.
+The deterministic spatial bus and its reference-only speaker maps are documented
+in [`sound/ROOM_EVENTS.md`](sound/ROOM_EVENTS.md); they do not claim cleared audio
+bytes, venue approval, or a completed physical room test.
 
 ## Provenance
 

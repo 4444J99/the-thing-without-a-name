@@ -62,10 +62,13 @@ else:
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from bank_contract import audit_bank  # noqa: E402
+from room_events import load_room_layouts  # noqa: E402
+from room_render import plan_control  # noqa: E402
 
 BANK = HERE / "bank"
 CONTROL = HERE / "control.mjs"
 OUT = HERE / "out"
+ROOM_LAYOUTS = HERE / "room-layout.json"
 
 SR = 48_000
 
@@ -283,12 +286,20 @@ def music_event_plan(control: dict) -> list[dict]:
     return sorted(events, key=lambda event: (float(event["at"]), event["type"], int(event["index"])))
 
 
+def room_event_plan(control: dict, layout: str = "stereo", output: str = "stereo") -> dict | None:
+    """Validate and route the control track's immutable room buses."""
+    if not control.get("room"):
+        return None
+    return plan_control(control, load_room_layouts(ROOM_LAYOUTS), layout, output)
+
+
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
     seed = int(control["seed"])
     rate = float(control["rate"])
     frames = control["frames"]
     total = int(round(control["duration"] * SR))
     buf = np.zeros((2, total), dtype=np.float64)
+    room_event_plan(control)
     if control.get("music"):
         stems = control["music"].get("stems") or []
         missing = [stem["id"] for stem in stems if not stem.get("audio_source_sha256")]

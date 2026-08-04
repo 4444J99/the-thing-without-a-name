@@ -73,6 +73,12 @@ the adapter creates a source node. It never creates an oscillator. The Python
 sound renderer exposes the same mapped event plan, but deliberately refuses to
 render this fixture: its orchestration declares no cleared audio source bytes.
 
+`engine/room-events.js` maps those same authored START events into immutable
+per-passage room buses. Live WebAudio and Python stereo/offline/multichannel
+consumers route the same typed events and declared fold-down; see
+[`sound/ROOM_EVENTS.md`](../sound/ROOM_EVENTS.md). This does not add sustained
+voice recovery or weaken the score's seek-boundary semantics.
+
 ## Remaining gates
 
 Anthony must select the repertoire and explicitly accept the score/image

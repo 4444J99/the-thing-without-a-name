@@ -29,6 +29,7 @@ import { fromData } from "../engine/corpus.js";
 import { step } from "../engine/engine.js";
 import { captureOf, passageAt, validate } from "../engine/program.js";
 import { camera, scatter, viewDepth } from "../engine/room.js";
+import { compileRoomBus, validateRoomLayouts } from "../engine/room-events.js";
 import { eventsBetween, validate as validateScore } from "../engine/score.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,16 @@ function readJSON(p) {
 }
 
 function args(argv) {
-  const out = { window: "passage", rate: 30, seed: null, stream: 0, out: null, from: 0, score: null };
+  const out = {
+    window: "passage",
+    rate: 30,
+    seed: null,
+    stream: 0,
+    out: null,
+    from: 0,
+    score: null,
+    room: "sound/room-layout.json",
+  };
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i].replace(/^--/, "");
     if (!(key in out)) throw new Error(`unknown option ${argv[i]}`);
@@ -79,6 +89,8 @@ validate(program);
 let musicalScore = null;
 let musicalScorePath = null;
 let musicalScoreFileSha256 = null;
+let roomLayouts = null;
+let roomLayoutsPath = null;
 if (opt.score) {
   const lexicalPath = path.resolve(DANSE, opt.score);
   if (!inside(DANSE, lexicalPath)) {
@@ -95,6 +107,14 @@ if (opt.score) {
   const bytes = fs.readFileSync(musicalScorePath);
   musicalScore = validateScore(JSON.parse(bytes.toString("utf8")));
   musicalScoreFileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+
+  const lexicalRoomPath = path.resolve(DANSE, opt.room);
+  if (!inside(DANSE, lexicalRoomPath)) throw new Error("--room must stay inside the Danse repository");
+  const roomStat = fs.lstatSync(lexicalRoomPath);
+  if (roomStat.isSymbolicLink() || !roomStat.isFile()) throw new Error("--room must be a regular file, not a symlink");
+  roomLayoutsPath = fs.realpathSync(lexicalRoomPath);
+  if (!inside(DANSE_REAL, roomLayoutsPath)) throw new Error("--room resolves outside the Danse repository");
+  roomLayouts = validateRoomLayouts(readJSON(roomLayoutsPath));
 }
 
 
@@ -220,6 +240,7 @@ function round(x, places) {
 }
 
 const musicEvents = [];
+const roomBuses = [];
 if (musicalScore) {
   let cursor = t0;
   while (cursor < t1) {
@@ -228,6 +249,14 @@ if (musicalScore) {
     musicEvents.push(
       ...eventsBetween(musicalScore, cursor, end, { t0: passage.t0, seconds: passage.seconds }),
     );
+    roomBuses.push(compileRoomBus(musicalScore, {
+      river_seed: seed >>> 0,
+      stream: opt.stream,
+      index: passage.index,
+      seed: passage.seed,
+      t0: passage.t0,
+      seconds: passage.seconds,
+    }));
     if (!(end > cursor)) throw new Error("score passage traversal did not advance");
     cursor = end;
   }
@@ -257,6 +286,13 @@ const payload = {
           provenance: musicalScore.provenance,
           stems: musicalScore.orchestration,
           events: musicEvents,
+        },
+        room: {
+          schema: "danse.room.control.v1",
+          semantics: "authored-start-events",
+          layout_registry_path: path.relative(DANSE_REAL, roomLayoutsPath),
+          layout_identity: roomLayouts.identity,
+          buses: roomBuses,
         },
       }
     : {}),

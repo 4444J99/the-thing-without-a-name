@@ -100,6 +100,11 @@ function canonicalTree(value) {
   throw new TypeError(`unsupported canonical value ${typeof value}`);
 }
 
+/** Type-stable canonical SHA-256 shared by immutable Danse contracts. */
+export function canonicalSha256(value) {
+  return sha256Hex(JSON.stringify(canonicalTree(value)));
+}
+
 /** SHA-256 over the score with its self-identifying digest omitted. */
 export function contractSha256(score) {
   const identity = score?.identity;
@@ -108,7 +113,7 @@ export function contractSha256(score) {
   }
   const { contract_sha256: _declared, ...identitySource } = identity;
   const source = { ...score, identity: identitySource };
-  return sha256Hex(JSON.stringify(canonicalTree(source)));
+  return canonicalSha256(source);
 }
 
 export async function load(url = "music/score.json") {
