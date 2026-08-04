@@ -869,11 +869,24 @@ def validate_package(
     return blockers, identity
 
 
-def _verify_release_source(root: Path, source: object, label: str) -> list[str]:
+def _verify_release_source(
+    root: Path,
+    source: object,
+    label: str,
+    *,
+    tracked: set[str],
+    require_tracked: bool,
+) -> list[str]:
     if not isinstance(source, dict):
         return [f"{label} has no source record"]
     try:
-        path = regular_file(root, source.get("path"), f"{label} source", expose_value=False)
+        relative = safe_relative(source.get("path"), f"{label} source", expose_value=False)
+    except RightsError as exc:
+        return [str(exc)]
+    if require_tracked and relative not in tracked:
+        return [f"{label} source is not tracked public-safe evidence"]
+    try:
+        path = regular_file(root, relative, f"{label} source", expose_value=False)
     except RightsError as exc:
         return [str(exc)]
     expected = source.get("sha256")
@@ -891,6 +904,10 @@ def validate_release_manifest(
     register_path: Path = REGISTER,
 ) -> tuple[list[str], dict[str, Any] | None]:
     blockers: list[str] = []
+    try:
+        tracked = tracked_paths(root)
+    except RightsError as exc:
+        return [str(exc)], None
     try:
         if release_manifest.is_symlink() or not release_manifest.is_file():
             raise RightsError("release manifest must be an existing regular file")
@@ -935,8 +952,24 @@ def validate_release_manifest(
         clearance = row.get("clearance") if isinstance(row.get("clearance"), dict) else {}
         if clearance.get("status") != "cleared":
             blockers.append(f"release media {media_id} clearance is not cleared")
-        blockers.extend(_verify_release_source(root, row.get("source"), f"release media {media_id}"))
-        blockers.extend(_verify_release_source(root, clearance.get("evidence"), f"release media {media_id} clearance"))
+        blockers.extend(
+            _verify_release_source(
+                root,
+                row.get("source"),
+                f"release media {media_id}",
+                tracked=tracked,
+                require_tracked=False,
+            )
+        )
+        blockers.extend(
+            _verify_release_source(
+                root,
+                clearance.get("evidence"),
+                f"release media {media_id} clearance",
+                tracked=tracked,
+                require_tracked=True,
+            )
+        )
     missing_media = sorted(set(release_rules) - media_ids)
     if missing_media:
         blockers.append(f"release manifest is missing rights-ruled media: {', '.join(missing_media)}")
@@ -964,7 +997,15 @@ def validate_release_manifest(
             continue
         if row.get("status") != "cleared" or not row.get("name"):
             blockers.append(f"release credit {credit_id} is not cleared and named")
-        blockers.extend(_verify_release_source(root, row.get("evidence"), f"release credit {credit_id}"))
+        blockers.extend(
+            _verify_release_source(
+                root,
+                row.get("evidence"),
+                f"release credit {credit_id}",
+                tracked=tracked,
+                require_tracked=True,
+            )
+        )
         if gates[rule["gate"]]["state"] != "satisfied":
             blockers.append(f"release credit {credit_id} depends on pending gate {rule['gate']}")
         if assets[rule["asset"]]["public_credit"]["state"] != "approved":

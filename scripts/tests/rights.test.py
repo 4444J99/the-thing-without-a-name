@@ -390,6 +390,27 @@ class RightsContractTest(unittest.TestCase):
             self.assertTrue(any("repeats credit id" in blocker for blocker in blockers), blockers)
             self.assertTrue(any("repeats gate id" in blocker for blocker in blockers), blockers)
 
+    def test_release_clearance_evidence_must_be_tracked_but_media_may_be_hydrated(self) -> None:
+        evidence = source_evidence()
+        self.assertEqual(
+            RIGHTS._verify_release_source(
+                ROOT,
+                evidence,
+                "test evidence",
+                tracked=set(),
+                require_tracked=False,
+            ),
+            [],
+        )
+        blockers = RIGHTS._verify_release_source(
+            ROOT,
+            evidence,
+            "test evidence",
+            tracked=set(),
+            require_tracked=True,
+        )
+        self.assertEqual(blockers, ["test evidence source is not tracked public-safe evidence"])
+
     def test_receipts_are_deterministic_redacted_and_contain_exact_input_digests(self) -> None:
         first_document, first = RIGHTS.validate_all(phase="draft")
         second_document, second = RIGHTS.validate_all(phase="draft")
