@@ -17,6 +17,11 @@ release build. The generated project page and pitch identify the twin as a
 reference simulation: it is not venue, hardware, calibration, recovery, restore,
 or public-approval evidence.
 
+The verified custody claim binds the tracked, non-destructive snapshot/restore
+contract. It verifies what the workflow requires; it does not claim that the
+private material has been copied or restored. The `release-custody` gate remains
+pending until an external redacted receipt and explicit human acceptance exist.
+
 The manifest has three cumulative phases:
 
 - `draft` validates all existing bytes and emits visibly marked, `noindex` local

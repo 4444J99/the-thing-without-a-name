@@ -238,8 +238,19 @@
       "status": "verified",
       "evidence": {
         "path": "scripts/check-danse.py",
-        "sha256": "9bf75e582f99b5e93b1bb9ab09439ed380bda743d39fbd846f333d9051ecc82d",
+        "sha256": "810efbcc89b9daab64ef80f754cda03cb42cdc6763ba4fa9f8a7f098890ec8a2",
         "summary": "Executable invariant source bound by digest; the release receipt must record its passing run."
+      }
+    },
+    {
+      "id": "private-custody-contract",
+      "text": "The tracked private-custody contract requires two independent byte-identical snapshots and a clean restore while preserving human acceptance as a separate cleanup gate.",
+      "publish": true,
+      "status": "verified",
+      "evidence": {
+        "path": "scripts/private_custody.py",
+        "sha256": "aed197af7e014d6344f079c6fb14bb7777d5c52bb74ee51aaa5aed599bd89d82",
+        "summary": "Non-destructive snapshot and restore contract; a passing machine rehearsal never authorizes source or worktree reclamation."
       }
     },
     {

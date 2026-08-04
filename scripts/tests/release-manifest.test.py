@@ -34,6 +34,7 @@ FIXTURE_FILES = (
     "submission/screendance-2027.yaml",
     "corpus/manifest.json",
     "scripts/check-danse.py",
+    "scripts/private_custody.py",
     "rights/evidence/mediapipe-attribution.json",
     "installation/contract.py",
     "installation/digital-twin.json",
@@ -250,6 +251,24 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(release_gate["state"], "pending")
         self.assertIsNone(release_gate["evidence"])
         self.assertEqual(self.receipt["release"]["installation_reference"], binding)
+
+    def test_custody_contract_is_bound_without_claiming_a_restore_or_cleanup_authority(self) -> None:
+        claim = next(
+            claim
+            for claim in self.manifest["claims"]
+            if claim["id"] == "private-custody-contract"
+        )
+        self.assertEqual(claim["status"], "verified")
+        self.assertEqual(claim["evidence"]["path"], "scripts/private_custody.py")
+        self.assertEqual(
+            claim["evidence"]["sha256"],
+            CONTRACT.sha256(ROOT / "scripts/private_custody.py"),
+        )
+        gate = next(
+            gate for gate in self.manifest["gates"] if gate["id"] == "release-custody"
+        )
+        self.assertEqual(gate["state"], "pending")
+        self.assertIsNone(gate["evidence"])
 
     def test_tracked_manifest_is_honest_draft_but_public_and_release_fail_closed(self) -> None:
         public = CONTRACT.phase_blockers(self.manifest, "public")
