@@ -32,7 +32,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -214,8 +214,13 @@ def manifest_items(root: Path) -> dict[str, dict]:
 
 def check_deadline(reg: dict, phase: str, rep: Report, now: datetime | None = None) -> None:
     d = reg["deadline"]
+    try:
+        zone = ZoneInfo(reg["opportunity_snapshot"]["timezone"])
+    except (KeyError, TypeError, ZoneInfoNotFoundError):
+        rep.add("deadline", "timezone", FAIL, "canonical named timezone is missing or unavailable")
+        return
     wall = datetime.fromisoformat(d["hard_wall"])
-    now = now or datetime.now(ZoneInfo("America/New_York"))
+    now = now or datetime.now(zone)
     left = wall - now
     days = left.days + left.seconds / 86400
 
@@ -235,7 +240,7 @@ def check_deadline(reg: dict, phase: str, rep: Report, now: datetime | None = No
         # the stated string.
         rep.add("deadline", "hard wall", PASS, f"{days:.1f} days left → {wall:%a %d %b %H:%M %Z}")
 
-    target = datetime.fromisoformat(d["target_file_date"] + "T12:00:00-04:00")
+    target = datetime.fromisoformat(d["target_file_date"] + "T12:00:00").replace(tzinfo=zone)
     tdays = (target - now).days
     status = PASS if tdays >= 0 or phase == "submitted" else OPEN
     detail = (

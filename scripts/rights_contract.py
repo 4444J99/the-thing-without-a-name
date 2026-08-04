@@ -23,7 +23,7 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import jsonschema
 import yaml
@@ -31,6 +31,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 REGISTER = ROOT / "rights" / "register.json"
 SCHEMA = ROOT / "rights" / "register.schema.json"
+SUBMISSION = ROOT / "submission" / "screendance-2027.yaml"
 PHASES = ("draft", "public", "package", "uploaded", "submitted", "release")
 PHASE_SCOPES = {
     "draft": (),
@@ -40,8 +41,6 @@ PHASE_SCOPES = {
     "submitted": ("package", "uploaded", "submitted"),
     "release": ("public", "package", "release"),
 }
-PROJECT_TIMEZONE = "America/New_York"
-PROJECT_ZONE = ZoneInfo(PROJECT_TIMEZONE)
 MAX_JSON_BYTES = 8 << 20
 EXPECTED_CATEGORIES = {
     "performer",
@@ -159,9 +158,38 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _submission_zone(submission: dict[str, Any]) -> tuple[str, ZoneInfo]:
+    """Resolve the one named shipping zone declared by the submission register."""
+    deadline = submission.get("deadline")
+    opportunity = submission.get("opportunity_snapshot")
+    timezone_name = opportunity.get("timezone") if isinstance(opportunity, dict) else None
+    if not isinstance(timezone_name, str) or not timezone_name:
+        raise RightsError("submission deadline has no canonical named timezone")
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise RightsError("submission deadline names an unavailable timezone") from exc
+    try:
+        hard_wall = datetime.fromisoformat(deadline["hard_wall"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RightsError("submission deadline has no valid hard wall") from exc
+    if hard_wall.tzinfo is None:
+        raise RightsError("submission deadline hard wall has no timezone offset")
+    local_wall = hard_wall.astimezone(zone)
+    if local_wall.replace(tzinfo=None) != hard_wall.replace(tzinfo=None):
+        raise RightsError("submission hard wall does not agree with its named timezone")
+    return timezone_name, zone
+
+
+def project_zone() -> tuple[str, ZoneInfo]:
+    """Load the shipping zone from the canonical submission register."""
+    return _submission_zone(load_yaml(SUBMISSION, "submission register", expose_path=False))
+
+
 def project_today() -> date:
     """Return the project shipping date independently of the host timezone."""
-    return datetime.now(PROJECT_ZONE).date()
+    _, zone = project_zone()
+    return datetime.now(zone).date()
 
 
 def _stable_file_measure(
@@ -688,6 +716,7 @@ def _validate_bindings(
         declared = bindings["submission"]
         if submission.get("schema") != declared["schema"]:
             errors.append("binding submission schema disagrees with its register")
+        _submission_zone(submission)
         terms = {
             row.get("id")
             for row in submission.get("terms", [])
@@ -1043,18 +1072,27 @@ def _requirement_blockers(
     blockers: list[str] = []
     for requirement in requirements:
         asset_id, use_id = requirement["asset"], requirement["use"]
-        use = uses[(asset_id, use_id)]
+        use = uses.get((asset_id, use_id))
+        if use is None:
+            blockers.append(f"{label} names unknown asset/use {asset_id}/{use_id}")
+            continue
         if use["status"] != "cleared":
             blockers.append(f"{label} requires {asset_id}/{use_id}, which is {use['status']}: {use['note']}")
-        elif (
-            use["term"] == "fixed"
-            and isinstance(use["expires"], str)
-            and date.fromisoformat(use["expires"]) < validation_date
-        ):
-            blockers.append(
-                f"{label} requires {asset_id}/{use_id}, whose fixed permission expired before "
-                "the validation date"
-            )
+        elif use["term"] == "fixed":
+            expires = use.get("expires")
+            if not isinstance(expires, str):
+                blockers.append(f"{label} requires {asset_id}/{use_id}, whose fixed permission has no expiry")
+                continue
+            try:
+                expired = date.fromisoformat(expires) < validation_date
+            except ValueError:
+                blockers.append(f"{label} requires {asset_id}/{use_id}, whose fixed permission has invalid expiry")
+                continue
+            if expired:
+                blockers.append(
+                    f"{label} requires {asset_id}/{use_id}, whose fixed permission expired before "
+                    "the validation date"
+                )
     return blockers
 
 
@@ -1264,6 +1302,126 @@ def current_audio_identity() -> dict[str, Any]:
     return {"bank_fingerprint": fingerprint, "sources": list(sources)}
 
 
+def _package_inventory(package_root: Path) -> tuple[set[str], list[str]]:
+    """Inventory every regular package path without following directory links."""
+    paths: set[str] = set()
+    blockers: list[str] = []
+
+    def walk_error(_: OSError) -> None:
+        blockers.append("package could not be completely inventoried")
+
+    for directory, dirnames, filenames in os.walk(
+        package_root,
+        topdown=True,
+        followlinks=False,
+        onerror=walk_error,
+    ):
+        base = Path(directory)
+        descend: list[str] = []
+        for name in sorted(dirnames):
+            candidate = base / name
+            if candidate.is_symlink():
+                blockers.append("package contains a symlink directory")
+            elif not candidate.is_dir():
+                blockers.append("package contains a non-directory entry")
+            else:
+                descend.append(name)
+        dirnames[:] = descend
+        for name in sorted(filenames):
+            candidate = base / name
+            if candidate.is_symlink():
+                blockers.append("package contains a symlink file")
+            elif not candidate.is_file():
+                blockers.append("package contains a non-regular file")
+            else:
+                paths.add(candidate.relative_to(package_root).as_posix())
+    return paths, blockers
+
+
+def _required_package_blockers(
+    submission: dict[str, Any],
+    item_rule_ids: dict[str, str],
+) -> list[str]:
+    """Require the exact artifact census declared by the submission register."""
+    package = submission.get("package")
+    if not isinstance(package, dict):
+        return ["canonical submission register has no package contract"]
+    blockers: list[str] = []
+    try:
+        delivery = _delivery_contract()
+        audio_items = delivery.AUDIO_ITEMS
+        required_items = {}
+        for section_name in ("master", "screener"):
+            matches = sorted(
+                name
+                for name in audio_items
+                if PurePosixPath(name).stem == section_name
+            )
+            if len(matches) != 1:
+                raise RightsError(
+                    f"canonical delivery contract has no unique {section_name} destination"
+                )
+            required_items[section_name] = (matches[0], "moving-image")
+        score_destination = safe_relative(
+            delivery.SCORE_SOURCE_ITEM,
+            "canonical package score source destination",
+            expose_value=False,
+        )
+    except (RightsError, AttributeError, TypeError):
+        return ["canonical delivery contract cannot resolve required package destinations"]
+    moving_image_required = False
+    for section_name, (destination, rule_id) in required_items.items():
+        section = package.get(section_name)
+        if not isinstance(section, dict):
+            blockers.append(f"canonical package {section_name} contract is missing")
+            continue
+        if section.get("required") is not True:
+            continue
+        moving_image_required = True
+        if item_rule_ids.get(destination) != rule_id:
+            blockers.append(
+                f"package is missing required {section_name.replace('_', ' ')} artifact {destination}"
+            )
+
+    if moving_image_required:
+        if item_rule_ids.get(score_destination) != "score-source":
+            blockers.append(
+                f"package is missing required score source artifact {score_destination}"
+            )
+
+    origin = package.get("origin_still")
+    if not isinstance(origin, dict):
+        blockers.append("canonical package origin_still contract is missing")
+    elif origin.get("required") is True:
+        filename = origin.get("filename")
+        if (
+            not isinstance(filename, str)
+            or PurePosixPath(filename).name != filename
+            or not filename
+        ):
+            blockers.append("canonical package origin still filename is invalid")
+        else:
+            destination = f"stills/{filename}"
+            if item_rule_ids.get(destination) != "origin-still":
+                blockers.append(
+                    f"package is missing required origin still artifact {destination}"
+                )
+
+    stills = package.get("stills")
+    if not isinstance(stills, dict):
+        blockers.append("canonical package stills contract is missing")
+    elif stills.get("required") is True:
+        count_min = stills.get("count_min")
+        generated = sum(1 for rule_id in item_rule_ids.values() if rule_id == "generated-still")
+        if type(count_min) is not int or count_min < 1:
+            blockers.append("canonical package stills minimum is invalid")
+        elif generated < count_min:
+            blockers.append(
+                f"package has {generated} generated still(s); canonical submission requires {count_min}"
+            )
+    return blockers
+
+
 def validate_package(
     document: dict[str, Any],
     package: Path,
@@ -1308,8 +1466,13 @@ def validate_package(
         blockers.append("package manifest has no items")
         items = []
 
-    rules = [(rule, re.compile(rule["pattern"])) for rule in document["package_rules"]]
-    rule_ids = {rule["id"] for rule, _ in rules}
+    rules: list[tuple[dict[str, Any], re.Pattern[str]]] = []
+    rule_ids = {rule["id"] for rule in document["package_rules"]}
+    for rule in document["package_rules"]:
+        try:
+            rules.append((rule, re.compile(rule["pattern"])))
+        except re.error:
+            blockers.append(f"rights register package rule {rule['id']} has an invalid regex")
     for required_rule in ("moving-image", "origin-still", "score-source"):
         if required_rule not in rule_ids:
             blockers.append(f"rights register is missing required package rule {required_rule}")
@@ -1320,6 +1483,8 @@ def validate_package(
     submission = load_yaml(regular_file(root, document["bindings"]["submission"]["source"]["path"], "submission binding"), "submission binding")
     expected_audio = sorted(((submission.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
     expected_origin = (((submission.get("package") or {}).get("origin_still") or {}).get("source_sha256"))
+    initial_package_paths, initial_inventory_blockers = _package_inventory(package_root)
+    blockers.extend(initial_inventory_blockers)
 
     for index, item in enumerate(items):
         if not isinstance(item, dict):
@@ -1380,6 +1545,8 @@ def validate_package(
         ):
             blockers.append("package origin still is not bound byte-identically to its registered source")
 
+    blockers.extend(_required_package_blockers(submission, item_rule_ids))
+
     moving_items = [
         (name, item_records[name])
         for name, rule_id in item_rule_ids.items()
@@ -1416,20 +1583,9 @@ def validate_package(
             ):
                 blockers.append(f"package audio item {name} does not bind the hydrated grain bank")
 
-    for directory, dirnames, filenames in os.walk(package_root, topdown=True, followlinks=False):
-        base = Path(directory)
-        for name in list(dirnames):
-            candidate = base / name
-            if candidate.is_symlink():
-                blockers.append("package contains a symlink directory")
-                dirnames.remove(name)
-        for name in filenames:
-            candidate = base / name
-            relative = candidate.relative_to(package_root).as_posix()
-            if candidate.is_symlink():
-                blockers.append("package contains a symlink file")
-            elif candidate.suffix.lower() in RIGHTS_MEDIA_SUFFIXES and relative not in item_names:
-                blockers.append("rights-bearing package media is absent from the manifest")
+    for relative in initial_package_paths:
+        if Path(relative).suffix.lower() in RIGHTS_MEDIA_SUFFIXES and relative not in item_names:
+            blockers.append("rights-bearing package media is absent from the manifest")
 
     for binding in document["package_text"]:
         destination = binding["destination"]
@@ -1468,6 +1624,13 @@ def validate_package(
             blockers.append("package manifest changed during validation")
     except RightsError:
         blockers.append("package manifest changed during validation")
+    final_package_paths, final_inventory_blockers = _package_inventory(package_root)
+    blockers.extend(final_inventory_blockers)
+    if (
+        final_package_paths != initial_package_paths
+        or final_inventory_blockers != initial_inventory_blockers
+    ):
+        blockers.append("package inventory changed during validation")
 
     identity = {
         "schema": package_schema if package_schema == "danse.delivery.manifest.v1" else None,
@@ -1727,11 +1890,17 @@ def validate_release_manifest(
                 require_tracked=True,
             )
         )
-        if gates[rule["gate"]]["state"] != "satisfied":
+        gate = gates.get(rule["gate"])
+        asset = assets.get(rule["asset"])
+        if gate is None:
+            blockers.append(f"release credit {credit_id} names unknown gate {rule['gate']}")
+        elif gate["state"] != "satisfied":
             blockers.append(f"release credit {credit_id} depends on pending gate {rule['gate']}")
-        if assets[rule["asset"]]["public_credit"]["state"] != "approved":
+        if asset is None:
+            blockers.append(f"release credit {credit_id} names unknown asset {rule['asset']}")
+        elif asset["public_credit"]["state"] != "approved":
             blockers.append(f"release credit {credit_id} depends on unapproved asset credit {rule['asset']}")
-        elif row.get("name") != assets[rule["asset"]]["public_credit"]["label"]:
+        elif row.get("name") != asset["public_credit"]["label"]:
             blockers.append(f"release credit {credit_id} does not match its approved attribution")
     missing_credits = sorted(set(credit_rules) - credit_ids)
     if missing_credits:
@@ -1828,9 +1997,10 @@ def phase_blockers(
     if phase == "draft":
         return [], inputs
 
-    validation_date = as_of or project_today()
+    timezone_name, zone = project_zone()
+    validation_date = as_of or datetime.now(zone).date()
     inputs["validation_date"] = validation_date.isoformat()
-    inputs["validation_timezone"] = PROJECT_TIMEZONE
+    inputs["validation_timezone"] = timezone_name
     scopes = set(PHASE_SCOPES[phase])
     blockers: list[str] = []
     if document["status"] == "draft":
@@ -1865,16 +2035,26 @@ def phase_blockers(
                 root=root,
             ):
                 continue
-            if (
-                use["status"] == "cleared"
-                and use["term"] == "fixed"
-                and date.fromisoformat(use["expires"]) < validation_date
-            ):
-                blockers.append(
-                    f"asset use {asset['id']}/{use['id']} fixed permission expired before "
-                    f"the {phase} validation date"
-                )
-                continue
+            if use["status"] == "cleared" and use["term"] == "fixed":
+                expires = use.get("expires")
+                if not isinstance(expires, str):
+                    blockers.append(
+                        f"asset use {asset['id']}/{use['id']} fixed permission has no expiry"
+                    )
+                    continue
+                try:
+                    expired = date.fromisoformat(expires) < validation_date
+                except ValueError:
+                    blockers.append(
+                        f"asset use {asset['id']}/{use['id']} fixed permission has invalid expiry"
+                    )
+                    continue
+                if expired:
+                    blockers.append(
+                        f"asset use {asset['id']}/{use['id']} fixed permission expired before "
+                        f"the {phase} validation date"
+                    )
+                    continue
             if use["status"] == "cleared":
                 continue
             if use["status"] == "excluded" and asset["disposition"] == "excluded":
@@ -1943,6 +2123,58 @@ def build_receipt(
     }
 
 
+def _resolved_output(path: Path, label: str) -> Path:
+    try:
+        return path.absolute().resolve(strict=False)
+    except OSError as exc:
+        raise RightsError(f"{label} cannot be resolved safely") from exc
+
+
+def _inside(candidate: Path, boundary: Path) -> bool:
+    try:
+        candidate.relative_to(boundary)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_receipt_destination(
+    document: dict[str, Any],
+    receipt_path: Path,
+    *,
+    phase: str,
+    register_path: Path,
+    schema_path: Path,
+    package: Path | None,
+    release_manifest: Path | None,
+    root: Path = ROOT,
+) -> None:
+    """Keep receipt output disjoint from every validated source and artifact."""
+    destination = _resolved_output(receipt_path, "receipt destination")
+    exact_inputs = {
+        _resolved_output(register_path, "rights register"),
+        _resolved_output(schema_path, "rights schema"),
+    }
+    if release_manifest is not None:
+        exact_inputs.add(_resolved_output(release_manifest, "release manifest"))
+    for _, source in _source_records(document):
+        try:
+            relative = safe_relative(source.get("path"), "validated source", expose_value=False)
+        except RightsError:
+            continue
+        exact_inputs.add(_resolved_output(root / relative, "validated source"))
+    if destination in exact_inputs:
+        raise RightsError("receipt destination overlaps a validated input")
+
+    boundaries: list[Path] = []
+    if package is not None:
+        boundaries.append(_resolved_output(package, "package"))
+    if phase in {"public", "release"}:
+        boundaries.append(_resolved_output(root / "media" / "assets", "release media boundary"))
+    if any(_inside(destination, boundary) for boundary in boundaries):
+        raise RightsError("receipt destination overlaps a validated artifact boundary")
+
+
 def validate_all(
     *,
     register_path: Path = REGISTER,
@@ -1950,9 +2182,21 @@ def validate_all(
     phase: str = "draft",
     package: Path | None = None,
     release_manifest: Path | None = None,
+    receipt_path: Path | None = None,
     root: Path = ROOT,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     document = load_register(register_path, schema_path, root=root)
+    if receipt_path is not None:
+        validate_receipt_destination(
+            document,
+            receipt_path,
+            phase=phase,
+            register_path=register_path,
+            schema_path=schema_path,
+            package=package,
+            release_manifest=release_manifest,
+            root=root,
+        )
     blockers, inputs = phase_blockers(
         document,
         phase,
@@ -1986,6 +2230,7 @@ def main(argv: list[str] | None = None) -> int:
             phase=args.phase,
             package=args.package,
             release_manifest=args.release_manifest,
+            receipt_path=args.receipt,
         )
     except RightsError as exc:
         print(str(exc), file=sys.stderr)

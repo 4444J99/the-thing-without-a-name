@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
@@ -66,11 +68,19 @@ def make_package(base: Path, document: dict) -> Path:
     (package / "text").mkdir()
     (package / "provenance").mkdir()
     master = b"rights-test-master"
+    screener = b"rights-test-screener"
     origin = b"rights-test-origin"
     score = b"rights-test-score-source"
+    generated_stills = {
+        f"stills/seed-0x{0x1000 + index:04X}.jpg": f"rights-test-still-{index}".encode()
+        for index in range(6)
+    }
     (package / "master.mov").write_bytes(master)
+    (package / "screener.mp4").write_bytes(screener)
     (package / "stills/origin-2017.jpg").write_bytes(origin)
     (package / "provenance/passage-score.wav").write_bytes(score)
+    for name, payload in generated_stills.items():
+        (package / name).write_bytes(payload)
     for binding in document["package_text"]:
         source = ROOT / binding["source"]["path"]
         (package / binding["destination"]).write_bytes(source.read_bytes())
@@ -106,6 +116,16 @@ def make_package(base: Path, document: dict) -> Path:
                 },
             },
             {
+                "name": "screener.mp4",
+                "bytes": len(screener),
+                "sha256": digest_bytes(screener),
+                "sound": {
+                    "sources": audio_sources,
+                    "score_sha256": digest_bytes(score),
+                    "bank_fingerprint": "test-bank",
+                },
+            },
+            {
                 "name": "provenance/passage-score.wav",
                 "bytes": len(score),
                 "sha256": digest_bytes(score),
@@ -123,6 +143,14 @@ def make_package(base: Path, document: dict) -> Path:
                 "source_sha256": origin_source,
                 "copy_mode": "byte-identical",
             },
+            *(
+                {
+                    "name": name,
+                    "bytes": len(payload),
+                    "sha256": digest_bytes(payload),
+                }
+                for name, payload in generated_stills.items()
+            ),
             *text_items,
         ],
     }
@@ -555,6 +583,14 @@ class RightsContractTest(unittest.TestCase):
             )
 
     def test_shipping_date_is_independent_of_the_ambient_host_timezone(self) -> None:
+        submission = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        timezone_name, _ = RIGHTS._submission_zone(submission)
+        self.assertEqual(timezone_name, submission["opportunity_snapshot"]["timezone"])
+        wrong_zone = copy.deepcopy(submission)
+        wrong_zone["opportunity_snapshot"]["timezone"] = "UTC"
+        with self.assertRaisesRegex(RIGHTS.RightsError, "does not agree"):
+            RIGHTS._submission_zone(wrong_zone)
+
         identities = []
         for timezone in ("Pacific/Honolulu", "America/New_York", "UTC"):
             environment = os.environ.copy()
@@ -582,11 +618,88 @@ class RightsContractTest(unittest.TestCase):
             package = make_package(Path(temporary), candidate)
             blockers, identity = validate_fixture_package(candidate, package)
             self.assertEqual(blockers, [])
-            self.assertEqual(identity["items"], 3 + len(candidate["package_text"]))
+            self.assertEqual(identity["items"], 10 + len(candidate["package_text"]))
 
             (package / "master.mov").write_bytes(b"tampered")
             blockers, _ = validate_fixture_package(candidate, package)
             self.assertTrue(any("digest does not match" in blocker for blocker in blockers), blockers)
+
+    def test_required_package_artifact_census_cannot_be_reduced_to_text(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        cases = (
+            ({"master.mov"}, "missing required master artifact"),
+            ({"screener.mp4"}, "missing required screener artifact"),
+            ({"provenance/passage-score.wav"}, "missing required score source artifact"),
+            ({"stills/origin-2017.jpg"}, "missing required origin still artifact"),
+            ({"stills/seed-0x1000.jpg"}, "canonical submission requires 6"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, (removed, expected) in enumerate(cases):
+                package = make_package(Path(temporary) / str(index), candidate)
+                manifest_path = package / "manifest.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["items"] = [
+                    item for item in manifest["items"] if item.get("name") not in removed
+                ]
+                manifest_path.write_text(json.dumps(manifest))
+                blockers, _ = validate_fixture_package(candidate, package)
+                self.assertTrue(any(expected in blocker for blocker in blockers), blockers)
+
+    def test_package_inventory_is_repeated_after_item_validation(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        inventory = RIGHTS._package_inventory
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            calls = 0
+
+            def add_late_artifact(package_root: Path) -> tuple[set[str], list[str]]:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    (package / "late-unmanifested.webp").write_bytes(b"late rights bytes")
+                return inventory(package_root)
+
+            with mock.patch.object(
+                RIGHTS,
+                "_package_inventory",
+                side_effect=add_late_artifact,
+            ):
+                blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(any("inventory changed during validation" in item for item in blockers), blockers)
+
+    def test_phase_validators_fail_closed_on_invalid_register_graphs(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        candidate["package_rules"][0]["pattern"] = "["
+        candidate["package_rules"][1]["requirements"][0]["asset"] = "missing-asset"
+        fixed_asset = next(asset for asset in candidate["assets"] if asset["id"] == "selected-music")
+        fixed_use = next(use for use in fixed_asset["uses"] if use["id"] == "score-audio")
+        fixed_use["term"] = "fixed"
+        fixed_use["expires"] = None
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            blockers, _ = fixture_phase_blockers(candidate, "package", package=package)
+            self.assertTrue(any("invalid regex" in item for item in blockers), blockers)
+            self.assertTrue(any("unknown asset/use" in item for item in blockers), blockers)
+            self.assertTrue(any("fixed permission has no expiry" in item for item in blockers), blockers)
+
+        release_candidate = copy.deepcopy(self.document)
+        clear_requirements(release_candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), release_candidate)
+            release_candidate["credit_rules"][0]["gate"] = "missing-gate"
+            release_candidate["credit_rules"][0]["asset"] = "missing-asset"
+            blockers, _ = RIGHTS.validate_release_manifest(
+                release_candidate,
+                release,
+                "release",
+                root=root,
+                register_path=register,
+            )
+            self.assertTrue(any("names unknown gate" in item for item in blockers), blockers)
+            self.assertTrue(any("names unknown asset" in item for item in blockers), blockers)
 
     def test_package_binds_current_delivery_tree_and_every_text_manifest_row(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -976,6 +1089,49 @@ class RightsContractTest(unittest.TestCase):
             package=Path("/Users/private-person/unavailable-package"),
         )
         self.assertNotIn("/Users/", RIGHTS.canonical_json(missing_package))
+
+    def test_receipt_output_cannot_overwrite_any_validated_input_or_artifact(self) -> None:
+        with self.assertRaisesRegex(RIGHTS.RightsError, "validated input"):
+            RIGHTS.validate_receipt_destination(
+                self.document,
+                RIGHTS.REGISTER,
+                phase="draft",
+                register_path=RIGHTS.REGISTER,
+                schema_path=RIGHTS.SCHEMA,
+                package=None,
+                release_manifest=None,
+            )
+        with self.assertRaisesRegex(RIGHTS.RightsError, "artifact boundary"):
+            RIGHTS.validate_receipt_destination(
+                self.document,
+                ROOT / "media/assets/future-trailer.mp4",
+                phase="public",
+                register_path=RIGHTS.REGISTER,
+                schema_path=RIGHTS.SCHEMA,
+                package=None,
+                release_manifest=ROOT / "release/manifest.json",
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), self.document)
+            target = package / "master.mov"
+            original = target.read_bytes()
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                result = RIGHTS.main(
+                    [
+                        "--phase",
+                        "package",
+                        "--package",
+                        str(package),
+                        "--receipt",
+                        str(target),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(result, 1)
+            self.assertIn("overlaps a validated artifact boundary", stderr.getvalue())
+            self.assertEqual(target.read_bytes(), original)
 
     def test_package_receipt_binds_canonical_attestation_choices(self) -> None:
         candidate = copy.deepcopy(self.document)

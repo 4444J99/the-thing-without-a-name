@@ -203,6 +203,13 @@ class RegistryFailureTest(unittest.TestCase):
         with self.assertRaisesRegex(CHECK.RegistryError, "complete operational ScreenDance register"):
             self.validate_all()
 
+    def test_submission_named_timezone_must_match_the_frozen_deadline(self) -> None:
+        text = self.fixture.consumer.read_text(encoding="utf-8")
+        text = text.replace("timezone: America/New_York", "timezone: America/Toronto")
+        self.fixture.consumer.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(CHECK.RegistryError, "not the frozen deadline timezone"):
+            self.validate_all()
+
     def test_cross_platform_private_paths_fail_closed(self) -> None:
         markers = (
             "/var/tmp/private-source",

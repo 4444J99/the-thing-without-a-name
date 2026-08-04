@@ -36,10 +36,14 @@ python3 scripts/check-rights.py --phase release \
 
 Every non-draft receipt records the canonical `America/New_York` validation date and
 rechecks fixed-term permissions against that shipping date, including permissions
-reached through an active artifact rule. The package checker verifies every manifested
-byte and byte count, the declared corpus tier against the package builder's current
-source-tree identity, every derivative selected by the canonical Pages corpus allowlist
-against one file-count and tree-digest binding, the copied score-source
+reached through an active artifact rule. The timezone name is loaded from the canonical
+submission register and must agree with its offset-bearing hard wall. The package
+checker verifies every manifested byte and byte count, requires the master, screener,
+score source, generated-still minimum, and origin still declared by that same register,
+then repeats the complete package inventory after validation. It also binds the declared
+corpus tier against the package builder's current source-tree identity, every derivative
+selected by the canonical Pages corpus allowlist against one file-count and tree-digest
+binding, the copied score-source
 WAV and hydrated grain-bank identity, registered origin still, every copied text file's
 manifest row, rights-bearing unmanifested files, symlink boundaries, and package rights
 rules. The release checker requires the exact rights-register digest; a complete
@@ -58,6 +62,10 @@ redacted phase receipt, and they never replace durable public/release receipts. 
 receipts and register prose reject absolute machine paths on POSIX and Windows as well
 as contacts, credentials, and sensitive fields. The Pages workflow runs the public phase
 before artifact upload, so an uncleared release cannot publish a new deployment.
+Malformed graph references, regular expressions, credit dependencies, and fixed-term
+dates become explicit blockers rather than tracebacks. Receipt output is rejected before
+phase validation whenever it would overlap the register, schema, a bound source, a
+package tree, a release manifest, or the staged release-media boundary.
 
 Current state is deliberately `draft`. Anthony must still approve the final cut,
 biography, submission copy, and rights declaration; settle dancer permission and credit;

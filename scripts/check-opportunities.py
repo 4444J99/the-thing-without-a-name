@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import jsonschema
 import yaml
@@ -505,6 +506,15 @@ def validate_binding(
     if not isinstance(register, dict):
         raise RegistryError("ScreenDance consumer register must be a YAML mapping")
     binding = register.get("opportunity_snapshot")
+    if not isinstance(binding, dict):
+        raise RegistryError("ScreenDance register has no opportunity snapshot binding")
+    timezone_name = binding.get("timezone")
+    if not isinstance(timezone_name, str) or not timezone_name:
+        raise RegistryError("ScreenDance snapshot binding has no named timezone")
+    try:
+        zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise RegistryError("ScreenDance snapshot binding timezone is unavailable") from exc
     expected_binding = {
         "snapshot_id": snapshot["snapshot_id"],
         "path": record["path"],
@@ -512,12 +522,30 @@ def validate_binding(
         "receipt": "opportunities/omega-20260804.receipt.json",
         "frozen_at": snapshot["frozen_at"],
         "opportunity_id": "screendance-miami-2027",
+        "timezone": timezone_name,
     }
     if binding != expected_binding:
         raise RegistryError("ScreenDance register does not consume the exact frozen snapshot")
     targets = {entry["id"]: entry for entry in snapshot["opportunities"]}
     if binding["opportunity_id"] not in targets:
         raise RegistryError("ScreenDance consumer points at a missing opportunity")
+    target = targets[binding["opportunity_id"]]
+    deadline = parse_time(
+        target["deadline_at"],
+        "ScreenDance snapshot deadline",
+    )
+    if deadline.astimezone(zone).replace(tzinfo=None) != deadline.replace(tzinfo=None):
+        raise RegistryError("ScreenDance named timezone disagrees with the frozen deadline")
+    deadline_fact = next(
+        (fact for fact in target["facts"] if fact.get("id") == "deadline"),
+        None,
+    )
+    if (
+        not isinstance(deadline_fact, dict)
+        or not isinstance(deadline_fact.get("value"), str)
+        or timezone_name not in deadline_fact["value"]
+    ):
+        raise RegistryError("ScreenDance named timezone is not the frozen deadline timezone")
     expected_contract = {
         "path": "submission/screendance-2027.yaml",
         "excluded_fields": ["opportunity_snapshot"],
