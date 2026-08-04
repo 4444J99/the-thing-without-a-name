@@ -17,6 +17,7 @@ import {
 
 const DEFAULT_ROOM_LAYOUT_TIMEOUT_MS = 5000;
 const MAX_ROOM_LAYOUT_TIMEOUT_MS = 30000;
+const MAX_TIMER_DELAY_MS = 0x7fffffff;
 
 /** Bounded network adapter kept outside pure engine/.
  *
@@ -248,7 +249,11 @@ export function scheduleRoomWebAudio(
   let merger = null;
   let limiter = null;
   let disposed = false;
+  let stopping = false;
   let remainingSources = 0;
+  let maximumDelaySeconds = 0;
+  let disconnectAt = null;
+  let disconnectTimer = null;
   const remember = (node) => {
     graphNodes.push(node);
     return node;
@@ -256,6 +261,11 @@ export function scheduleRoomWebAudio(
   const disconnectGraph = () => {
     if (disposed) return false;
     disposed = true;
+    disconnectAt = null;
+    if (disconnectTimer !== null) {
+      clearTimeout(disconnectTimer);
+      disconnectTimer = null;
+    }
     for (const node of [...graphNodes].reverse()) {
       try {
         if (typeof node.disconnect === "function") node.disconnect();
@@ -265,11 +275,30 @@ export function scheduleRoomWebAudio(
     }
     return true;
   };
-  const stop = (at = context.currentTime) => {
+  const armDisconnect = () => {
+    if (disposed || disconnectAt === null || disconnectTimer !== null) return;
+    const remainingMs = (disconnectAt - context.currentTime) * 1000;
+    if (remainingMs <= 0) {
+      disconnectGraph();
+      return;
+    }
+    disconnectTimer = setTimeout(() => {
+      disconnectTimer = null;
+      armDisconnect();
+    }, Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.ceil(remainingMs))));
+  };
+  const disconnectAfter = (at) => {
     if (disposed) return false;
+    disconnectAt = disconnectAt === null ? at : Math.max(disconnectAt, at);
+    armDisconnect();
+    return true;
+  };
+  const stop = (at = context.currentTime) => {
+    if (disposed || stopping) return false;
     if (typeof at !== "number" || !Number.isFinite(at) || at < 0) {
       throw new RangeError("room audio stop time must be finite and non-negative");
     }
+    stopping = true;
     for (const source of sources) {
       try {
         source.stop(at);
@@ -277,7 +306,8 @@ export function scheduleRoomWebAudio(
         // A source that ended or was never admitted cannot block graph teardown.
       }
     }
-    disconnectGraph();
+    if (at <= context.currentTime) disconnectGraph();
+    else disconnectAfter(at + maximumDelaySeconds);
     return true;
   };
 
@@ -320,7 +350,7 @@ export function scheduleRoomWebAudio(
         if (ended) return;
         ended = true;
         remainingSources -= 1;
-        if (remainingSources === 0) disconnectGraph();
+        if (remainingSources === 0) disconnectAfter(context.currentTime + maximumDelaySeconds);
       };
       if (typeof source.addEventListener === "function") source.addEventListener("ended", onEnded, { once: true });
       else source.onended = onEnded;
@@ -328,6 +358,7 @@ export function scheduleRoomWebAudio(
       source.playbackRate.value = event.audio.pitch === null ? 1 : 2 ** ((event.audio.pitch - 60) / 12);
       const taps = event[output];
       for (const tap of taps) {
+        maximumDelaySeconds = Math.max(maximumDelaySeconds, tap.delay_ms / 1000);
         const gain = remember(context.createGain());
         gain.gain.value = tap.gain;
         if (tap.delay_ms > 0) {

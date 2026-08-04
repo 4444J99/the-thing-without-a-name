@@ -508,6 +508,140 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertNotIn("setTimeout", engine_source)
         self.assertNotIn("fetch(", engine_source)
 
+    def test_webaudio_teardown_waits_for_delayed_tail_and_future_stop(self) -> None:
+        script = f"""
+          import fs from 'node:fs';
+          import {{ compileRoomBus, roomContractSha256, validateRoomLayouts }} from './engine/room-events.js';
+          import {{ scheduleRoomWebAudio }} from './sound/web_audio.mjs';
+
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const layouts = validateRoomLayouts(JSON.parse(fs.readFileSync('sound/room-layout.json')));
+          const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
+          const event = bus.events.find((candidate) => candidate.type === 'score.note');
+          const digest = 'd'.repeat(64);
+          event.audio.source_sha256 = digest;
+          bus.identity.contract_sha256 = roomContractSha256(bus);
+          const buffers = {{[event.audio.role]: {{buffer: {{duration: 1}}, audio_source_sha256: digest}}}};
+
+          const timers = [];
+          globalThis.setTimeout = (callback, delay) => {{
+            const timer = {{callback, delay, cleared: false}};
+            timers.push(timer);
+            return timer;
+          }};
+          globalThis.clearTimeout = (timer) => {{ if (timer) timer.cleared = true; }};
+          function nextTimer() {{
+            while (timers.length) {{
+              const timer = timers.shift();
+              if (!timer.cleared) return timer;
+            }}
+            throw new Error('expected a pending teardown timer');
+          }}
+
+          function harness(currentTime) {{
+            const state = {{sources: [], disconnected: []}};
+            const destination = {{kind: 'destination'}};
+            const node = (kind) => ({{
+              kind,
+              connect() {{}},
+              disconnect() {{ state.disconnected.push(kind); }},
+            }});
+            const context = {{
+              currentTime,
+              destination,
+              createChannelMerger() {{ return node('merger'); }},
+              createWaveShaper() {{ return {{...node('limiter'), curve: null, oversample: 'none'}}; }},
+              createBufferSource() {{
+                const source = {{
+                  ...node('source'),
+                  buffer: null,
+                  playbackRate: {{value: 1}},
+                  stops: [],
+                  start() {{}},
+                  stop(at) {{ this.stops.push(at); }},
+                }};
+                state.sources.push(source);
+                return source;
+              }},
+              createDelay() {{ return {{...node('delay'), delayTime: {{value: 0}}}}; }},
+              createGain() {{ return {{...node('gain'), gain: {{value: 0}}}}; }},
+            }};
+            return {{context, state}};
+          }}
+
+          const tailHarness = harness(10);
+          const tail = scheduleRoomWebAudio(
+            tailHarness.context,
+            bus,
+            layouts,
+            'reference-quad',
+            buffers,
+            event.at,
+            event.at + 0.0001,
+          );
+          const plannedEvent = tail.plan.events.find((candidate) => candidate.id === event.id);
+          const maximumDelayMs = Math.max(...plannedEvent.stereo.map((tap) => tap.delay_ms));
+          tailHarness.state.sources[0].onended();
+          const tailTimer = nextTimer();
+          const tailPending = !tail.disposed && tailHarness.state.disconnected.length === 0;
+          tailTimer.callback();
+          const suspendedPending = !tail.disposed && tailHarness.state.disconnected.length === 0;
+          const resumedTailTimer = nextTimer();
+          tailHarness.context.currentTime += maximumDelayMs / 1000 + 0.001;
+          resumedTailTimer.callback();
+
+          const futureHarness = harness(20);
+          const future = scheduleRoomWebAudio(
+            futureHarness.context,
+            bus,
+            layouts,
+            'reference-quad',
+            buffers,
+            event.at,
+            event.at + 0.0001,
+          );
+          const stopAt = futureHarness.context.currentTime + 0.01;
+          const futureStop = future.stop(stopAt);
+          const futureSecondStop = future.stop(stopAt);
+          const futureTimer = nextTimer();
+          const futurePending = !future.disposed && futureHarness.state.disconnected.length === 0;
+          futureHarness.context.currentTime = stopAt + maximumDelayMs / 1000 + 0.001;
+          futureTimer.callback();
+
+          console.log(JSON.stringify({{
+            maximumDelayMs,
+            tailTimerDelay: tailTimer.delay,
+            tailPending,
+            suspendedPending,
+            tailDisposed: tail.disposed,
+            tailDisconnected: tailHarness.state.disconnected,
+            futureStop,
+            futureSecondStop,
+            futurePending,
+            futureTimerDelay: futureTimer.delay,
+            futureSourceStop: futureHarness.state.sources[0].stops.at(-1),
+            stopAt,
+            futureDisposed: future.disposed,
+            futureDisconnected: futureHarness.state.disconnected,
+          }}));
+        """
+        observed = node_json(script)
+        self.assertGreater(observed["maximumDelayMs"], 0)
+        self.assertGreaterEqual(observed["tailTimerDelay"], observed["maximumDelayMs"])
+        self.assertTrue(observed["tailPending"])
+        self.assertTrue(observed["suspendedPending"])
+        self.assertTrue(observed["tailDisposed"])
+        self.assertIn("delay", observed["tailDisconnected"])
+        self.assertIn("limiter", observed["tailDisconnected"])
+        self.assertTrue(observed["futureStop"])
+        self.assertFalse(observed["futureSecondStop"])
+        self.assertTrue(observed["futurePending"])
+        self.assertGreaterEqual(observed["futureTimerDelay"], 10 + observed["maximumDelayMs"])
+        self.assertAlmostEqual(observed["futureSourceStop"], observed["stopAt"], places=12)
+        self.assertTrue(observed["futureDisposed"])
+        self.assertIn("delay", observed["futureDisconnected"])
+        self.assertIn("limiter", observed["futureDisconnected"])
+
     def test_zero_latency_and_discrete_multichannel_webaudio_are_admitted_safely(self) -> None:
         script = f"""
           import fs from 'node:fs';

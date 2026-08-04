@@ -43,8 +43,11 @@ an exceeded latency budget fails before scheduling.
   ceiling. Zero-delay taps bypass `DelayNode` creation; multichannel output
   configures the exact discrete destination channel count only after a source is
   admitted (including a fixed-channel offline destination). Every admitted graph
-  returns an idempotent `stop()` handle and disconnects automatically after its
-  final source ends. With `enabled: false` it returns that exact plan without
+  returns an idempotent `stop()` handle. Natural final-source teardown remains
+  connected through the longest admitted delay tap; a future `stop(at)` remains
+  connected through that scheduled stop and tail, while a current-time stop is
+  immediate. Cleanup follows `AudioContext.currentTime`, so suspension cannot
+  consume the tail. With `enabled: false` it returns that exact plan without
   touching an `AudioContext`.
 - `loadRoomLayouts()` lives in the WebAudio adapter rather than pure `engine/`.
   It has a five-second default and a hard 30-second maximum, races even a
