@@ -42,6 +42,7 @@ camera must be withheld from generated cuts.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -80,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 45
+FLOOR = 47
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -623,6 +624,60 @@ def check_arrival() -> None:
 # ── 5b. the film is filable ────────────────────────────────────────────────────
 
 REGISTER = APP / "submission" / "screendance-2027.yaml"
+OPPORTUNITY_CHECKER = APP / "scripts" / "check-opportunities.py"
+OPPORTUNITY_TEST = APP / "scripts" / "tests" / "opportunities.test.py"
+
+
+def check_opportunities() -> None:
+    """The release and urgent filing must share one frozen call registry."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "danse_opportunity_invariant", OPPORTUNITY_CHECKER
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("checker module could not be loaded")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        snapshot = checker.validate_registry()
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry unavailable")
+        return
+    except Exception as exc:
+        check("every named opportunity has a source-verified disposition", False, str(exc))
+        check("filing consumes the exact frozen opportunity digest", False, "registry invalid")
+        return
+
+    tests = subprocess.run(
+        [sys.executable, str(OPPORTUNITY_TEST)],
+        cwd=APP,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tests.returncode:
+        output = (tests.stderr or tests.stdout).strip()
+        detail = output.splitlines()[-1] if output else f"test process exited {tests.returncode}"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry regressions failed")
+        return
+
+    check(
+        "every named opportunity has a source-verified disposition",
+        len(snapshot["opportunities"]) == 17,
+        f"{len(snapshot['opportunities'])} targets · {len(snapshot['ranked_actions'])} freeze-time actions",
+    )
+    try:
+        receipt = checker.validate_binding(snapshot)
+    except Exception as exc:
+        check("filing consumes the exact frozen opportunity digest", False, str(exc))
+        return
+    check(
+        "filing consumes the exact frozen opportunity digest",
+        True,
+        f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}…",
+    )
 
 
 def check_submission(program: dict, river: dict) -> None:
@@ -1055,6 +1110,8 @@ def main() -> int:
         NOTE.append(f"no film program at {PROGRAM.relative_to(ROOT)} — the piece runs free, nothing is cut")
     print("\n repository convergence retains private custody")
     check_convergence_receipts()
+    print("\n the release follows one frozen opportunity registry")
+    check_opportunities()
     print("\n the corpus is deliverable")
     check_delivery(score, manifest)
     print("\n the sound is the same film")
