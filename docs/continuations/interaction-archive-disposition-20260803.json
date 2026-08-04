@@ -1,0 +1,71 @@
+{
+  "schema": "danse.archive-disposition.v1",
+  "recordedOn": "2026-08-03",
+  "scope": {
+    "issue": "organvm/the-thing-without-a-name#13",
+    "archiveReconciliation": "organvm/the-thing-without-a-name#3",
+    "status": "complete-for-local-pose-prototype"
+  },
+  "sources": [
+    {
+      "repository": "https://github.com/organvm/limen.git",
+      "ref": "archive/danse-predecessor-experiments-20260802",
+      "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "path": "apps/danse/join.html",
+      "bytes": 4245,
+      "sha256": "6466e663f0b838da94b1e80d213fb2ac25ced2ad1624c6c07c3590f7e83aa0e2"
+    },
+    {
+      "repository": "https://github.com/organvm/the-thing-without-a-name.git",
+      "ref": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "commit": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "path": "join.html",
+      "bytes": 4320,
+      "sha256": "3b53d7a5e9d0a5c5a071a5f92e8e0c70a001192456f305b35d95073f25d167de"
+    }
+  ],
+  "archiveWholeMerge": false,
+  "dispositions": [
+    {
+      "status": "ported-and-expanded",
+      "sourceConcept": "camera capture begins only after an explicit visitor action",
+      "canonicalTargets": ["index.html", "interaction/camera.js"]
+    },
+    {
+      "status": "ported-and-expanded",
+      "sourceConcept": "pose inference and video remain local, with normalized landmarks as the measuring input",
+      "canonicalTargets": ["interaction/adapter.js", "interaction/camera.js", "interaction/vendor/mediapipe/manifest.json"]
+    },
+    {
+      "status": "rejected",
+      "sourceConcept": "runtime and model fetched from jsDelivr and Google Storage at visit time",
+      "reason": "the approved public runtime is digest-bound and served from the same-origin Pages artifact"
+    },
+    {
+      "status": "rejected",
+      "sourceConcept": "mirrored camera/skeleton display and raw landmarks exposed through window.latestPose",
+      "reason": "Danse responds to anonymous derived features; it is not a generic camera mirror and raw landmarks do not cross the adapter"
+    },
+    {
+      "status": "rejected",
+      "sourceConcept": "a separate requestAnimationFrame loop driven by video.currentTime",
+      "reason": "sampling is bounded and keyed by caller-supplied absolute river time; the pure engine retains no clock or state"
+    },
+    {
+      "status": "superseded",
+      "sourceConcept": "single-person proof with one combined denied-or-unavailable error and no fallback",
+      "reason": "the canonical adapter distinguishes permission, absence, dropout, reconnect, and re-entry; supports four visitors; and provides keyboard/touch controls"
+    },
+    {
+      "status": "superseded",
+      "sourceConcept": "standalone join.html experiment",
+      "reason": "interaction is now an optional control on the canonical artwork root; the legacy page is removed and remains excluded from the Pages artifact"
+    }
+  ],
+  "canonicalEvidence": [
+    "scripts/tests/interaction.test.mjs",
+    "interaction-test.html",
+    "scripts/tests/pages-artifact.test.py",
+    "render/browser.py --interaction"
+  ]
+}

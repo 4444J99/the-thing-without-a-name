@@ -37,11 +37,21 @@ ENGINE_MODULES = (
     "engine/room.js",
     "engine/score.js",
 )
+INTERACTION_MODULES = (
+    "interaction/adapter.js",
+    "interaction/camera.js",
+    "interaction/controller.js",
+    "interaction/session.js",
+)
+VENDOR_BASE = "interaction/vendor/mediapipe"
+VENDOR_MANIFEST = f"{VENDOR_BASE}/manifest.json"
 RUNTIME_FILES = (
     ".nojekyll",
     "index.html",
     "arrival.js",
     *ENGINE_MODULES,
+    *INTERACTION_MODULES,
+    VENDOR_MANIFEST,
     "render/program.json",
 )
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
@@ -142,10 +152,100 @@ def corpus_files(root: Path) -> set[str]:
     return files
 
 
+def vendor_files(root: Path) -> set[str]:
+    """Resolve and authenticate the locally served pose runtime.
+
+    The browser may load only files named by this reviewed manifest. Digesting
+    them here keeps a package update from silently expanding the public surface.
+    """
+    manifest_path = source_file(root, VENDOR_MANIFEST)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArtifactError(f"cannot read the pose vendor manifest: {exc}") from exc
+    if set(manifest) != {"schema", "package", "model", "patch", "files"}:
+        raise ArtifactError("pose vendor manifest has an unknown shape")
+    if manifest.get("schema") != "danse.vendor.v1":
+        raise ArtifactError(f"unsupported pose vendor schema: {manifest.get('schema')!r}")
+    package = manifest.get("package")
+    model = manifest.get("model")
+    if not isinstance(package, dict) or set(package) != {
+        "name", "version", "source", "integrity", "sha512", "license"
+    }:
+        raise ArtifactError("pose vendor manifest must declare package and model custody")
+    if not all(isinstance(package[key], str) and package[key] for key in package):
+        raise ArtifactError("pose vendor package custody fields must be non-empty strings")
+    if not package["source"].startswith("https://") or not re.fullmatch(
+        r"[0-9a-f]{128}", package["sha512"]
+    ) or not package["integrity"].startswith("sha512-"):
+        raise ArtifactError("pose vendor package source digests are invalid")
+    if not isinstance(model, dict) or set(model) != {"name", "version", "source", "license"}:
+        raise ArtifactError("pose vendor manifest must declare model custody")
+    if not all(isinstance(model[key], str) and model[key] for key in model):
+        raise ArtifactError("pose vendor model custody fields must be non-empty strings")
+    if not model["source"].startswith("https://"):
+        raise ArtifactError("pose vendor model source must be HTTPS")
+    patch = manifest.get("patch")
+    if not isinstance(patch, dict) or set(patch) != {"reason", "transformations", "upstreamSha256"}:
+        raise ArtifactError("pose vendor manifest must declare its deterministic patch")
+    if not isinstance(patch["reason"], str) or not patch["reason"]:
+        raise ArtifactError("pose vendor deterministic patch must state a reason")
+    if not isinstance(patch["transformations"], list) or not all(
+        isinstance(item, str) and item for item in patch["transformations"]
+    ):
+        raise ArtifactError("pose vendor deterministic patch transformations are invalid")
+    if not isinstance(patch["upstreamSha256"], dict) or not all(
+        isinstance(path, str) and re.fullmatch(r"[0-9a-f]{64}", str(digest))
+        for path, digest in patch["upstreamSha256"].items()
+    ):
+        raise ArtifactError("pose vendor upstream digests are invalid")
+    records = manifest.get("files")
+    if not isinstance(records, list) or not records:
+        raise ArtifactError("pose vendor manifest has no files")
+
+    paths: list[str] = []
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {"path", "bytes", "sha256"}:
+            raise ArtifactError("pose vendor manifest contains a malformed file record")
+        leaf = safe_relative(record["path"], "pose vendor path")
+        if leaf == "manifest.json" or Path(leaf).suffix not in {".js", ".mjs", ".wasm", ".task", ".txt"}:
+            raise ArtifactError(f"unsupported pose vendor file: {leaf}")
+        relative = f"{VENDOR_BASE}/{leaf}"
+        path = source_file(root, relative)
+        if not isinstance(record["bytes"], int) or record["bytes"] < 0:
+            raise ArtifactError(f"invalid pose vendor byte count for {leaf}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(record["sha256"])):
+            raise ArtifactError(f"invalid pose vendor SHA-256 for {leaf}")
+        if path.stat().st_size != record["bytes"] or sha256(path) != record["sha256"]:
+            raise ArtifactError(f"pose vendor digest mismatch: {leaf}")
+        if path.suffix in {".js", ".mjs"}:
+            text = path.read_text(encoding="utf-8", errors="strict")
+            forbidden = {
+                "Date.now": r"\bDate\.now\b",
+                "performance.now": r"\bperformance\.now\b",
+                "Math.random": r"\bMath\.random\b",
+                "crypto.getRandomValues": r"\bgetRandomValues\b",
+                "runtime CDN": r"(?:cdn\.jsdelivr\.net|storage\.googleapis\.com|odml\.pa\.googleapis\.com)",
+            }
+            hit = next((label for label, pattern in forbidden.items() if re.search(pattern, text)), None)
+            if hit:
+                raise ArtifactError(f"pose vendor runtime contains forbidden {hit}: {leaf}")
+        paths.append(relative)
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ArtifactError("pose vendor manifest paths must be unique and sorted")
+    upstream_paths = {
+        f"{VENDOR_BASE}/{safe_relative(path, 'pose vendor upstream path')}"
+        for path in patch["upstreamSha256"]
+    }
+    if not upstream_paths <= set(paths):
+        raise ArtifactError("pose vendor patch names a file outside its delivered inventory")
+    return {VENDOR_MANIFEST, *paths}
+
+
 def validate_module_closure(root: Path, files: set[str]) -> None:
     """Fail when a published module refers to a local module outside the boundary."""
     for relative in sorted(files):
-        if relative != "index.html" and not relative.endswith(".js"):
+        if relative != "index.html" and not relative.endswith((".js", ".mjs")):
             continue
         text = source_file(root, relative).read_text(encoding="utf-8")
         for match in IMPORT_RE.finditer(text):
@@ -168,7 +268,7 @@ def source_files(root: Path) -> tuple[str, ...]:
     root = root.resolve()
     if not root.is_dir():
         raise ArtifactError(f"source root is not a regular directory: {root}")
-    files = set(RUNTIME_FILES) | corpus_files(root)
+    files = set(RUNTIME_FILES) | corpus_files(root) | vendor_files(root)
     for relative in files:
         source_file(root, relative)
     validate_module_closure(root, files)
