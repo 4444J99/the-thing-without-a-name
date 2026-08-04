@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://danse.example/schemas/room-events.v1.json",
+  "title": "Danse immutable per-passage room-event bus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "semantics", "release_status", "identity", "time", "provenance", "events", "lookup"],
+  "properties": {
+    "schema": {"const": "danse.room.events.v1"},
+    "semantics": {"const": "authored-start-events"},
+    "release_status": {"enum": ["fixture-only", "artistic-gate-required", "diagnostic-only"]},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score_contract_sha256", "midi_sha256", "passage", "contract_sha256"],
+      "properties": {
+        "score_contract_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "midi_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "passage": {"$ref": "#/$defs/passage"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "t0", "t1", "seconds"],
+      "properties": {
+        "basis": {"const": "absolute-river-seconds"},
+        "t0": {"type": "number", "minimum": 0},
+        "t1": {"type": "number", "exclusiveMinimum": 0},
+        "seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "score_work_id", "repertoire_entry_sha256", "layout_contract_sha256"],
+      "properties": {
+        "policy": {"const": "declared-source-bytes-only"},
+        "score_work_id": {"type": ["string", "null"]},
+        "repertoire_entry_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "layout_contract_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "events": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/event"}},
+    "lookup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quantum_seconds", "buckets", "maxima"],
+      "properties": {
+        "quantum_seconds": {"const": 1},
+        "buckets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event_start"],
+            "properties": {
+              "event_start": {
+                "type": "array",
+                "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "integer", "minimum": 0}],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "maxima": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_starts_per_bucket"],
+          "properties": {"event_starts_per_bucket": {"type": "integer", "minimum": 0}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "passage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["river_seed", "stream", "index", "seed", "t0", "seconds"],
+      "properties": {
+        "river_seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "stream": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "index": {"type": "integer", "minimum": 0},
+        "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "t0": {"type": "number", "minimum": 0},
+        "seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "position": {
+      "type": "object",
+      "description": "Listener-relative vector in the layout registry axes; routing adds the registry listener anchor before measuring to absolute speaker positions.",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": {"type": "number", "minimum": -1, "maximum": 1},
+        "y": {"type": "number", "minimum": -1, "maximum": 1},
+        "z": {"type": "number", "minimum": -1, "maximum": 1}
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "source_sha256", "pitch"],
+      "properties": {
+        "role": {"type": ["string", "null"]},
+        "source_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "pitch": {"type": ["integer", "null"], "minimum": 0, "maximum": 127}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "id", "type", "at", "source_second", "position", "depth", "intensity", "passage", "audio", "source"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "id": {"type": "string", "minLength": 1},
+        "type": {"enum": ["passage.start", "movement.start", "plane.assembly", "score.cue", "plane.recast", "score.note", "calibration.impulse"]},
+        "at": {"type": "number", "minimum": 0},
+        "end": {"type": "number", "minimum": 0},
+        "source_second": {"type": "number", "minimum": 0},
+        "position": {"$ref": "#/$defs/position"},
+        "depth": {"type": "number", "minimum": 0, "maximum": 1},
+        "intensity": {"type": "number", "minimum": 0, "maximum": 1},
+        "passage": {"$ref": "#/$defs/passage"},
+        "audio": {"$ref": "#/$defs/audio"},
+        "source": {"type": "object"},
+        "target_speaker": {"type": "string"}
+      }
+    }
+  }
+}

@@ -33,7 +33,9 @@ Five faces, one engine:
 
 ### Final Evolution
 
-1. **User Interaction**: Direct interaction (via MediaPipe pose querying, body input, and visitor modulation in the space).
+1. **User Interaction**: An opt-in, local pose adapter now turns presence, position,
+   openness, reach, dwell, and a small crowd into bounded room modulation. Keyboard and
+   touch controls exercise the same contract without a camera.
 2. **Spatial Sound Triggering**: Sound derived from the room/space that each generation of panel/slice triggers between the background's XY axes as material assembles and moves.
 
 ## Arriving is the seed
@@ -73,6 +75,33 @@ it would make a reload resume where you left, which is a loop wearing a river's 
 halves of that are checked — `check-danse.py` fails if either appears inside `engine/`, and
 also if either appears anywhere else in the app. The engine stays a pure `f(seed, t)`;
 uniqueness costs it nothing.
+
+## Local embodied interaction
+
+Open **Controls** and choose either **Use camera locally** or **Use keyboard / touch**.
+The river remains complete with interaction off. Camera permission is requested only by
+that button; denial, missing hardware, no person, device loss, reconnect, and stop are
+distinct visible states, and the fallback remains available throughout.
+That native range-control fallback is also the low-power and pose-accessibility path.
+
+Pose inference uses a vendored Apache-2.0 MediaPipe runtime and model. It makes no CDN
+request. Video frames stay in the hidden local capture element, raw landmarks are reduced
+immediately to anonymous controls, and neither is retained or transmitted. A visitor may
+explicitly download a bounded ten-minute JSON receipt containing only those controls, then
+replay it against the same river by absolute river time. Receipts from another river fail
+closed.
+
+The adapter wraps the renderer; it does not enter `engine/`. With no visitor—or while a
+reduced-motion frame is held—the renderer receives the engine's original state and draw
+objects unchanged. A live visit and a receipt replay therefore query the same pure
+`f(seed, t)` frame and apply the same deterministic modulation outside it.
+
+| Derived input | Bounded room response |
+|---|---|
+| horizontal / vertical position | camera azimuth / elevation |
+| openness and crowd | divergence / plane spread |
+| reach and dwell | carried-picture and figure-matte emphasis |
+| no person or dropout | short deterministic fade to the untouched river |
 
 ## The three decisions
 
@@ -230,11 +259,16 @@ animating it toward `0` is literally its undoing.
 
   index.html   the living page          film.html    capture harness (no UI, no rAF)
   arrival.js   the ONE impure module — a visitor's river, and the only clock
-  join.html    local camera/pose study   probe.html   projection go/no-go
-  engine/      gl · mat4 · rng · room · grammar · renderer · corpus · clock · program
+  interaction/ bounded local pose, fallback, receipt replay · vendored runtime/model
+  probe.html   projection go/no-go       interaction-test.html   browser contract
+  engine/      gl · mat4 · rng · room · room-events · grammar · renderer · corpus · clock · program
+  music/       layered repertoire provenance · MIDI compiler · immutable fixture score
+  sound/       shared room-event bus · stereo/WebAudio/offline/multichannel plans
+  installation/ reference twin · calibration/evidence contracts · foreground recovery runtime
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
+  release/     one phase-gated manifest for project, pitch, access, press, and media
 ```
 
 ## Pipeline
@@ -288,6 +322,41 @@ Playwright. `deliver.py --preflight` reports missing modules, the Metal Chrome
 surface, the film tier, the two-source grain bank, and the registered origin
 photograph without creating output directories.
 
+The score-clock implementation is fixture-only until repertoire and its exact
+source layers are selected and cleared. See [`music/README.md`](music/README.md)
+for the opt-in query/render paths and the explicit remaining artistic gate.
+The deterministic spatial bus and its reference-only speaker maps are documented
+in [`sound/ROOM_EVENTS.md`](sound/ROOM_EVENTS.md); they do not claim cleared audio
+bytes, venue approval, or a completed physical room test.
+The installation reference twin, projector/speaker calibration contract, bounded
+foreground recovery runtime, and setup/strike/restore protocol are documented in
+[`installation/README.md`](installation/README.md). Its tracked gate ledger keeps
+venue, hardware, measurement, three wall-plug, and restore predicates explicitly
+blocked; a green simulator does not claim a physical installation.
+
+## Public and institutional artifacts
+
+The live artwork remains at `/`. The reserved `/project/` page, deterministic pitch
+PDF, accessibility and caption/transcript materials, press/credits kit, posting plan,
+and release-media inventory all build from `release/manifest.json`. The manifest
+consumes the frozen Omega opportunity digest and represents incomplete human/external
+evidence as named gates instead of placeholders that can accidentally ship.
+
+```bash
+python3 scripts/check-release.py --phase draft --list-gates
+python3 scripts/tests/release-manifest.test.py
+```
+
+Draft output is visibly marked and `noindex`. Public and release phases fail closed
+until the exact cut, room, rights, accessibility, identity, custody, restore, and real
+presentation receipts exist. Source `release/` and `project/` paths never enter the
+Pages allowlist. After the public predicates pass, the deployment workflow builds and
+verifies a separate public release artifact, then copies only its receipt-bound
+`/project/`, generated public documents, and cleared external media into the staged
+Pages artifact. With the current pending gates, that workflow stops before upload or
+deployment. Building review files locally never deploys or sends anything. See
+[`release/README.md`](release/README.md) for the phase and evidence contract.
+
 ## Provenance
 
 Nothing is synthesised. Every pixel is a photograph taken on 20 June 2017. The pose
@@ -297,10 +366,19 @@ project.
 
 ## Run
 
-Pure static — no build step, no dependencies.
+Pure static — no build step or network dependency.
 
 ```bash
 python3 -m http.server 8080
+```
+
+The deterministic adapter test requires Node; the browser predicate also proves the local
+model instantiates without any external request:
+
+```bash
+node scripts/tests/interaction.test.mjs
+python3 scripts/check-installation.py
+python3 render/browser.py --interaction
 ```
 
 Plan: [`docs/plans/2026-07-30-danse-generative-engine.md`](docs/plans/2026-07-30-danse-generative-engine.md)

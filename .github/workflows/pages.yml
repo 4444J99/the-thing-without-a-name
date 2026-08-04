@@ -23,10 +23,44 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python3 -m pip install '.[media]'
+      - name: Require exact public rights and release inventory
+        run: >-
+          python3 scripts/check-rights.py
+          --phase public
+          --release-manifest release/manifest.json
+      - name: Build phase-gated public release artifact
+        run: >-
+          python3 scripts/build-release.py
+          --output "${RUNNER_TEMP}/danse-release-public"
+          --phase public
+          --source-commit "${GITHUB_SHA}"
+      - name: Verify exact public release artifact
+        run: >-
+          python3 scripts/build-release.py
+          --verify "${RUNNER_TEMP}/danse-release-public"
+          --phase public
+          --source-commit "${GITHUB_SHA}"
+      - name: Build allowlisted Pages artifact
+        run: >-
+          python3 scripts/build-pages.py
+          --output "${RUNNER_TEMP}/danse-pages"
+          --source-commit "${GITHUB_SHA}"
+          --release-artifact "${RUNNER_TEMP}/danse-release-public"
+      - name: Verify public boundary and interface
+        env:
+          DANSE_PAGES_ARTIFACT: ${{ runner.temp }}/danse-pages
+          DANSE_PAGES_SOURCE_SHA: ${{ github.sha }}
+          DANSE_PAGES_RELEASE_ARTIFACT: ${{ runner.temp }}/danse-release-public
+        run: python3 scripts/tests/pages-artifact.test.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: ${{ runner.temp }}/danse-pages
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

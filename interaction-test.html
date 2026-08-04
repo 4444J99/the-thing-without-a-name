@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Danse local interaction verification</title>
+<main>
+  <h1>Danse local interaction verification</h1>
+  <pre id="verdict">running</pre>
+</main>
+<script type="module">
+import { createReceipt, inputAt, validateReceipt } from "./interaction/adapter.js";
+import { LocalPoseCamera, createLocalPoseDetector } from "./interaction/camera.js";
+import { InteractionController } from "./interaction/controller.js";
+
+const runs = [];
+const run = (label, pass, detail = "") => runs.push({ label, pass: Boolean(pass), detail });
+const river = { seed: 0x10203040, stream: 7 };
+const visitor = { slot: 0, confidence: 0.9, center: [0.25, 0.4], openness: 0.6, reach: 0.8 };
+const video = () => ({ srcObject: null, muted: false, playsInline: false, readyState: 4, play: async () => {} });
+
+class Track extends EventTarget {
+  stop() { this.stopped = true; }
+}
+const stream = () => {
+  const track = new Track();
+  return { track, getVideoTracks: () => [track], getTracks: () => [track] };
+};
+
+try {
+  const receipt = createReceipt(river);
+  receipt.samples = [
+    { at: 10, status: "active", source: "fixture", visitors: [visitor] },
+    { at: 10.5, status: "dropout", source: "fixture", visitors: [] },
+    { at: 12, status: "active", source: "fixture", visitors: [{ ...visitor, center: [0.75, 0.4] }] },
+  ];
+  receipt.window = { startedAt: 10, endedAt: 12 };
+  const valid = validateReceipt(receipt, river);
+  const replay = inputAt(valid, 12.1);
+  inputAt(valid, 10.75);
+  run("out-of-order receipt replay", JSON.stringify(inputAt(valid, 12.1)) === JSON.stringify(replay));
+  run("dropout fades", inputAt(valid, 10.75).strength > 0 && inputAt(valid, 11.9).strength === 0);
+  run("re-entry resumes", replay.center[0] === 0.75 && replay.strength > 0);
+
+  let detectorLoaded = false;
+  const denied = new LocalPoseCamera({
+    video: video(),
+    onSample: () => {},
+    mediaDevices: { getUserMedia: async () => { throw new DOMException("denied", "NotAllowedError"); } },
+    detectorFactory: async () => { detectorLoaded = true; },
+  });
+  await denied.start(1);
+  run("permission denial is explicit", denied.phase === "denied" && !denied.desired);
+  run("denial never loads model", !detectorLoaded);
+
+  const devices = [stream(), stream()];
+  let calls = 0;
+  const samples = [];
+  const camera = new LocalPoseCamera({
+    video: video(),
+    onSample: (sample) => samples.push(sample),
+    mediaDevices: { getUserMedia: async () => devices[calls++] },
+    detectorFactory: async () => ({ detectForVideo: () => ({ landmarks: [] }), close() {} }),
+  });
+  await camera.start(3);
+  camera.poll(3.1);
+  devices[0].track.dispatchEvent(new Event("ended"));
+  camera.poll(4.1);
+  await camera.pending;
+  run("no-person is explicit", samples.some(({ status }) => status === "no-person"));
+  run("device loss reconnects in river time", calls === 2 && camera.phase === "no-person");
+  camera.stop(5);
+
+  const fallback = new InteractionController({ river, video: video(), camera: { mediaDevices: {} } });
+  fallback.setFallback({ center: [0.9, 0.1], openness: 1, reach: 1 }, 20);
+  fallback.tick(20.25, river);
+  const fallbackInput = fallback.inputAt(20.25);
+  run("no-camera fallback is recordable", fallbackInput.source === "keyboard-touch" && fallbackInput.center[0] === 0.9);
+
+  const detector = await createLocalPoseDetector({ maxVisitors: 2 });
+  run("vendored model loads without a CDN", typeof detector.detectForVideo === "function");
+  const frame = document.createElement("canvas");
+  frame.width = frame.height = 64;
+  frame.getContext("2d").fillRect(0, 0, 64, 64);
+  const inference = detector.detectForVideo(frame, 0);
+  run("patched runtime performs local inference", Array.isArray(inference.landmarks));
+  detector.close();
+} catch (error) {
+  runs.push({ label: "verification exception", pass: false, detail: error?.stack ?? String(error) });
+}
+
+const result = { pass: runs.every(({ pass }) => pass), runs };
+document.getElementById("verdict").textContent = runs
+  .map(({ label, pass, detail }) => `${pass ? "PASS" : "FAIL"}  ${label}${detail ? `\n${detail}` : ""}`)
+  .join("\n");
+window.danseInteractionVerify = result;
+</script>

@@ -33,12 +33,15 @@
  */
 import * as Corpus from "./engine/corpus.js";
 import * as Program from "./engine/program.js";
+import * as MusicalScore from "./engine/score.js";
 import { frameAt, hex, signature, step } from "./engine/engine.js";
 import { numericParam } from "./engine/query.js";
 import { requireTier } from "./engine/tier.js";
 
 const q = new URLSearchParams(location.search);
 const program = await Program.load(q.get("program") ?? "render/program.json");
+const scoreUrl = q.get("score");
+const musicalScore = scoreUrl ? await MusicalScore.load(scoreUrl) : null;
 const cap = Program.captureOf(program, q.get("capture") ?? q.get("window") ?? "passage");
 const seed = numericParam(q, "s", program.seed, { integer: true, min: 0, max: 0xFFFFFFFF });
 const stream = numericParam(q, "u", 0, { integer: true, min: 0, max: 0xFFFFFFFF });
@@ -91,13 +94,20 @@ let missing = 0;
 async function renderAt(t) {
   // What this frame will ask for — fetched and decoded BEFORE anything is drawn,
   // so the frame does not depend on what happened to be cached.
-  const { cast } = step(corpus, seed, t, program, { stream });
+  const { cast } = step(corpus, seed, t, program, { stream, score: musicalScore });
   const ids = cast.flatMap((c) => c.layers.map((l) => l.frame)).filter(Boolean);
   if (ids.length) await requireTier(corpus, tier, ids);
 
   // `cover`, always. A 16:9 master that letterboxes a 4:3 source is a 4:3 film in
   // a 16:9 container, and a vertical Reel that does it is unwatchable on a phone.
-  const r = frameAt(renderer, corpus, seed, t, program, { stream, quantise: 0, tier, pixelRatio: 1, fit: "cover" });
+  const r = frameAt(renderer, corpus, seed, t, program, {
+    stream,
+    score: musicalScore,
+    quantise: 0,
+    tier,
+    pixelRatio: 1,
+    fit: "cover",
+  });
   renderer.gl.finish();
   drawn++;
   missing += r.missing;
@@ -111,6 +121,7 @@ const opening = Program.passageAt(program, seed, span.t0, stream);
 
 window.danseFilm = {
   program,
+  score: musicalScore,
   capture: cap.name,
   window: span,
   seed,

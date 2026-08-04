@@ -1,0 +1,17 @@
+{
+  "schema": "danse.rights.use-decision.v1",
+  "asset_id": "mediapipe-pose-runtime",
+  "use_id": "distribution",
+  "authority": "Google LLC and upstream contributors",
+  "decision": "cleared",
+  "medium": "software-distribution",
+  "required_for": [
+    "public",
+    "release"
+  ],
+  "territory": "worldwide",
+  "term": "perpetual",
+  "expires": null,
+  "promotion": "not-applicable",
+  "archive": "not-applicable"
+}

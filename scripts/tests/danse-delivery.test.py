@@ -110,6 +110,51 @@ def run_corpus_pipeline(work: Path, out: Path, tiers: str, *extra: str) -> int:
         return CORPUS_PIPELINE.main()
 
 
+def write_fake_reel_segment(render_out: Path, payload: bytes = b"rendered reel") -> Path:
+    """Write the typed renderer evidence expected by the reel delivery boundary."""
+    segment = render_out / "reel-default-seg-000.mp4"
+    segment.write_bytes(payload)
+    receipt = {
+        "schema": "danse.render.segment.v1",
+        "segment": 0,
+        "frames": 450,
+        "inputs": {
+            "source_tree_sha256": "fixture-renderer-source",
+            "tier": "film",
+        },
+        "file_sha256": DELIVER.digest(segment),
+    }
+    segment.with_name(segment.name + ".receipt.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
+    return segment
+
+
+def write_fake_reel_concat(render_out: Path, payload: bytes = b"rendered reel") -> Path:
+    """Write a one-segment concat and its exact receipt chain."""
+    segment = render_out / "reel-default-seg-000.mp4"
+    if not segment.is_file():
+        write_fake_reel_segment(render_out)
+    segment_receipt = segment.with_name(segment.name + ".receipt.json")
+    picture = render_out / "reel-default.mp4"
+    picture.write_bytes(payload)
+    receipt = {
+        "schema": "danse.render.concat.v1",
+        "codec": "h264",
+        "segments": [
+            {
+                "name": segment.name,
+                "receipt_sha256": DELIVER.digest(segment_receipt),
+            }
+        ],
+        "file_sha256": DELIVER.digest(picture),
+    }
+    picture.with_name(picture.name + ".receipt.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
+    return picture
+
+
 class DeliveryContractTest(unittest.TestCase):
     def test_offline_url_preserves_zero_seed_and_every_capture_override(self) -> None:
         args = SimpleNamespace(
@@ -1257,6 +1302,26 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertIn("later: null", text)
         self.assertIn("without-rule: null", text)
         self.assertNotIn("has no identifier", text)
+        self.assertIn("dancer-release-and-credit: null", text)
+        self.assertIn("pictured-objects-reviewed: null", text)
+        self.assertIn("music-cleared: null", text)
+        self.assertIn("submission-copy-approved: null", text)
+        self.assertIn("archive-library-choice: null", text)
+        self.assertIn('choose one of ["include", "opt-out"]', text)
+
+    def test_attestation_template_rejects_duplicate_rights_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            duplicate = Path(temporary) / "register.json"
+            duplicate.write_text(
+                '{"human_gates":[],"human_gates":[{"attestation":'
+                '{"key":"injected-private-gate","kind":"boolean","values":[true]}}]}'
+            )
+            with (
+                mock.patch.object(DELIVER, "RIGHTS_REGISTER", duplicate),
+                mock.patch.object(DELIVER.yaml, "safe_load", return_value={}),
+                self.assertRaisesRegex(SystemExit, "invalid or unreadable JSON"),
+            ):
+                DELIVER.attestation_template()
 
     def test_text_preflight_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1732,13 +1797,15 @@ class DeliveryContractTest(unittest.TestCase):
             manifest = json.loads((package / "manifest.json").read_text())
             self.assertEqual(manifest["sound"], old_sound)
 
-    def test_reused_media_preserves_prior_digest_for_validation(self) -> None:
+    def test_reused_media_without_producer_receipt_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             package = root / "package"
             package.mkdir()
             master = package / "master.mov"
             master.write_bytes(b"modified after packaging")
+            score = root / "passage-score.wav"
+            score.write_bytes(b"rendered score source")
             prior_digest = "0" * 64
             (package / "manifest.json").write_text(
                 json.dumps(
@@ -1763,17 +1830,127 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(
                     DELIVER,
                     "passage_sound",
-                    return_value=(root / "passage-score.wav", {"score_sha256": "score"}, False),
+                    return_value=(score, {"score_sha256": DELIVER.digest(score)}, False),
                 ),
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
                 redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(DELIVER.main(), 0)
-            receipt = next(
-                item for item in json.loads((package / "manifest.json").read_text())["items"] if item["name"] == "master.mov"
+                with self.assertRaisesRegex(SystemExit, "producer receipt is missing"):
+                    DELIVER.main()
+            self.assertEqual(master.read_bytes(), b"modified after packaging")
+            prior = json.loads((package / "manifest.json").read_text())
+            self.assertEqual(prior["items"][0]["sha256"], prior_digest)
+
+    def test_production_receipt_rejects_incomplete_identity_and_unsafe_destination(self) -> None:
+        target = {
+            "name": DELIVER.SCORE_SOURCE_ITEM,
+            "bytes": 5,
+            "sha256": "1" * 64,
+        }
+        complete = {
+            "seed": "0xAF6B7BE5",
+            "passage_seed": "0xAF6B7BE5",
+            "passage": 0,
+            "start": 0.0,
+            "t0": 0.0,
+            "t1": 312.54,
+            "duration": 312.54,
+            "corpus_tier": "film",
+            "source_tree_sha256": "0" * 64,
+            "items": [target],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(SystemExit, "complete passage identity"):
+                DELIVER.write_production_receipt(
+                    root / "missing-passage",
+                    root / "render",
+                    {"items": [target]},
+                    {},
+                )
+            without_source = {**complete}
+            without_source.pop("source_tree_sha256")
+            with self.assertRaisesRegex(SystemExit, "complete source-tree identity"):
+                DELIVER.write_production_receipt(
+                    root / "missing-source",
+                    root / "render",
+                    without_source,
+                    {},
+                )
+
+            package = root / "package"
+            provenance = package / "provenance"
+            provenance.mkdir(parents=True)
+            outside = root / "outside.json"
+            outside.write_bytes(b"must remain unchanged")
+            production = package / DELIVER.PRODUCTION_RECEIPT
+            production.symlink_to(outside)
+            with self.assertRaisesRegex(SystemExit, "destination is not a regular file"):
+                DELIVER.write_production_receipt(
+                    package,
+                    root / "render",
+                    complete,
+                    {},
+                )
+            self.assertEqual(outside.read_bytes(), b"must remain unchanged")
+            self.assertFalse((package / DELIVER.PRODUCER_RECEIPTS).exists())
+
+    def test_production_receipt_uses_the_decimal_renderer_still_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            render_root = root / "render"
+            package.mkdir()
+            render_root.mkdir()
+            seed = int("0x12AB", 0)
+            receipt_path = render_root / f"passage-{seed}-seg-001.mov.receipt.json"
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.render.segment.v1",
+                        "segment": 1,
+                        "frames": 1,
+                        "inputs": {
+                            "source_tree_sha256": "renderer-source",
+                            "tier": "film",
+                        },
+                        "file_sha256": "2" * 64,
+                    }
+                )
             )
-            self.assertEqual(receipt["sha256"], prior_digest)
-            self.assertNotEqual(receipt["sha256"], DELIVER.digest(master))
+            manifest = {
+                "seed": "0xAF6B7BE5",
+                "passage_seed": "0xAF6B7BE5",
+                "passage": 0,
+                "start": 0.0,
+                "t0": 0.0,
+                "t1": 312.54,
+                "duration": 312.54,
+                "corpus_tier": "film",
+                "source_tree_sha256": "0" * 64,
+                "items": [
+                    {
+                        "name": "stills/seed-0x12AB.jpg",
+                        "bytes": 5,
+                        "sha256": "3" * 64,
+                    }
+                ],
+            }
+            with mock.patch.object(
+                DELIVER,
+                "renderer_source_sha256",
+                return_value="renderer-source",
+            ):
+                reference = DELIVER.write_production_receipt(
+                    package,
+                    render_root,
+                    manifest,
+                    {},
+                )
+            self.assertIsNotNone(reference)
+            production = json.loads((package / DELIVER.PRODUCTION_RECEIPT).read_text())
+            self.assertEqual(production["outputs"][0]["name"], "stills/seed-0x12AB.jpg")
+            self.assertEqual(production["producers"][0]["kind"], "render-segment")
 
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1880,9 +2057,9 @@ class DeliveryContractTest(unittest.TestCase):
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
                 if "--concat" in command:
-                    (render_out / "reel-default.mp4").write_bytes(b"validated concat")
+                    write_fake_reel_concat(render_out, b"validated concat")
                 else:
-                    (render_out / "reel-default-seg-000.mp4").write_bytes(b"rendered reel")
+                    write_fake_reel_segment(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def mux_reel(picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
@@ -1973,7 +2150,7 @@ class DeliveryContractTest(unittest.TestCase):
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
-                (render_out / "reel-default.mp4").write_bytes(b"rendered reel")
+                write_fake_reel_concat(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def fail_mux(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
@@ -2013,7 +2190,7 @@ class DeliveryContractTest(unittest.TestCase):
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
-                (render_out / "reel-default.mp4").write_bytes(b"rendered reel")
+                write_fake_reel_concat(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
@@ -2394,12 +2571,74 @@ class DeliveryContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "attest.yaml").write_text("final-cut-only: true\n")
-            expected = {"package": 3, "uploaded": 5, "submitted": 6}
+            expected = {"package": 3, "uploaded": 5, "submitted": 10}
             for phase, count in expected.items():
                 report = CHECK.Report()
                 CHECK.check_attestations(reg, root, phase, report)
                 self.assertEqual(len(report.rows), count)
                 self.assertEqual(report.failures, count - 1)
+
+    def test_package_phase_includes_the_redacted_exact_manifest_rights_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            (package / "attest.yaml").write_text("{}\n")
+            report = CHECK.Report()
+            CHECK.check_rights(package, "package", report)
+            self.assertEqual(len(report.rows), 1)
+            self.assertEqual(report.rows[0][1], "redacted exact-manifest contract")
+            self.assertEqual(report.rows[0][2], CHECK.FAIL)
+            self.assertIn("blocker(s)", report.rows[0][3])
+            self.assertNotIn(str(package), report.rows[0][3])
+
+    def test_rights_checker_exception_never_leaks_a_machine_local_path(self) -> None:
+        report = CHECK.Report()
+        with mock.patch.object(
+            CHECK.importlib.util,
+            "spec_from_file_location",
+            side_effect=RuntimeError("failed at /Users/Alice/private-rights.json"),
+        ):
+            CHECK.check_rights(Path("/Users/Alice/private-package"), "package", report)
+        self.assertEqual(report.rows[0][2], CHECK.FAIL)
+        self.assertNotIn("/Users/", report.rows[0][3])
+        self.assertIn("RuntimeError", report.rows[0][3])
+
+    def test_published_terms_keep_provenance_and_explicit_archive_choice(self) -> None:
+        reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        report = CHECK.Report()
+        CHECK.check_requirement_phases(reg, report)
+        term_row = next(row for row in report.rows if row[1] == "published term provenance and choice contract")
+        self.assertEqual(term_row[2], CHECK.PASS)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attestations = {
+                item["id"]: True
+                for section in CHECK.OWNED_SECTIONS
+                for item in reg.get(section, [])
+                if item.get("check") == "manual"
+            }
+            for choice in ("include", "opt-out"):
+                attestations["archive-library-choice"] = choice
+                (root / "attest.yaml").write_text(yaml.safe_dump(attestations))
+                phase = CHECK.Report()
+                CHECK.check_attestations(reg, root, "submitted", phase)
+                self.assertEqual(phase.failures, 0)
+
+            attestations["archive-library-choice"] = True
+            (root / "attest.yaml").write_text(yaml.safe_dump(attestations))
+            invalid = CHECK.Report()
+            CHECK.check_attestations(reg, root, "submitted", invalid)
+            choice_row = next(row for row in invalid.rows if row[1] == "archive-library-choice")
+            self.assertEqual(choice_row[2], CHECK.FAIL)
+
+        broken = yaml.safe_load(yaml.safe_dump(reg))
+        del broken["terms"][0]["source"]
+        broken_report = CHECK.Report()
+        CHECK.check_requirement_phases(broken, broken_report)
+        broken_term_row = next(
+            row for row in broken_report.rows if row[1] == "published term provenance and choice contract"
+        )
+        self.assertEqual(broken_term_row[2], CHECK.FAIL)
 
     def test_submitted_phase_explains_elapsed_target_without_reopening_it(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
@@ -2420,6 +2659,14 @@ class DeliveryContractTest(unittest.TestCase):
         package = CHECK.Report()
         CHECK.check_deadline(reg, "package", package, now=now)
         self.assertEqual(package.rows[0][2], CHECK.FAIL)
+
+    def test_deadline_with_malformed_timezone_fails_closed(self) -> None:
+        reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        reg["opportunity_snapshot"]["timezone"] = "/UTC"
+        report = CHECK.Report()
+        CHECK.check_deadline(reg, "package", report)
+        timezone = next(row for row in report.rows if row[1] == "timezone")
+        self.assertEqual(timezone[2], CHECK.FAIL)
 
     def test_probe_ignores_attached_picture_streams(self) -> None:
         payload = {
