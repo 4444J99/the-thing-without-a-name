@@ -95,6 +95,14 @@ class ConvergenceReceiptTest(unittest.TestCase):
         value["worktrees"][0]["head"] = "f" * 40
         self.assertTrue(any("head disagrees with branch" in item for item in errors(convergence=value)))
 
+    def test_branch_and_worktree_cannot_rewrite_the_observed_head_together(self) -> None:
+        value = copy.deepcopy(CONVERGENCE)
+        branch = next(item for item in value["branches"] if item["id"] == "main")
+        worktree = next(item for item in value["worktrees"] if item["branch"] == "main")
+        branch["head"] = "f" * 40
+        worktree["head"] = branch["head"]
+        self.assertTrue(any("observed head or status drifted" in item for item in errors(convergence=value)))
+
     def test_unrecorded_conversation_cannot_be_promoted(self) -> None:
         value = copy.deepcopy(CONVERGENCE)
         outcome = next(item for item in value["agent_outcomes"] if item["id"] == "unrecorded-conversations")
@@ -170,6 +178,15 @@ class ConvergenceReceiptTest(unittest.TestCase):
                 )
         self.assertTrue(CHECK.durable_receipt("docs/session-closeout.md", ROOT))
 
+    def test_https_durable_receipt_cannot_contain_credentials(self) -> None:
+        credential_url = "https://alice:secret@example.com/restore"
+        self.assertFalse(CHECK.durable_receipt(credential_url, ROOT))
+        value = copy.deepcopy(CUSTODY)
+        value["roots"][0]["restore_rehearsal"] = {"ok": True, "receipt": credential_url}
+        self.assertTrue(
+            any("clean restore lacks a durable receipt" in item for item in errors(custody=value))
+        )
+
     def test_cleanup_authorization_must_be_an_explicit_boolean(self) -> None:
         value = copy.deepcopy(CUSTODY)
         value["roots"][0].pop("cleanup_authorized")
@@ -221,6 +238,14 @@ class ConvergenceReceiptTest(unittest.TestCase):
             )
         )
 
+    def test_custody_issue_stays_blocked_until_all_roots_are_eligible(self) -> None:
+        value = copy.deepcopy(CONVERGENCE)
+        issue = next(item for item in value["issues"] if item["id"] == 21)
+        issue["status"] = "merged"
+        self.assertTrue(
+            any("custody issue must remain blocked" in item for item in errors(convergence=value))
+        )
+
     def test_wholesale_archive_merge_fails(self) -> None:
         value = copy.deepcopy(ARCHIVE)
         value["source"]["merge_wholesale"] = True
@@ -249,6 +274,13 @@ class ConvergenceReceiptTest(unittest.TestCase):
         artifact["status"] = "ported"
         artifact["disposition"] = "Merge this workflow."
         self.assertTrue(any("disposition decision drifted" in item for item in errors(archive=value)))
+
+    def test_closeout_safeguards_cannot_be_negated_by_phrase_reuse(self) -> None:
+        weakened = CLOSEOUT.replace(
+            "two independent checksum-verified copies",
+            "never require two independent checksum-verified copies",
+        )
+        self.assertTrue(any("exact normative rule digest drifted" in item for item in errors(closeout=weakened)))
 
 
 if __name__ == "__main__":

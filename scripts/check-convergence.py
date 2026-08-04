@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -11,6 +12,7 @@ import sys
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_ROOT = Path("docs/continuations/alpha-omega")
@@ -37,21 +39,58 @@ PRIVATE_PATH = re.compile(
     r"\\\\[^\\/\s]+[\\/][^\s'\"`)]*|~[\\/][^\s'\"`)]*|file://[^\s'\"`)]*)"
 )
 EXPECTED_REMOTES = {"canonical-origin", "predecessor-archive-origin"}
-EXPECTED_BRANCHES = {
-    "main",
-    "agent/alpha-omega-control-surface",
-    "agent/screendance-published-terms",
-    "docs/convergence-custody-receipt-20260803",
-    "feat/canonical-import-20260802",
-    "feat/local-pose-input-20260803",
-    "feat/music-score-fixtures-20260803",
-    "fix/pages-hud-allowlist-20260803",
-    "fix/reel-publishable-mode-closeout-20260802",
-    "fix/reel-single-segment-closeout-20260802",
-    "work/canonical-merge-closeout-20260802",
-    "work/danse-alpha-omega-20260803",
-    "archive/danse-predecessor-experiments-20260802",
+EXPECTED_BRANCH_STATE = {
+    "main": ("aa8afef941410c0790f60ea79b1eb04deb3baa43", "merged"),
+    "agent/alpha-omega-control-surface": (
+        "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+        "merged",
+    ),
+    "agent/screendance-published-terms": (
+        "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+        "merged",
+    ),
+    "docs/convergence-custody-receipt-20260803": (
+        "096cb8470870cf1bea6fb810071492ed99568b1a",
+        "active",
+    ),
+    "feat/canonical-import-20260802": (
+        "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+        "merged",
+    ),
+    "feat/local-pose-input-20260803": (
+        "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+        "active",
+    ),
+    "feat/music-score-fixtures-20260803": (
+        "cbfd89634770df47d14a0dcb55779abb73877e28",
+        "active",
+    ),
+    "fix/pages-hud-allowlist-20260803": (
+        "00c891b21747d498230a29ae03d10ddbe45f5983",
+        "merged",
+    ),
+    "fix/reel-publishable-mode-closeout-20260802": (
+        "8d621b14a1952b4627732ae2aa844f133c21b69c",
+        "merged",
+    ),
+    "fix/reel-single-segment-closeout-20260802": (
+        "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe",
+        "merged",
+    ),
+    "work/canonical-merge-closeout-20260802": (
+        "b26b1a796d4356959a9e9e451da682457822a79b",
+        "merged",
+    ),
+    "work/danse-alpha-omega-20260803": (
+        "55891b5044ceecb35b405f89f72add8590c146ae",
+        "merged",
+    ),
+    "archive/danse-predecessor-experiments-20260802": (
+        "a232f2d7160e213802580e2d532a0d2d9ac65727",
+        "archived",
+    ),
 }
+EXPECTED_BRANCHES = set(EXPECTED_BRANCH_STATE)
 EXPECTED_WORKTREES = {
     "canonical-default",
     "canonical-import",
@@ -133,6 +172,12 @@ EXPECTED_ARCHIVE_ARTIFACTS = {
         "disposition": "No Danse-specific durable artifact was found in the configured Claude, Agy, or Codex history surfaces. Unrecorded conversations cannot be reconstructed; no creative claim is inferred from their absence.",
     },
 }
+EXPECTED_DOCUMENT_DIGESTS = {
+    "convergence": "48921ac617ddb1f167c5b1b51648bae845a5c2d7cc585673ba35ab51943b45c3",
+    "custody": "65e57686802132b2781fceef06688aee97d07bb2ab910400b758050afb3fd48e",
+    "archive": "40265b59e750cd4fb6695be8e241e5508886d71ac6b5eff26eb9c6d0f2a9ec88",
+}
+EXPECTED_CLOSEOUT_SHA256 = "b4bc870c9b54accab42ae89587b48e6b7629dbd5cf8ae87a81485fe1298edf65"
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -140,6 +185,16 @@ def load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path}: root must be an object")
     return value
+
+
+def canonical_digest(document: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        document,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def parse_time(value: object, label: str, errors: list[str]) -> datetime | None:
@@ -196,7 +251,18 @@ def durable_receipt(value: object, root: Path = ROOT) -> bool:
     if not isinstance(value, str) or not value:
         return False
     if HTTPS_RECEIPT.fullmatch(value):
-        return True
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError:
+            return False
+        return bool(
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.username is None
+            and parsed.password is None
+            and (port is None or 1 <= port <= 65535)
+        )
     pure = PurePosixPath(value)
     if (
         pure.is_absolute()
@@ -246,6 +312,8 @@ def validate_documents(
     )
     observed_times: dict[str, datetime] = {}
     for document, schema, label in expected_schemas:
+        if canonical_digest(document) != EXPECTED_DOCUMENT_DIGESTS[label]:
+            errors.append(f"{label}: immutable receipt content digest drifted")
         if document.get("schema") != schema:
             errors.append(f"{label}: expected schema {schema}")
         recorded_at = parse_time(document.get("recorded_at"), label, errors)
@@ -253,6 +321,8 @@ def validate_documents(
             observed_times[label] = recorded_at
         validate_statuses(document, label, errors)
         validate_no_private_paths(document, label, errors)
+    if hashlib.sha256(closeout_text.encode("utf-8")).hexdigest() != EXPECTED_CLOSEOUT_SHA256:
+        errors.append("closeout: exact normative rule digest drifted")
 
     relationships = convergence.get("snapshot_relationships")
     expected_relationships = {
@@ -309,6 +379,12 @@ def validate_documents(
     if branch_ids != EXPECTED_BRANCHES:
         errors.append("convergence: branch snapshot is incomplete")
     for record in branches:
+        expected_state = EXPECTED_BRANCH_STATE.get(record.get("id"))
+        if expected_state is not None and (
+            record.get("head"),
+            record.get("status"),
+        ) != expected_state:
+            errors.append(f"convergence.branches[{record.get('id')}]: observed head or status drifted")
         if not GIT_SHA.fullmatch(str(record.get("head", ""))):
             errors.append(f"convergence.branches[{record.get('id')}]: head must be a full Git object id")
         if not str(record.get("receipt", "")).strip():
@@ -365,6 +441,7 @@ def validate_documents(
         errors.append("convergence: issue receipt snapshot is incomplete")
     if any(not str(record.get("receipt", "")).strip() for record in issues):
         errors.append("convergence: every issue needs a durable owner/predicate receipt")
+    issue_by_id = {record.get("id"): record for record in issues}
 
     outcomes = unique(convergence.get("agent_outcomes"), "id", "convergence.agent_outcomes", errors)
     if {record.get("id") for record in outcomes} != EXPECTED_AGENT_OUTCOMES:
@@ -391,6 +468,7 @@ def validate_documents(
     if {record.get("id") for record in custody_roots} != EXPECTED_CUSTODY_ROOTS:
         errors.append("custody: protected root snapshot is incomplete")
     worktree_by_id = {record.get("id"): record for record in worktrees}
+    custody_eligibility: dict[str, bool] = {}
     for record in custody_roots:
         copies = record.get("independent_verified_copies")
         if not isinstance(copies, list):
@@ -452,12 +530,16 @@ def validate_documents(
             and linked is not None
             and linked.get("tracked_clean") is True
         )
+        custody_eligibility[str(record.get("id"))] = eligible
         if cleanup_authorized is True and not eligible:
             errors.append(f"custody.roots[{record.get('id')}]: cleanup bypasses copy/restore/acceptance gates")
         if cleanup_authorized is False and record.get("status") != "blocked":
             errors.append(f"custody.roots[{record.get('id')}]: retained material must be classified blocked")
         if not linked or linked.get("cleanup_authorized") is not False:
             errors.append(f"custody.roots[{record.get('id')}]: no fail-closed worktree cross-reference")
+    if not all(custody_eligibility.get(root_id, False) for root_id in EXPECTED_CUSTODY_ROOTS):
+        if issue_by_id.get(21, {}).get("status") != "blocked":
+            errors.append("convergence.issues[21]: custody issue must remain blocked until its predicate passes")
 
     source = archive.get("source") or {}
     if source != EXPECTED_ARCHIVE_SOURCE:
