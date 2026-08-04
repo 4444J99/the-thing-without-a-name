@@ -614,6 +614,7 @@ def check_arrival() -> None:
 
 REGISTER = APP / "submission" / "screendance-2027.yaml"
 OPPORTUNITY_CHECKER = APP / "scripts" / "check-opportunities.py"
+OPPORTUNITY_TEST = APP / "scripts" / "tests" / "opportunities.test.py"
 
 
 def check_opportunities() -> None:
@@ -627,9 +628,28 @@ def check_opportunities() -> None:
         checker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(checker)
         snapshot = checker.validate_registry()
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry unavailable")
+        return
     except Exception as exc:
         check("every named opportunity has a source-verified disposition", False, str(exc))
         check("filing consumes the exact frozen opportunity digest", False, "registry invalid")
+        return
+
+    tests = subprocess.run(
+        [sys.executable, str(OPPORTUNITY_TEST)],
+        cwd=APP,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tests.returncode:
+        output = (tests.stderr or tests.stdout).strip()
+        detail = output.splitlines()[-1] if output else f"test process exited {tests.returncode}"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry regressions failed")
         return
 
     check(

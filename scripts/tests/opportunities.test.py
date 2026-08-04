@@ -18,7 +18,8 @@ def load_checker():
     spec = importlib.util.spec_from_file_location(
         "danse_opportunity_test_checker", ROOT / "scripts/check-opportunities.py"
     )
-    assert spec and spec.loader
+    if spec is None or spec.loader is None:
+        raise RuntimeError("opportunity checker module could not be loaded")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -170,6 +171,32 @@ class RegistryFailureTest(unittest.TestCase):
         self.fixture.consumer.write_text(text, encoding="utf-8")
         with self.assertRaisesRegex(CHECK.RegistryError, "does not consume the exact frozen snapshot"):
             self.validate_all()
+
+    def test_operational_submission_drift_invalidates_frozen_contract(self) -> None:
+        text = self.fixture.consumer.read_text(encoding="utf-8")
+        text = text.replace(
+            'hard_wall: "2026-08-31T22:00:00-04:00"',
+            'hard_wall: "2026-08-31T21:00:00-04:00"',
+        )
+        self.fixture.consumer.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(CHECK.RegistryError, "complete operational ScreenDance register"):
+            self.validate_all()
+
+    def test_cross_platform_private_paths_fail_closed(self) -> None:
+        markers = (
+            "/var/tmp/private-source",
+            r"C:\Users\artist\private-source",
+            r"\\server\share\private-source",
+            "~/private-source",
+            "file:///private-source",
+        )
+        for marker in markers:
+            with self.subTest(marker=marker):
+                data = self.fixture.data()
+                data["opportunities"][0]["next_action"] = marker
+                self.fixture.write(data)
+                with self.assertRaisesRegex(CHECK.RegistryError, "private/local path marker"):
+                    self.validate_registry()
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_receipt_path_cannot_follow_a_symlink(self) -> None:

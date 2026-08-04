@@ -3,8 +3,8 @@
   "issued_at": "2026-08-04T01:55:03Z",
   "snapshot": {
     "path": "opportunities/omega-20260804.json",
-    "sha256": "332a1b13cf12a6f361640353ee22d42dd6ca8a84a0818ba7704109438a02cf4f",
-    "bytes": 49683,
+    "sha256": "0b187cb8f5eec05e827d5ac92b14c119c7c3dcdc2bac24565f96d084f02b905b",
+    "bytes": 49982,
     "snapshot_id": "omega-20260804",
     "frozen_at": "2026-08-04T01:44:00Z"
   },

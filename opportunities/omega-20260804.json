@@ -918,6 +918,14 @@
       "fit": "film",
       "owner_issue": 2,
       "deadline_at": "2026-08-31T22:00:00-04:00",
+      "consumer_contract": {
+        "path": "submission/screendance-2027.yaml",
+        "excluded_fields": [
+          "opportunity_snapshot"
+        ],
+        "schema": "danse.submission.v2",
+        "canonical_sha256": "d35ba2dd373271158df2138f150ec0a9cb4e4a075407b3f2da29929ed7334872"
+      },
       "sources": [
         {
           "url": "https://miamilightproject.submittable.com/submit",

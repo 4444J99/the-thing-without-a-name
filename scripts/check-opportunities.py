@@ -13,7 +13,8 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime
+from collections.abc import Iterator
+from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -61,7 +62,12 @@ EXPECTED_TARGETS = {
     "wavemaker-grants-2027-watch",
 }
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
-PRIVATE_PATHS = ("/Users/", "~/", "file://")
+PRIVATE_PATH = re.compile(
+    r"(?:^|[\s'\"`(\[])"
+    r"(?:/(?!/)[^\s'\"`)]*|//[^/\s]+/[^\s'\"`)]*|"
+    r"[A-Za-z]:[\\/][^\s'\"`)]*|\\\\[^\\/\s]+[\\/][^\s'\"`)]*|"
+    r"~[\\/][^\s'\"`)]*|file://[^\s'\"`)]*)"
+)
 
 
 class RegistryError(ValueError):
@@ -94,6 +100,51 @@ def load_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RegistryError(f"{label} must be a JSON object")
     return value
+
+
+def string_values(value: Any) -> Iterator[str]:
+    """Yield strings from a JSON-shaped value without serialisation artefacts."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from string_values(key)
+            yield from string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from string_values(item)
+
+
+def normalize_json(value: Any) -> Any:
+    """Convert YAML's date values into one stable JSON representation."""
+    if isinstance(value, dict):
+        return {str(key): normalize_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [normalize_json(item) for item in value]
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise RegistryError(f"submission register contains an unsupported value: {type(value).__name__}")
+
+
+def canonical_register_digest(register: dict[str, Any]) -> str:
+    """Digest every operational register field, excluding its snapshot pointer.
+
+    The exclusion prevents a circular digest: the YAML points at the snapshot,
+    while the snapshot commits to the canonical YAML content that does the work.
+    """
+    normalized = normalize_json(register)
+    if not isinstance(normalized, dict):
+        raise RegistryError("submission register must be a YAML mapping")
+    normalized.pop("opportunity_snapshot", None)
+    encoded = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def safe_file(root: Path, relative: str, label: str) -> Path:
@@ -132,8 +183,10 @@ def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA
         location = "/".join(str(part) for part in exc.absolute_path) or "<root>"
         raise RegistryError(f"snapshot schema failure at {location}: {exc.message}") from exc
 
-    encoded = json.dumps(snapshot, sort_keys=True)
-    leaked = next((needle for needle in PRIVATE_PATHS if needle in encoded), None)
+    leaked = next(
+        (match.group(0).strip() for value in string_values(snapshot) if (match := PRIVATE_PATH.search(value))),
+        None,
+    )
     if leaked:
         raise RegistryError(f"snapshot exposes a private/local path marker: {leaked}")
 
@@ -304,6 +357,8 @@ def validate_binding(
         register = yaml.safe_load(consumer_path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise RegistryError(f"cannot read ScreenDance consumer register: {exc}") from exc
+    if not isinstance(register, dict):
+        raise RegistryError("ScreenDance consumer register must be a YAML mapping")
     binding = register.get("opportunity_snapshot")
     expected_binding = {
         "snapshot_id": snapshot["snapshot_id"],
@@ -315,9 +370,19 @@ def validate_binding(
     }
     if binding != expected_binding:
         raise RegistryError("ScreenDance register does not consume the exact frozen snapshot")
-    targets = {entry["id"] for entry in snapshot["opportunities"]}
+    targets = {entry["id"]: entry for entry in snapshot["opportunities"]}
     if binding["opportunity_id"] not in targets:
         raise RegistryError("ScreenDance consumer points at a missing opportunity")
+    expected_contract = {
+        "path": "submission/screendance-2027.yaml",
+        "excluded_fields": ["opportunity_snapshot"],
+        "schema": "danse.submission.v2",
+        "canonical_sha256": canonical_register_digest(register),
+    }
+    if targets[binding["opportunity_id"]].get("consumer_contract") != expected_contract:
+        raise RegistryError("frozen opportunity does not bind the complete operational ScreenDance register")
+    if register.get("schema") != expected_contract["schema"]:
+        raise RegistryError("ScreenDance register schema disagrees with its frozen consumer contract")
     return receipt
 
 
