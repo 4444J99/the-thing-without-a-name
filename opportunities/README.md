@@ -10,7 +10,9 @@ were hashed in `source-evidence-20260804.json`; the snapshot binds that manifest
 and `omega-20260804.receipt.json` binds the snapshot. Response bodies are not
 vendored. `submission/screendance-2027.yaml` consumes that exact SHA-256 identity
 for issue #2, and issue #12 must cite the same identity from the future release
-manifest. Run:
+manifest. Its snapshot-binding block also names the IANA shipping timezone; the
+checker requires that zone to agree with the frozen offset-bearing deadline without
+changing the immutable snapshot bytes. Run:
 
 ```bash
 python3 scripts/check-opportunities.py

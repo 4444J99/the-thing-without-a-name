@@ -127,6 +127,66 @@ def public_fixture(root: Path) -> None:
     write(root / "corpus/tier-receipts/browse.json", b"internal receipt\n")
 
 
+def release_fixture(root: Path) -> Path:
+    public_path = root / "media/assets/accessibility.md"
+    release_path = root / "media/assets/master.mov"
+    write(public_path, b"Cleared public accessibility copy.\n")
+    write(release_path, b"Release-only master bytes.\n")
+
+    def source(path: Path) -> dict:
+        relative = path.relative_to(root).as_posix()
+        payload = path.read_bytes()
+        return {
+            "path": relative,
+            "destination": relative,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+
+    manifest = {
+        "schema": "danse.release.v1",
+        "release_id": "pages-fixture",
+        "status": "public-approved",
+        "media": [
+            {
+                "id": "accessibility-copy",
+                "required_for": ["public", "release"],
+                "status": "ready",
+                "source": source(public_path),
+                "clearance": {
+                    "status": "cleared",
+                    "owner": "Pages fixture",
+                    "evidence": {
+                        "path": "rights/evidence/pages-fixture.json",
+                        "sha256": "0" * 64,
+                        "summary": "Fixture-only clearance identity",
+                    },
+                },
+            },
+            {
+                "id": "score-driven-master",
+                "required_for": ["release"],
+                "status": "ready",
+                "source": source(release_path),
+                "clearance": {
+                    "status": "cleared",
+                    "owner": "Pages fixture",
+                    "evidence": {
+                        "path": "rights/evidence/pages-fixture.json",
+                        "sha256": "0" * 64,
+                        "summary": "Fixture-only clearance identity",
+                    },
+                },
+            },
+        ],
+        "credits": [],
+        "gates": [],
+    }
+    path = root / PAGES.RELEASE_MANIFEST
+    write(path, (json.dumps(manifest, indent=2) + "\n").encode())
+    return path
+
+
 class ProductionArtifactTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -217,12 +277,23 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertFalse(any(path.startswith("submission/") for path in paths))
         self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
+        self.assertFalse(any(path.startswith("rights/") for path in paths))
 
     def test_every_recorded_sha256_and_byte_count_verifies(self) -> None:
         verified = PAGES.verify_artifact(
             self.output, os.environ.get("DANSE_PAGES_SOURCE_SHA") or TEST_COMMIT
         )
         self.assertEqual(verified, self.manifest)
+
+    def test_deployment_requires_public_rights_before_artifact_upload(self) -> None:
+        workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        rights = workflow.index("scripts/check-rights.py")
+        upload = workflow.index("actions/upload-pages-artifact")
+        deploy = workflow.index("actions/deploy-pages")
+        self.assertLess(rights, upload)
+        self.assertLess(upload, deploy)
+        self.assertIn("--phase public", workflow)
+        self.assertIn("--release-manifest release/manifest.json", workflow)
 
 
 class ArtifactBoundaryTest(unittest.TestCase):
@@ -243,7 +314,55 @@ class ArtifactBoundaryTest(unittest.TestCase):
         self.assertFalse(any(path.startswith("submission/") for path in inventory))
         self.assertFalse(any(path.startswith("pipeline/") for path in inventory))
         self.assertFalse(any(path.startswith("installation/") for path in inventory))
+        self.assertFalse(any(path.startswith("rights/") for path in inventory))
         self.assertFalse(any(path.startswith("corpus/tier-receipts/") for path in inventory))
+
+    def test_only_cleared_public_release_assets_are_copied_and_digested(self) -> None:
+        release_fixture(self.root)
+        manifest = PAGES.build(self.root, self.output, TEST_COMMIT)
+        paths = {record["path"] for record in manifest["files"]}
+        self.assertIn("media/assets/accessibility.md", paths)
+        self.assertNotIn("media/assets/master.mov", paths)
+        self.assertNotIn(PAGES.RELEASE_MANIFEST, paths)
+        record = next(
+            row for row in manifest["files"] if row["path"] == "media/assets/accessibility.md"
+        )
+        published = self.output / record["path"]
+        self.assertEqual(record["bytes"], published.stat().st_size)
+        self.assertEqual(record["sha256"], hashlib.sha256(published.read_bytes()).hexdigest())
+
+    def test_public_release_asset_identity_and_destination_fail_closed(self) -> None:
+        release_manifest = release_fixture(self.root)
+        manifest = json.loads(release_manifest.read_text())
+        public = manifest["media"][0]
+        public["source"]["sha256"] = "0" * 64
+        release_manifest.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(PAGES.ArtifactError, "source identity is stale"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
+
+        manifest = json.loads(release_manifest.read_text())
+        payload = (self.root / "media/assets/accessibility.md").read_bytes()
+        public = manifest["media"][0]
+        public["source"] = {
+            "path": "media/assets/accessibility.md",
+            "destination": "submission/private.md",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        release_manifest.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(PAGES.ArtifactError, "outside its public destination"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_public_release_asset_symlink_fails_closed(self) -> None:
+        release_fixture(self.root)
+        public = self.root / "media/assets/accessibility.md"
+        outside = self.base / "outside-release.md"
+        write(outside, public.read_bytes())
+        public.unlink()
+        public.symlink_to(outside)
+        with self.assertRaisesRegex(PAGES.ArtifactError, "symlink"):
+            PAGES.build(self.root, self.output, TEST_COMMIT)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
     def test_allowlisted_source_symlink_fails_closed(self) -> None:
