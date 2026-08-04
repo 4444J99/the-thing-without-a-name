@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
@@ -45,7 +46,6 @@ INTERACTION_MODULES = (
 )
 VENDOR_BASE = "interaction/vendor/mediapipe"
 VENDOR_MANIFEST = f"{VENDOR_BASE}/manifest.json"
-RELEASE_MANIFEST = "release/manifest.json"
 RUNTIME_FILES = (
     ".nojekyll",
     "index.html",
@@ -243,111 +243,152 @@ def vendor_files(root: Path) -> set[str]:
     return {VENDOR_MANIFEST, *paths}
 
 
-def release_files(root: Path) -> set[str]:
-    """Resolve the exact cleared public release assets, without publishing the manifest."""
-    candidate = root / RELEASE_MANIFEST
-    if candidate.is_symlink():
-        raise ArtifactError("release manifest must not be a symlink")
-    if not candidate.exists():
-        return set()
-    manifest_path = source_file(root, RELEASE_MANIFEST)
+def _load_release_builder():
+    path = ROOT / "scripts/build-release.py"
+    spec = importlib.util.spec_from_file_location("danse_pages_release_builder", path)
+    if spec is None or spec.loader is None:
+        raise ArtifactError("cannot load the release artifact verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def public_release_files(
+    release_artifact: Path,
+    expected_commit: str,
+) -> tuple[dict[str, tuple[Path, dict]], dict]:
+    """Verify one public release artifact and select only declared public outputs."""
+    release_artifact = release_artifact.absolute()
+    if release_artifact.is_symlink() or not release_artifact.is_dir():
+        raise ArtifactError("public release artifact is missing or symlinked")
+    release_artifact = release_artifact.resolve()
+    builder = _load_release_builder()
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        receipt = builder.verify_artifact(release_artifact, expected_commit)
+    except Exception as exc:
+        raise ArtifactError(f"public release artifact failed verification: {exc}") from exc
+    if receipt.get("phase") != "public":
+        raise ArtifactError("Pages requires a public-phase release artifact")
+
+    inventory_path = release_artifact / "media/release-media.json"
+    try:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ArtifactError(f"cannot read the release manifest: {exc}") from exc
-    compact_top = {"schema", "release_id", "status", "media", "credits", "gates"}
-    full_top = {
+        raise ArtifactError(f"cannot read verified release-media inventory: {exc}") from exc
+    if not isinstance(inventory, dict) or set(inventory) != {
         "schema",
         "release_id",
         "version",
-        "status",
-        "opportunity_snapshot",
-        "identity",
-        "copy",
-        "installation",
-        "accessibility",
-        "press",
-        "claims",
-        "credits",
+        "phase",
         "media",
-        "gates",
-    }
-    if not isinstance(manifest, dict) or set(manifest) not in (compact_top, full_top):
-        raise ArtifactError("release manifest has fields outside its closed schema")
-    if manifest.get("schema") != "danse.release.v1":
-        raise ArtifactError("unsupported release manifest schema")
-    media = manifest.get("media")
-    if not isinstance(media, list):
-        raise ArtifactError("release manifest has no media inventory")
+        "products",
+    }:
+        raise ArtifactError("verified release-media inventory has an unknown shape")
+    if inventory.get("schema") != "danse.release-media.v1" or inventory.get("phase") != "public":
+        raise ArtifactError("verified release-media inventory is not public")
+    if (
+        inventory.get("release_id") != receipt["release"]["id"]
+        or inventory.get("version") != receipt["release"]["version"]
+    ):
+        raise ArtifactError("release-media inventory identity disagrees with its receipt")
 
-    paths: set[str] = set()
+    receipt_files = {record["path"]: record for record in receipt["files"]}
+    selected: dict[str, tuple[Path, dict]] = {}
+
+    def select(item_id: object, artifact: object, label: str) -> None:
+        if not isinstance(item_id, str) or not item_id:
+            raise ArtifactError(f"{label} has no stable id")
+        if not isinstance(artifact, dict) or set(artifact) != {"id", "path", "bytes", "sha256"}:
+            raise ArtifactError(f"{label} has no exact generated artifact identity")
+        if artifact["id"] != item_id:
+            raise ArtifactError(f"{label} artifact id drifted")
+        relative = safe_relative(artifact["path"], f"{label} path")
+        expected = receipt_files.get(relative)
+        identity = {
+            "path": relative,
+            "bytes": artifact["bytes"],
+            "sha256": artifact["sha256"],
+        }
+        if expected != identity:
+            raise ArtifactError(f"{label} is not bound by the release receipt")
+        if relative in selected:
+            raise ArtifactError(f"public release destination is duplicated: {relative}")
+        selected[relative] = (release_artifact / PurePosixPath(relative), identity)
+
+    media = inventory.get("media")
+    if not isinstance(media, list):
+        raise ArtifactError("release-media inventory has no external media list")
     media_ids: set[str] = set()
     for row in media:
-        if not isinstance(row, dict):
-            raise ArtifactError("release manifest contains malformed media")
-        row_keys = set(row)
-        if row_keys not in (
-            {"id", "required_for", "status", "source", "clearance"},
-            {"id", "kind", "label", "required_for", "status", "source", "clearance", "alt_text"},
-        ):
-            raise ArtifactError("release manifest media has fields outside its closed schema")
-        media_id = row.get("id")
-        if not isinstance(media_id, str) or not media_id or media_id in media_ids:
-            raise ArtifactError("release manifest media ids must be non-empty and unique")
+        if not isinstance(row, dict) or set(row) != {
+            "id",
+            "kind",
+            "label",
+            "required_for",
+            "status",
+            "clearance",
+            "alt_text",
+            "source",
+            "released",
+        }:
+            raise ArtifactError("release-media inventory contains malformed external media")
+        media_id = row["id"]
+        if not isinstance(media_id, str) or media_id in media_ids:
+            raise ArtifactError("release-media inventory repeats an external media id")
         media_ids.add(media_id)
-        phases = row.get("required_for")
-        if (
-            not isinstance(phases, list)
-            or not phases
-            or not all(isinstance(item, str) for item in phases)
-            or len(phases) != len(set(phases))
-        ):
-            raise ArtifactError(f"release media {media_id} has invalid phase scope")
+        phases = row["required_for"]
+        if not isinstance(phases, list) or not all(isinstance(item, str) for item in phases):
+            raise ArtifactError(f"release media {media_id} has an invalid phase scope")
         if "public" not in phases:
             continue
-        clearance = row.get("clearance")
-        if not isinstance(clearance, dict) or set(clearance) not in (
-            {"status"},
-            {"status", "owner", "evidence"},
-        ):
-            raise ArtifactError(f"release media {media_id} has malformed clearance")
-        ready = row.get("status") == "ready"
-        cleared = clearance.get("status") == "cleared"
-        if not ready and not cleared:
-            continue
-        if not ready or not cleared:
-            raise ArtifactError(f"release media {media_id} has inconsistent public readiness")
-        source = row.get("source")
-        if not isinstance(source, dict) or set(source) != {
+        if row["status"] != "ready" or row["clearance"] != "cleared":
+            raise ArtifactError(f"public release media {media_id} is not admitted")
+        select(media_id, row["released"], f"public release media {media_id}")
+
+    products = inventory.get("products")
+    if not isinstance(products, list):
+        raise ArtifactError("release-media inventory has no generated product list")
+    product_ids: set[str] = set()
+    for row in products:
+        if not isinstance(row, dict) or set(row) != {
+            "id",
+            "kind",
+            "label",
+            "required_for",
+            "status",
             "path",
-            "destination",
-            "sha256",
-            "bytes",
+            "artifact",
         }:
-            raise ArtifactError(f"release media {media_id} has malformed source identity")
-        source_relative = safe_relative(source.get("path"), f"release media {media_id} source")
-        destination = safe_relative(
-            source.get("destination"),
-            f"release media {media_id} destination",
-        )
-        if source_relative != destination or not destination.startswith("media/assets/"):
-            raise ArtifactError(f"release media {media_id} is outside its public destination")
-        if destination in paths:
-            raise ArtifactError(f"release media destination is duplicated: {destination}")
-        path = source_file(root, source_relative)
-        size = source.get("bytes")
-        digest = source.get("sha256")
+            raise ArtifactError("release-media inventory contains malformed generated products")
+        product_id = row["id"]
+        if not isinstance(product_id, str) or product_id in product_ids:
+            raise ArtifactError("release-media inventory repeats a generated product id")
+        product_ids.add(product_id)
+        phases = row["required_for"]
+        if not isinstance(phases, list) or not all(isinstance(item, str) for item in phases):
+            raise ArtifactError(f"generated product {product_id} has an invalid phase scope")
+        if "public" not in phases:
+            continue
+        artifact = row["artifact"]
         if (
-            type(size) is not int
-            or size < 0
-            or size != path.stat().st_size
-            or not isinstance(digest, str)
-            or not re.fullmatch(r"[0-9a-f]{64}", digest)
-            or digest != sha256(path)
+            row["status"] != "ready"
+            or not isinstance(artifact, dict)
+            or row["path"] != artifact.get("path")
         ):
-            raise ArtifactError(f"release media {media_id} source identity is stale")
-        paths.add(destination)
-    return paths
+            raise ArtifactError(f"public generated product {product_id} is not admitted")
+        select(product_id, artifact, f"public generated product {product_id}")
+
+    if "project/index.html" not in selected:
+        raise ArtifactError("public release artifact does not declare project/index.html")
+    release_receipt = release_artifact / builder.ARTIFACT_MANIFEST
+    binding = {
+        "schema": receipt["schema"],
+        "phase": receipt["phase"],
+        "release_id": receipt["release"]["id"],
+        "version": receipt["release"]["version"],
+        "receipt_sha256": sha256(release_receipt),
+    }
+    return selected, binding
 
 
 def validate_module_closure(root: Path, files: set[str]) -> None:
@@ -376,7 +417,7 @@ def source_files(root: Path) -> tuple[str, ...]:
     root = root.resolve()
     if not root.is_dir():
         raise ArtifactError(f"source root is not a regular directory: {root}")
-    files = set(RUNTIME_FILES) | corpus_files(root) | vendor_files(root) | release_files(root)
+    files = set(RUNTIME_FILES) | corpus_files(root) | vendor_files(root)
     for relative in files:
         source_file(root, relative)
     validate_module_closure(root, files)
@@ -399,6 +440,47 @@ def source_commit(root: Path, explicit: str | None = None) -> str:
     if not COMMIT_RE.fullmatch(commit):
         raise ArtifactError(f"source commit must be a full 40-character Git SHA: {commit!r}")
     return commit
+
+
+def validate_git_source(root: Path, expected_commit: str) -> None:
+    """Bind a production CLI build to one clean, exact Git worktree."""
+    root = root.absolute().resolve()
+    expected_commit = source_commit(root, expected_commit)
+    identity = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = identity.stdout.splitlines()
+    if identity.returncode != 0 or len(lines) != 2:
+        detail = identity.stderr.strip() or "source root is not a Git worktree"
+        raise ArtifactError(f"cannot authenticate source checkout: {detail}")
+    if Path(lines[0]).resolve() != root:
+        raise ArtifactError("source root must be the Git worktree top level")
+    actual_commit = lines[1].strip().lower()
+    if actual_commit != expected_commit:
+        raise ArtifactError(
+            f"source commit {expected_commit} does not match checkout HEAD {actual_commit}"
+        )
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=no",
+            "--ignore-submodules=none",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        raise ArtifactError(f"cannot inspect source checkout: {status.stderr.strip()}")
+    if status.stdout:
+        raise ArtifactError("source checkout has tracked changes")
 
 
 def artifact_inventory(root: Path) -> set[str]:
@@ -433,7 +515,7 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise ArtifactError(f"cannot read artifact manifest: {exc}") from exc
 
-    if set(manifest) != {"schema", "source", "files"} or manifest.get("schema") != ARTIFACT_SCHEMA:
+    if set(manifest) != {"schema", "source", "release", "files"} or manifest.get("schema") != ARTIFACT_SCHEMA:
         raise ArtifactError("artifact manifest has an unknown shape or schema")
     source = manifest.get("source")
     if not isinstance(source, dict) or set(source) != {"repository", "commit"}:
@@ -444,6 +526,26 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         raise ArtifactError(
             f"artifact source commit {source['commit']} does not match expected {expected_commit}"
         )
+    release = manifest["release"]
+    if release is not None:
+        if not isinstance(release, dict) or set(release) != {
+            "schema",
+            "phase",
+            "release_id",
+            "version",
+            "receipt_sha256",
+        }:
+            raise ArtifactError("artifact release binding has an unknown shape")
+        if (
+            release["schema"] != "danse.release-build.v1"
+            or release["phase"] != "public"
+            or not isinstance(release["release_id"], str)
+            or not release["release_id"]
+            or not isinstance(release["version"], str)
+            or not release["version"]
+            or not re.fullmatch(r"[0-9a-f]{64}", str(release["receipt_sha256"]))
+        ):
+            raise ArtifactError("artifact release binding is invalid")
 
     records = manifest.get("files")
     if not isinstance(records, list):
@@ -474,10 +576,30 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         extra = sorted(inventory - expected)
         missing = sorted(expected - inventory)
         raise ArtifactError(f"artifact inventory mismatch; extra={extra}, missing={missing}")
+    has_project = "project/index.html" in paths
+    if has_project != (release is not None):
+        raise ArtifactError("artifact project route disagrees with its public release binding")
+    if has_project:
+        builder = _load_release_builder()
+        try:
+            builder.verify_project_links(
+                output,
+                set(paths),
+                require_artwork_root=True,
+            )
+        except Exception as exc:
+            raise ArtifactError(f"artifact project links failed verification: {exc}") from exc
     return manifest
 
 
-def build(root: Path, output: Path, commit: str) -> dict:
+def build(
+    root: Path,
+    output: Path,
+    commit: str,
+    release_artifact: Path | None = None,
+    *,
+    require_git_source: bool = False,
+) -> dict:
     root = root.absolute()
     if root.is_symlink():
         raise ArtifactError(f"source root must not be a symlink: {root}")
@@ -493,7 +615,16 @@ def build(root: Path, output: Path, commit: str) -> dict:
         raise ArtifactError("artifact output must be outside the source repository")
 
     commit = source_commit(root, commit)
+    if require_git_source:
+        validate_git_source(root, commit)
     files = source_files(root)
+    release_files: dict[str, tuple[Path, dict]] = {}
+    release_binding = None
+    if release_artifact is not None:
+        release_files, release_binding = public_release_files(release_artifact, commit)
+    collisions = set(files) & set(release_files)
+    if collisions:
+        raise ArtifactError(f"public release outputs collide with the artwork: {sorted(collisions)}")
     output.mkdir(parents=True, exist_ok=True)
     records = []
     for relative in files:
@@ -506,12 +637,26 @@ def build(root: Path, output: Path, commit: str) -> dict:
         records.append(
             {"path": relative, "bytes": target.stat().st_size, "sha256": sha256(target)}
         )
+    for relative in sorted(release_files):
+        source, expected = release_files[relative]
+        target = output / PurePosixPath(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target, follow_symlinks=False)
+        if target.stat().st_size != expected["bytes"] or sha256(target) != expected["sha256"]:
+            raise ArtifactError(f"public release output changed while copying: {relative}")
+        target.chmod(0o644)
+        os.utime(target, (0, 0), follow_symlinks=False)
+        records.append(dict(expected))
+    records.sort(key=lambda record: record["path"])
 
     manifest = {
         "schema": ARTIFACT_SCHEMA,
         "source": {"repository": REPOSITORY, "commit": commit},
+        "release": release_binding,
         "files": records,
     }
+    if require_git_source:
+        validate_git_source(root, commit)
     manifest_path = output / ARTIFACT_MANIFEST
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
@@ -528,12 +673,23 @@ def main() -> int:
     action.add_argument("--verify", type=Path, help="verify an existing artifact")
     parser.add_argument("--root", type=Path, default=ROOT, help="repository root")
     parser.add_argument("--source-commit", help="expected full source commit SHA")
+    parser.add_argument(
+        "--release-artifact",
+        type=Path,
+        help="verified public release artifact whose declared outputs may enter Pages",
+    )
     args = parser.parse_args()
 
     try:
         if args.output:
             commit = source_commit(args.root, args.source_commit)
-            manifest = build(args.root, args.output, commit)
+            manifest = build(
+                args.root,
+                args.output,
+                commit,
+                release_artifact=args.release_artifact,
+                require_git_source=True,
+            )
         else:
             manifest = verify_artifact(args.verify, args.source_commit)
     except ArtifactError as exc:

@@ -502,6 +502,101 @@ class RightsContractTest(unittest.TestCase):
         self.assertEqual(receipt["register"]["sha256"], RIGHTS.sha256(RIGHTS.REGISTER))
         self.assertEqual(receipt["register"]["schema_sha256"], RIGHTS.sha256(RIGHTS.SCHEMA))
 
+    def test_tracked_release_manifest_reserves_every_rights_row_without_inventing_clearance(self) -> None:
+        manifest = json.loads((ROOT / "release/manifest.json").read_text(encoding="utf-8"))
+        media = {row["id"]: row for row in manifest["media"]}
+        release_rules = {row["media_id"]: row for row in self.document["release_rules"]}
+        self.assertEqual(set(media), set(release_rules))
+        for media_id, rule in release_rules.items():
+            self.assertEqual(media[media_id]["required_for"], rule["required_for"])
+            self.assertEqual(media[media_id]["status"], "pending")
+            self.assertIsNone(media[media_id]["source"])
+            self.assertEqual(media[media_id]["clearance"]["status"], "pending")
+            self.assertIsNone(media[media_id]["clearance"]["evidence"])
+
+        products = manifest["products"]
+        self.assertEqual(
+            [(row["id"], row["label"], row["path"]) for row in products],
+            [
+                ("project-page-copy", "Approved public project page", "project/index.html"),
+                (
+                    "pitch-pdf-copy",
+                    "Approved installation pitch PDF",
+                    "pitch/danse-installation-pitch.pdf",
+                ),
+                (
+                    "accessibility-copy",
+                    "Approved accessibility statement",
+                    "accessibility/accessibility.md",
+                ),
+                (
+                    "caption-track-copy",
+                    "Approved English caption track",
+                    "accessibility/captions.en.vtt",
+                ),
+                (
+                    "transcript-copy",
+                    "Approved public transcript",
+                    "accessibility/transcript.txt",
+                ),
+                ("press-kit-copy", "Approved public press kit", "press/press-kit.md"),
+                ("credits-copy", "Approved public credits", "press/credits.txt"),
+            ],
+        )
+        for product in products:
+            self.assertEqual(product["kind"], "generated-document")
+            self.assertEqual(product["required_for"], ["public", "release"])
+            self.assertEqual(product["status"], "pending")
+
+        credits = {row["id"]: row for row in manifest["credits"]}
+        credit_rules = {row["credit_id"]: row for row in self.document["credit_rules"]}
+        self.assertEqual(set(credits), set(credit_rules))
+        mediapipe = credits["mediapipe-credit"]
+        pose_asset = next(row for row in self.document["assets"] if row["id"] == "mediapipe-pose-runtime")
+        attribution_gate = next(
+            row for row in self.document["human_gates"] if row["id"] == "mediapipe-attribution-retained"
+        )
+        self.assertEqual(mediapipe["status"], "cleared")
+        self.assertEqual(mediapipe["name"], pose_asset["public_credit"]["label"])
+        self.assertEqual(mediapipe["evidence"], attribution_gate["evidence"])
+        for credit_id, credit in credits.items():
+            if credit_id == "mediapipe-credit":
+                continue
+            self.assertEqual(credit["status"], "pending")
+            self.assertIsNone(credit["evidence"])
+
+        human_gates = {row["id"]: row for row in self.document["human_gates"]}
+        self.assertEqual(
+            {row["id"] for row in self.document["human_gates"] if row["state"] == "satisfied"},
+            {"mediapipe-attribution-retained"},
+        )
+        for gate_id in (
+            "final-cut-approved",
+            "dancer-release-and-credit",
+            "link-password-protected",
+            "link-downloadable",
+            "submitted-via-submittable",
+            "accepted-film-no-withdrawal",
+            "publicity-stills-free-of-rights",
+            "archive-library-choice",
+            "regulations-accepted",
+        ):
+            self.assertEqual(human_gates[gate_id]["state"], "pending")
+            self.assertIsNone(human_gates[gate_id]["evidence"])
+
+        release_gates = {row["id"]: row for row in manifest["gates"]}
+        for gate_id in (
+            "final-artistic-approval",
+            "accessibility-review",
+            "contact-route-approval",
+            "publication-approval",
+            "rights-register",
+        ):
+            self.assertEqual(release_gates[gate_id]["state"], "pending")
+            self.assertIsNone(release_gates[gate_id]["evidence"])
+        self.assertEqual(manifest["accessibility"]["captions"]["status"], "pending")
+        self.assertEqual(manifest["accessibility"]["transcript"]["status"], "pending")
+
     def test_every_shipping_phase_fails_closed_without_human_or_exact_artifact_evidence(self) -> None:
         for phase in ("public", "package", "uploaded", "submitted", "release"):
             with self.subTest(phase=phase):
@@ -1421,15 +1516,16 @@ class RightsContractTest(unittest.TestCase):
             release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())
             manifest["status"] = []
+            omitted_media_id = candidate["release_rules"][0]["media_id"]
             manifest["media"] = [
-                row for row in manifest["media"] if row["id"] != "project-page-copy"
+                row for row in manifest["media"] if row["id"] != omitted_media_id
             ]
             release.write_text(json.dumps(manifest))
             blockers, _ = RIGHTS.validate_release_manifest(
                 candidate, release, "public", root=root, register_path=register
             )
             self.assertTrue(any("status is not valid" in blocker for blocker in blockers), blockers)
-            self.assertTrue(any("project-page-copy" in blocker for blocker in blockers), blockers)
+            self.assertTrue(any(omitted_media_id in blocker for blocker in blockers), blockers)
 
             release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())

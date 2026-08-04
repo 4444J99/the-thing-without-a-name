@@ -268,6 +268,7 @@ animating it toward `0` is literally its undoing.
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
+  release/     one phase-gated manifest for project, pitch, access, press, and media
 ```
 
 ## Pipeline
@@ -332,6 +333,29 @@ foreground recovery runtime, and setup/strike/restore protocol are documented in
 [`installation/README.md`](installation/README.md). Its tracked gate ledger keeps
 venue, hardware, measurement, three wall-plug, and restore predicates explicitly
 blocked; a green simulator does not claim a physical installation.
+
+## Public and institutional artifacts
+
+The live artwork remains at `/`. The reserved `/project/` page, deterministic pitch
+PDF, accessibility and caption/transcript materials, press/credits kit, posting plan,
+and release-media inventory all build from `release/manifest.json`. The manifest
+consumes the frozen Omega opportunity digest and represents incomplete human/external
+evidence as named gates instead of placeholders that can accidentally ship.
+
+```bash
+python3 scripts/check-release.py --phase draft --list-gates
+python3 scripts/tests/release-manifest.test.py
+```
+
+Draft output is visibly marked and `noindex`. Public and release phases fail closed
+until the exact cut, room, rights, accessibility, identity, custody, restore, and real
+presentation receipts exist. Source `release/` and `project/` paths never enter the
+Pages allowlist. After the public predicates pass, the deployment workflow builds and
+verifies a separate public release artifact, then copies only its receipt-bound
+`/project/`, generated public documents, and cleared external media into the staged
+Pages artifact. With the current pending gates, that workflow stops before upload or
+deployment. Building review files locally never deploys or sends anything. See
+[`release/README.md`](release/README.md) for the phase and evidence contract.
 
 ## Provenance
 

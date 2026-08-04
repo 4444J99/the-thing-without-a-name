@@ -9,10 +9,12 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,6 +31,21 @@ def load_pages_builder():
 
 PAGES = load_pages_builder()
 TEST_COMMIT = "a" * 40
+
+
+def load_release_support():
+    spec = importlib.util.spec_from_file_location(
+        "danse_pages_release_test_support",
+        ROOT / "scripts/tests/release-manifest.test.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+RELEASE_SUPPORT = load_release_support()
+RELEASE_BUILD = RELEASE_SUPPORT.BUILD
 
 
 class Markup(HTMLParser):
@@ -125,66 +142,30 @@ def public_fixture(root: Path) -> None:
     write(root / "installation/OPERATIONS.md", b"venue operations stay private\n")
     write(root / "README.md", b"repository documentation\n")
     write(root / "corpus/tier-receipts/browse.json", b"internal receipt\n")
-
-
-def release_fixture(root: Path) -> Path:
-    public_path = root / "media/assets/accessibility.md"
-    release_path = root / "media/assets/master.mov"
-    write(public_path, b"Cleared public accessibility copy.\n")
-    write(release_path, b"Release-only master bytes.\n")
-
-    def source(path: Path) -> dict:
-        relative = path.relative_to(root).as_posix()
-        payload = path.read_bytes()
-        return {
-            "path": relative,
-            "destination": relative,
-            "sha256": hashlib.sha256(payload).hexdigest(),
-            "bytes": len(payload),
-        }
-
-    manifest = {
+    release_manifest = {
         "schema": "danse.release.v1",
-        "release_id": "pages-fixture",
-        "status": "public-approved",
-        "media": [
-            {
-                "id": "accessibility-copy",
-                "required_for": ["public", "release"],
-                "status": "ready",
-                "source": source(public_path),
-                "clearance": {
-                    "status": "cleared",
-                    "owner": "Pages fixture",
-                    "evidence": {
-                        "path": "rights/evidence/pages-fixture.json",
-                        "sha256": "0" * 64,
-                        "summary": "Fixture-only clearance identity",
-                    },
-                },
-            },
-            {
-                "id": "score-driven-master",
-                "required_for": ["release"],
-                "status": "ready",
-                "source": source(release_path),
-                "clearance": {
-                    "status": "cleared",
-                    "owner": "Pages fixture",
-                    "evidence": {
-                        "path": "rights/evidence/pages-fixture.json",
-                        "sha256": "0" * 64,
-                        "summary": "Fixture-only clearance identity",
-                    },
-                },
-            },
-        ],
+        "release_id": "pages-boundary-fixture",
+        "status": "draft",
+        "media": [],
         "credits": [],
         "gates": [],
     }
-    path = root / PAGES.RELEASE_MANIFEST
-    write(path, (json.dumps(manifest, indent=2) + "\n").encode())
-    return path
+    write(
+        root / "release/manifest.json",
+        (json.dumps(release_manifest, sort_keys=True) + "\n").encode(),
+    )
+    write(root / "project/index.html", b"unapproved project route\n")
+
+
+def release_artifact_fixture(base: Path, phase: str) -> Path:
+    source = RELEASE_SUPPORT.fixture_root(base / f"{phase}-release-source")
+    if phase == "public":
+        manifest = RELEASE_SUPPORT.complete_manifest(source)
+        manifest["status"] = "public-approved"
+        RELEASE_SUPPORT.write_manifest(source, manifest)
+    output = base / f"{phase}-release-artifact"
+    RELEASE_BUILD.build(source, output, phase, TEST_COMMIT)
+    return output
 
 
 class ProductionArtifactTest(unittest.TestCase):
@@ -208,6 +189,13 @@ class ProductionArtifactTest(unittest.TestCase):
 
     def test_artifact_inventory_is_exactly_the_allowlist_and_digest_manifest(self) -> None:
         allowed = set(PAGES.source_files(ROOT))
+        supplied_release = os.environ.get("DANSE_PAGES_RELEASE_ARTIFACT")
+        if supplied_release:
+            selected, _ = PAGES.public_release_files(
+                Path(supplied_release),
+                os.environ["DANSE_PAGES_SOURCE_SHA"],
+            )
+            allowed.update(selected)
         recorded = {record["path"] for record in self.manifest["files"]}
         actual = PAGES.artifact_inventory(self.output)
         self.assertEqual(recorded, allowed)
@@ -251,7 +239,7 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertNotIn("odml.pa.googleapis.com", bundle)
         self.assertIn('./vendor/mediapipe/vision_bundle.mjs', camera)
 
-    def test_repository_docs_harnesses_and_future_project_route_are_absent(self) -> None:
+    def test_repository_docs_and_harnesses_are_absent(self) -> None:
         paths = PAGES.artifact_inventory(self.output)
         forbidden = {
             ".github/workflows/pages.yml",
@@ -273,10 +261,14 @@ class ProductionArtifactTest(unittest.TestCase):
         }
         self.assertTrue(paths.isdisjoint(forbidden))
         self.assertFalse(any(path.startswith("pipeline/") for path in paths))
+        self.assertFalse(any(path.startswith("release/") for path in paths))
         self.assertFalse(any(path.startswith("installation/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
         self.assertFalse(any(path.startswith("music/") for path in paths))
-        self.assertFalse(any(path.startswith("project/") for path in paths))
+        if self.manifest["release"] is None:
+            self.assertFalse(any(path.startswith("project/") for path in paths))
+        else:
+            self.assertIn("project/index.html", paths)
         self.assertFalse(any(path.startswith("rights/") for path in paths))
 
     def test_every_recorded_sha256_and_byte_count_verifies(self) -> None:
@@ -288,12 +280,26 @@ class ProductionArtifactTest(unittest.TestCase):
     def test_deployment_requires_public_rights_before_artifact_upload(self) -> None:
         workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
         rights = workflow.index("scripts/check-rights.py")
+        release_build = workflow.index("scripts/build-release.py")
+        release_verify = workflow.index("--verify")
+        pages_build = workflow.index("scripts/build-pages.py")
         upload = workflow.index("actions/upload-pages-artifact")
         deploy = workflow.index("actions/deploy-pages")
-        self.assertLess(rights, upload)
+        self.assertLess(rights, release_build)
+        self.assertLess(release_build, release_verify)
+        self.assertLess(release_verify, pages_build)
+        self.assertLess(pages_build, upload)
         self.assertLess(upload, deploy)
         self.assertIn("--phase public", workflow)
         self.assertIn("--release-manifest release/manifest.json", workflow)
+        self.assertIn("--release-artifact", workflow)
+
+    def test_current_pending_release_fails_before_a_public_artifact_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "public-release"
+            with self.assertRaisesRegex(RELEASE_SUPPORT.CONTRACT.ReleaseError, "public phase blocked"):
+                RELEASE_BUILD.build(ROOT, output, "public", TEST_COMMIT)
+            self.assertFalse(output.exists())
 
 
 class ArtifactBoundaryTest(unittest.TestCase):
@@ -313,56 +319,233 @@ class ArtifactBoundaryTest(unittest.TestCase):
         self.assertNotIn("README.md", inventory)
         self.assertFalse(any(path.startswith("submission/") for path in inventory))
         self.assertFalse(any(path.startswith("pipeline/") for path in inventory))
+        self.assertFalse(any(path.startswith("release/") for path in inventory))
+        self.assertFalse(any(path.startswith("project/") for path in inventory))
         self.assertFalse(any(path.startswith("installation/") for path in inventory))
         self.assertFalse(any(path.startswith("rights/") for path in inventory))
         self.assertFalse(any(path.startswith("corpus/tier-receipts/") for path in inventory))
 
-    def test_only_cleared_public_release_assets_are_copied_and_digested(self) -> None:
-        release_fixture(self.root)
-        manifest = PAGES.build(self.root, self.output, TEST_COMMIT)
-        paths = {record["path"] for record in manifest["files"]}
-        self.assertIn("media/assets/accessibility.md", paths)
-        self.assertNotIn("media/assets/master.mov", paths)
-        self.assertNotIn(PAGES.RELEASE_MANIFEST, paths)
-        record = next(
-            row for row in manifest["files"] if row["path"] == "media/assets/accessibility.md"
+    def test_cli_accepts_only_the_clean_exact_git_checkout(self) -> None:
+        (self.root / "tracked-sentinel.txt").write_text("clean\n", encoding="utf-8")
+        commit = RELEASE_SUPPORT.initialize_git_fixture(self.root)
+        command = [
+            sys.executable,
+            str(ROOT / "scripts/build-pages.py"),
+            "--root",
+            str(self.root),
+            "--source-commit",
+            commit,
+        ]
+
+        clean = subprocess.run(
+            [*command, "--output", str(self.output)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        published = self.output / record["path"]
-        self.assertEqual(record["bytes"], published.stat().st_size)
-        self.assertEqual(record["sha256"], hashlib.sha256(published.read_bytes()).hexdigest())
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertTrue((self.output / PAGES.ARTIFACT_MANIFEST).is_file())
 
-    def test_public_release_asset_identity_and_destination_fail_closed(self) -> None:
-        release_manifest = release_fixture(self.root)
-        manifest = json.loads(release_manifest.read_text())
-        public = manifest["media"][0]
-        public["source"]["sha256"] = "0" * 64
-        release_manifest.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(PAGES.ArtifactError, "source identity is stale"):
-            PAGES.build(self.root, self.output, TEST_COMMIT)
+        wrong_output = self.base / "wrong-pages"
+        wrong = subprocess.run(
+            [
+                *command[:-1],
+                "b" * 40,
+                "--output",
+                str(wrong_output),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertIn("does not match checkout HEAD", wrong.stderr)
+        self.assertFalse(wrong_output.exists())
 
-        manifest = json.loads(release_manifest.read_text())
-        payload = (self.root / "media/assets/accessibility.md").read_bytes()
-        public = manifest["media"][0]
-        public["source"] = {
-            "path": "media/assets/accessibility.md",
-            "destination": "submission/private.md",
-            "sha256": hashlib.sha256(payload).hexdigest(),
-            "bytes": len(payload),
+        (self.root / "tracked-sentinel.txt").write_text("dirty\n", encoding="utf-8")
+        dirty_output = self.base / "dirty-pages"
+        dirty = subprocess.run(
+            [*command, "--output", str(dirty_output)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(dirty.returncode, 0)
+        self.assertIn("tracked changes", dirty.stderr)
+        self.assertFalse(dirty_output.exists())
+
+    def test_verified_public_release_adds_only_declared_outputs_and_keeps_artwork_at_root(self) -> None:
+        release = release_artifact_fixture(self.base, "public")
+        selected, binding = PAGES.public_release_files(release, TEST_COMMIT)
+        root_index = (self.root / "index.html").read_bytes()
+        manifest = PAGES.build(
+            self.root,
+            self.output,
+            TEST_COMMIT,
+            release_artifact=release,
+        )
+        paths = {record["path"] for record in manifest["files"]}
+        self.assertEqual(manifest["release"], binding)
+        self.assertTrue(set(selected) <= paths)
+        self.assertIn("project/index.html", paths)
+        self.assertIn("pitch/danse-installation-pitch.pdf", paths)
+        self.assertIn("accessibility/captions.en.vtt", paths)
+        self.assertIn("press/credits.txt", paths)
+        self.assertIn("media/assets/press-still-primary.bin", paths)
+        self.assertNotIn("media/assets/score-driven-master.bin", paths)
+        self.assertEqual((self.output / "index.html").read_bytes(), root_index)
+        self.assertNotEqual(
+            (self.output / "project/index.html").read_bytes(),
+            root_index,
+        )
+        markup = Markup()
+        markup.feed((self.output / "project/index.html").read_text(encoding="utf-8"))
+        hrefs = {
+            attrs["href"]
+            for tag, attrs in markup.tags
+            if tag == "a" and attrs.get("href")
         }
-        release_manifest.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(PAGES.ArtifactError, "outside its public destination"):
-            PAGES.build(self.root, self.output, TEST_COMMIT)
+        expected_resources = {
+            "../pitch/danse-installation-pitch.pdf",
+            "../accessibility/accessibility.md",
+            "../accessibility/captions.en.vtt",
+            "../accessibility/transcript.txt",
+            "../press/press-kit.md",
+            "../press/credits.txt",
+        }
+        self.assertTrue(expected_resources <= hrefs)
+        for href in hrefs:
+            parsed = urlsplit(href)
+            if parsed.scheme or parsed.netloc:
+                continue
+            if not parsed.path:
+                if parsed.fragment:
+                    self.assertIn(parsed.fragment, markup.by_id, href)
+                continue
+            target = (self.output / "project" / unquote(parsed.path)).resolve()
+            self.assertTrue(target.is_relative_to(self.output.resolve()), href)
+            if target.is_dir():
+                target = target / "index.html"
+            self.assertTrue(target.is_file(), href)
+            relative = target.relative_to(self.output.resolve()).as_posix()
+            self.assertFalse(
+                relative.startswith(("release/", "submission/", "installation/", "rights/")),
+                href,
+            )
+        self.assertFalse(any(path.startswith("release/") for path in paths))
+        self.assertFalse(any(path.startswith("installation/") for path in paths))
+        self.assertFalse(any(path.startswith("submission/") for path in paths))
+
+    def test_receipted_project_link_outside_pages_boundary_fails(self) -> None:
+        release = release_artifact_fixture(self.base, "public")
+        PAGES.build(
+            self.root,
+            self.output,
+            TEST_COMMIT,
+            release_artifact=release,
+        )
+        project = self.output / "project/index.html"
+        project.write_text(
+            project.read_text(encoding="utf-8").replace(
+                "</main>",
+                '<p><a href="../release/manifest.json">Source manifest</a></p></main>',
+            ),
+            encoding="utf-8",
+        )
+        manifest_path = self.output / PAGES.ARTIFACT_MANIFEST
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        record = next(
+            record for record in manifest["files"] if record["path"] == "project/index.html"
+        )
+        record["bytes"] = project.stat().st_size
+        record["sha256"] = PAGES.sha256(project)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PAGES.ArtifactError, "project links failed verification"):
+            PAGES.verify_artifact(self.output, TEST_COMMIT)
+
+    def test_missing_or_draft_release_artifact_fails_before_pages_bytes(self) -> None:
+        missing = self.base / "missing-release"
+        with self.assertRaisesRegex(PAGES.ArtifactError, "missing or symlinked"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=missing,
+            )
+        self.assertFalse(self.output.exists())
+
+        draft = release_artifact_fixture(self.base, "draft")
+        with self.assertRaisesRegex(PAGES.ArtifactError, "public-phase"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=draft,
+            )
+        self.assertFalse(self.output.exists())
+
+    def test_release_artifact_wrong_sha_tamper_and_extra_file_fail_closed(self) -> None:
+        release = release_artifact_fixture(self.base, "public")
+        with self.assertRaisesRegex(PAGES.ArtifactError, "does not match expected"):
+            PAGES.build(
+                self.root,
+                self.output,
+                "b" * 40,
+                release_artifact=release,
+            )
+        self.assertFalse(self.output.exists())
+
+        (release / "project/index.html").write_bytes(b"tampered\n")
+        with self.assertRaisesRegex(PAGES.ArtifactError, "digest mismatch"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=release,
+            )
+        self.assertFalse(self.output.exists())
+
+        release = release_artifact_fixture(self.base / "extra", "public")
+        write(release / "unrecorded-private.txt")
+        with self.assertRaisesRegex(PAGES.ArtifactError, "inventory mismatch"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=release,
+            )
+        self.assertFalse(self.output.exists())
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
-    def test_public_release_asset_symlink_fails_closed(self) -> None:
-        release_fixture(self.root)
-        public = self.root / "media/assets/accessibility.md"
-        outside = self.base / "outside-release.md"
-        write(outside, public.read_bytes())
-        public.unlink()
-        public.symlink_to(outside)
-        with self.assertRaisesRegex(PAGES.ArtifactError, "symlink"):
-            PAGES.build(self.root, self.output, TEST_COMMIT)
+    def test_symlinked_release_artifact_or_file_fails_closed(self) -> None:
+        release = release_artifact_fixture(self.base, "public")
+        alias = self.base / "release-alias"
+        alias.symlink_to(release, target_is_directory=True)
+        with self.assertRaisesRegex(PAGES.ArtifactError, "missing or symlinked"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=alias,
+            )
+        self.assertFalse(self.output.exists())
+
+        project = release / "project/index.html"
+        outside = self.base / "outside-project.html"
+        write(outside, project.read_bytes())
+        project.unlink()
+        project.symlink_to(outside)
+        with self.assertRaisesRegex(PAGES.ArtifactError, "non-regular"):
+            PAGES.build(
+                self.root,
+                self.output,
+                TEST_COMMIT,
+                release_artifact=release,
+            )
+        self.assertFalse(self.output.exists())
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
     def test_allowlisted_source_symlink_fails_closed(self) -> None:

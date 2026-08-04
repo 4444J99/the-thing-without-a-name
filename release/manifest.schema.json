@@ -1,0 +1,460 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://organvm.github.io/the-thing-without-a-name/release/manifest.schema.json",
+  "title": "Danse release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "release_id",
+    "version",
+    "status",
+    "opportunity_snapshot",
+    "identity",
+    "copy",
+    "installation",
+    "accessibility",
+    "press",
+    "claims",
+    "credits",
+    "media",
+    "products",
+    "gates"
+  ],
+  "properties": {
+    "schema": {"const": "danse.release.v1"},
+    "release_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-z0-9.-]+)?$"},
+    "status": {"enum": ["draft", "public-approved", "released"]},
+    "opportunity_snapshot": {"$ref": "#/$defs/opportunitySnapshot"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "copy": {"$ref": "#/$defs/copy"},
+    "installation": {"$ref": "#/$defs/installation"},
+    "accessibility": {"$ref": "#/$defs/accessibility"},
+    "press": {"$ref": "#/$defs/press"},
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/claim"}
+    },
+    "credits": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/credit"}
+    },
+    "media": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/media"}
+    },
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/product"}
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/gate"}
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]+$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$"},
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "summary"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "destination"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "destination": {"$ref": "#/$defs/path"}
+      }
+    },
+    "contractRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "opportunitySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "snapshot_id",
+        "frozen_at",
+        "sha256",
+        "receipt_path",
+        "receipt_sha256",
+        "source_evidence_path",
+        "source_evidence_sha256"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "snapshot_id": {"const": "omega-20260804"},
+        "frozen_at": {"const": "2026-08-04T02:32:44Z"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "receipt_path": {"$ref": "#/$defs/path"},
+        "receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "source_evidence_path": {"$ref": "#/$defs/path"},
+        "source_evidence_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_title", "public_title", "artist", "origin_year", "canonical_url", "project_path"],
+      "properties": {
+        "canonical_title": {"type": "string", "minLength": 1},
+        "public_title": {"type": "string", "minLength": 1},
+        "artist": {"type": "string", "minLength": 1},
+        "origin_year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+        "canonical_url": {"type": "string", "format": "uri", "pattern": "/$"},
+        "project_path": {"const": "project/"}
+      }
+    },
+    "copy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eyebrow", "logline", "concept", "installation_concept", "technical_summary"],
+      "properties": {
+        "eyebrow": {"type": "string", "minLength": 1},
+        "logline": {"type": "string", "minLength": 1},
+        "concept": {"type": "string", "minLength": 1},
+        "installation_concept": {"type": "string", "minLength": 1},
+        "technical_summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "flowNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "detail", "feeds"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "feeds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item", "detail", "status", "evidence_gate"],
+      "properties": {
+        "item": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "status": {"enum": ["proposed", "verified"]},
+        "evidence_gate": {"$ref": "#/$defs/id"}
+      }
+    },
+    "installation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_contract", "system_flow", "spatial_requirements", "interaction_model", "technical_rider"],
+      "properties": {
+        "reference_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "status",
+            "spec_id",
+            "spec_contract_sha256",
+            "digital_twin",
+            "gate_ledger",
+            "physical_predicates_satisfied",
+            "issue_14_can_close",
+            "blocked_gates"
+          ],
+          "properties": {
+            "schema": {"const": "danse.installation.reference-binding.v1"},
+            "status": {"const": "reference-only"},
+            "spec_id": {"const": "danse-reference-installation-20260804"},
+            "spec_contract_sha256": {"$ref": "#/$defs/sha256"},
+            "digital_twin": {
+              "allOf": [
+                {"$ref": "#/$defs/contractRecord"},
+                {"properties": {"path": {"const": "installation/digital-twin.json"}}}
+              ]
+            },
+            "gate_ledger": {
+              "allOf": [
+                {"$ref": "#/$defs/contractRecord"},
+                {"properties": {"path": {"const": "installation/gates.json"}}}
+              ]
+            },
+            "physical_predicates_satisfied": {"const": false},
+            "issue_14_can_close": {"const": false},
+            "blocked_gates": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "venue-approval",
+                  "hardware-inventory",
+                  "projector-calibration",
+                  "speaker-calibration",
+                  "visible-plane-cue",
+                  "runtime-approval",
+                  "wall-plug-recovery",
+                  "restore-rehearsal"
+                ]
+              }
+            }
+          }
+        },
+        "system_flow": {
+          "type": "array",
+          "minItems": 4,
+          "items": {"$ref": "#/$defs/flowNode"}
+        },
+        "spatial_requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/requirement"}
+        },
+        "interaction_model": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "technical_rider": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/requirement"}
+        }
+      }
+    },
+    "captionCue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "text"],
+      "properties": {
+        "start": {"type": "string", "pattern": "^[0-9]{2}:[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}$"},
+        "end": {"type": "string", "pattern": "^[0-9]{2}:[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}$"},
+        "text": {"type": "string", "minLength": 1}
+      }
+    },
+    "captionTrack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "language", "label", "reason", "cues"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "not-applicable"]},
+        "language": {"type": "string", "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"},
+        "label": {"type": "string", "minLength": 1},
+        "reason": {"type": ["string", "null"]},
+        "cues": {"type": "array", "items": {"$ref": "#/$defs/captionCue"}}
+      }
+    },
+    "transcript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "text", "reason"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "not-applicable"]},
+        "text": {"type": "string"},
+        "reason": {"type": ["string", "null"]}
+      }
+    },
+    "accessibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alt_text", "canvas_description", "motion_note", "audio_note", "reduced_motion", "silent_fallback", "captions", "transcript", "review_gate"],
+      "properties": {
+        "alt_text": {"type": "string", "minLength": 1},
+        "canvas_description": {"type": "string", "minLength": 1},
+        "motion_note": {"type": "string", "minLength": 1},
+        "audio_note": {"type": "string", "minLength": 1},
+        "reduced_motion": {"type": "string", "minLength": 1},
+        "silent_fallback": {"type": "string", "minLength": 1},
+        "captions": {"$ref": "#/$defs/captionTrack"},
+        "transcript": {"$ref": "#/$defs/transcript"},
+        "review_gate": {"$ref": "#/$defs/id"}
+      }
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "label", "url"],
+      "properties": {
+        "status": {"enum": ["pending", "approved"]},
+        "label": {"type": "string", "minLength": 1},
+        "url": {"type": ["string", "null"], "format": "uri", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "url"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "format": "uri", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "calendarItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "channel", "timing", "asset_id", "state", "owner"],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 1},
+        "channel": {"type": "string", "minLength": 1},
+        "timing": {"type": "string", "minLength": 1},
+        "asset_id": {"$ref": "#/$defs/id"},
+        "state": {"const": "planned"},
+        "owner": {"type": "string", "minLength": 1}
+      }
+    },
+    "press": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synopsis_short", "synopsis_long", "artist_bio", "artist_statement", "contact", "canonical_links", "seed_sharing", "posting_calendar"],
+      "properties": {
+        "synopsis_short": {"type": "string", "minLength": 1},
+        "synopsis_long": {"type": "string", "minLength": 1},
+        "artist_bio": {"type": "string", "minLength": 1},
+        "artist_statement": {"type": "string", "minLength": 1},
+        "contact": {"$ref": "#/$defs/contact"},
+        "canonical_links": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/link"}
+        },
+        "seed_sharing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["archival_seed", "example_url", "note"],
+          "properties": {
+            "archival_seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+            "example_url": {"type": "string", "format": "uri", "pattern": "^https://[^\\s]+$"},
+            "note": {"type": "string", "minLength": 1}
+          }
+        },
+        "posting_calendar": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/calendarItem"}
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "publish", "status", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "text": {"type": "string", "minLength": 1},
+        "publish": {"type": "boolean"},
+        "status": {"enum": ["pending", "verified"]},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidence"}]}
+      }
+    },
+    "credit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "name", "status", "note", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "role": {"type": "string", "minLength": 1},
+        "name": {"type": ["string", "null"]},
+        "status": {"enum": ["pending", "cleared"]},
+        "note": {"type": "string", "minLength": 1},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidence"}]}
+      }
+    },
+    "clearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "owner", "evidence"],
+      "properties": {
+        "status": {"enum": ["pending", "cleared", "excluded"]},
+        "owner": {"type": "string", "minLength": 1},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidence"}]}
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "required_for", "status", "source", "clearance", "alt_text"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["still", "film", "installation-evidence", "social-card", "audio", "interactive-document"]},
+        "label": {"type": "string", "minLength": 1},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["public", "release"]}
+        },
+        "status": {"enum": ["pending", "ready", "excluded"]},
+        "source": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/source"}]},
+        "clearance": {"$ref": "#/$defs/clearance"},
+        "alt_text": {"type": ["string", "null"]}
+      }
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "path", "required_for", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"const": "generated-document"},
+        "label": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/path"},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["public", "release"]}
+        },
+        "status": {"enum": ["pending", "ready"]}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner", "issue", "required_for", "state", "action", "evidence"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "owner": {"type": "string", "minLength": 1},
+        "issue": {"type": "integer", "minimum": 1},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["public", "release"]}
+        },
+        "state": {"enum": ["pending", "satisfied"]},
+        "action": {"type": "string", "minLength": 1},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidence"}]}
+      }
+    }
+  }
+}

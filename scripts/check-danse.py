@@ -699,6 +699,7 @@ def check_arrival() -> None:
 REGISTER = APP / "submission" / "screendance-2027.yaml"
 OPPORTUNITY_CHECKER = APP / "scripts" / "check-opportunities.py"
 OPPORTUNITY_TEST = APP / "scripts" / "tests" / "opportunities.test.py"
+RELEASE_CHECKER = APP / "scripts" / "release_contract.py"
 
 
 def check_opportunities() -> None:
@@ -750,6 +751,40 @@ def check_opportunities() -> None:
         "filing consumes the exact frozen opportunity digest",
         True,
         f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}…",
+    )
+
+
+def check_release_contract() -> None:
+    """The public face has one manifest, and incomplete evidence cannot ship."""
+    try:
+        spec = importlib.util.spec_from_file_location("danse_release_invariant", RELEASE_CHECKER)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("release checker module could not be loaded")
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        manifest = release.validate_release(APP, phase="draft")
+        public = release.phase_blockers(manifest, "public")
+        omega = release.phase_blockers(manifest, "release")
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("one manifest owns every public and institutional artifact", False, detail)
+        check("public and release phases fail closed on missing evidence", False, "release contract unavailable")
+        return
+    except Exception as exc:
+        check("one manifest owns every public and institutional artifact", False, str(exc))
+        check("public and release phases fail closed on missing evidence", False, "release contract invalid")
+        return
+
+    check(
+        "one manifest owns every public and institutional artifact",
+        manifest["schema"] == "danse.release.v1"
+        and manifest["opportunity_snapshot"]["sha256"] == release.EXPECTED_OPPORTUNITY_SHA256,
+        f"{manifest['release_id']} {manifest['version']} · {manifest['opportunity_snapshot']['sha256'][:16]}…",
+    )
+    check(
+        "public and release phases fail closed on missing evidence",
+        manifest["status"] == "draft" and bool(public) and len(omega) > len(public),
+        f"{len(public)} public blocker(s), {len(omega) - len(public)} release-only blocker(s)",
     )
 
 
@@ -1201,6 +1236,8 @@ def main() -> int:
     check_convergence_receipts()
     print("\n the release follows one frozen opportunity registry")
     check_opportunities()
+    print("\n the public face is phase-gated from one release manifest")
+    check_release_contract()
     print("\n the corpus is deliverable")
     check_delivery(score, manifest)
     print("\n the sound is the same film")
