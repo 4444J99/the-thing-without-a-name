@@ -38,7 +38,8 @@ Every non-draft receipt records the canonical `America/New_York` validation date
 rechecks fixed-term permissions against that shipping date, including permissions
 reached through an active artifact rule. The package checker verifies every manifested
 byte and byte count, the declared corpus tier against the package builder's current
-source-tree identity, the copied score-source
+source-tree identity, every derivative selected by the canonical Pages corpus allowlist
+against one file-count and tree-digest binding, the copied score-source
 WAV and hydrated grain-bank identity, registered origin still, every copied text file's
 manifest row, rights-bearing unmanifested files, symlink boundaries, and package rights
 rules. The release checker requires the exact rights-register digest; a complete
@@ -47,11 +48,16 @@ off-phase bytes; every media and public-copy byte at its declared destination; s
 manifest and media identities rechecked after inventory; clearance evidence; and credit
 text identical to the approved attribution label. A `satisfied` human gate
 must cite a tracked `danse.rights.decision.v1` receipt binding that exact gate, authority,
-decision, and phase scope. Package attestations may satisfy only package, uploaded, and
-submitted gates; their registered canonical values are bound into the redacted phase
-receipt, and they never replace durable public/release receipts. The Pages workflow runs
-the public phase before artifact upload, so an uncleared release cannot publish a new
-deployment.
+decision, and phase scope. Every cleared asset use likewise cites a tracked
+`danse.rights.use-decision.v1` receipt binding that asset, use, rights holder, medium,
+phase scope, territory, term, promotion, and archive grant. Every manual or choice
+assertion in the canonical submission specification must map to a phase-owning human
+gate with the same typed value contract. Package attestations may satisfy only package,
+uploaded, and submitted gates; their registered canonical values are bound into the
+redacted phase receipt, and they never replace durable public/release receipts. Public
+receipts and register prose reject absolute machine paths on POSIX and Windows as well
+as contacts, credentials, and sensitive fields. The Pages workflow runs the public phase
+before artifact upload, so an uncleared release cannot publish a new deployment.
 
 Current state is deliberately `draft`. Anthony must still approve the final cut,
 biography, submission copy, and rights declaration; settle dancer permission and credit;

@@ -48,11 +48,13 @@
         "corpus": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["source", "schema", "frames"],
+          "required": ["source", "schema", "frames", "public_files", "public_tree_sha256"],
           "properties": {
             "source": {"$ref": "#/$defs/source"},
             "schema": {"const": "danse.corpus.v1"},
-            "frames": {"type": "integer", "minimum": 1}
+            "frames": {"type": "integer", "minimum": 1},
+            "public_files": {"type": "integer", "minimum": 1},
+            "public_tree_sha256": {"$ref": "#/$defs/sha256"}
           }
         },
         "music": {

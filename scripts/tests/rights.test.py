@@ -285,6 +285,11 @@ class RightsContractTest(unittest.TestCase):
     def test_private_paths_contacts_and_sensitive_fields_are_rejected(self) -> None:
         for mutation, expected in (
             (("note", "private release at /Users/example/release.pdf"), "machine-local path"),
+            (("note", "private release at /workspace/Alice/private.json"), "machine-local path"),
+            (("note", "private release at /tmp/private-release"), "machine-local path"),
+            (("note", "private release at /Volumes/archive/evidence.pdf"), "machine-local path"),
+            (("note", "private release at D:\\staging\\private.json"), "machine-local path"),
+            (("note", "private release at \\\\server\\share\\private.json"), "machine-local path"),
             (("note", "contact dancer@example.test"), "email address"),
             (("note", "call 305-555-0123"), "phone number"),
         ):
@@ -381,6 +386,92 @@ class RightsContractTest(unittest.TestCase):
             rule for rule in self.document["credit_rules"] if rule["credit_id"] == "mediapipe-credit"
         )
         self.assertEqual(mediapipe["gate"], "mediapipe-attribution-retained")
+
+    def test_cleared_asset_uses_require_typed_exact_scope_receipts(self) -> None:
+        asset = next(
+            row for row in self.document["assets"] if row["id"] == "mediapipe-pose-runtime"
+        )
+        use = asset["uses"][0]
+        receipt = ROOT / use["evidence"]["path"]
+        self.assertEqual(RIGHTS.validate_use_decision_receipt(receipt, asset, use), [])
+
+        unrelated = copy.deepcopy(self.document)
+        unrelated_asset = next(
+            row for row in unrelated["assets"] if row["id"] == "mediapipe-pose-runtime"
+        )
+        unrelated_asset["uses"][0]["evidence"] = source_evidence()
+        errors = RIGHTS.validate_document(unrelated)
+        self.assertTrue(any("typed use-decision contract" in item for item in errors), errors)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "use-decision.json"
+            value = json.loads(receipt.read_text())
+            value["territory"] = "limited"
+            path.write_text(json.dumps(value))
+            errors = RIGHTS.validate_use_decision_receipt(path, asset, use)
+            self.assertTrue(any("different territory" in item for item in errors), errors)
+
+    def test_public_corpus_binding_authenticates_every_pages_derivative_byte(self) -> None:
+        declared = self.document["bindings"]["corpus"]
+        identity = RIGHTS.public_corpus_identity(ROOT, RIGHTS.tracked_paths(ROOT))
+        self.assertEqual(identity["files"], declared["public_files"])
+        self.assertEqual(identity["sha256"], declared["public_tree_sha256"])
+
+        target = ROOT / "corpus/plates/browse/IMG_1570.webp"
+        measure = RIGHTS._stable_file_measure
+
+        def tampered_measure(
+            path: Path,
+            label: str,
+            *,
+            capture: bool = False,
+        ) -> tuple[str, int, bytes | None]:
+            digest, size, payload = measure(path, label, capture=capture)
+            if path == target and label == "public corpus derivative":
+                digest = "0" * 64
+            return digest, size, payload
+
+        with mock.patch.object(RIGHTS, "_stable_file_measure", side_effect=tampered_measure):
+            errors = RIGHTS.validate_document(copy.deepcopy(self.document))
+        self.assertTrue(any("public derivative tree digest has drifted" in item for item in errors), errors)
+
+    def test_every_canonical_submission_assertion_remains_a_phase_owned_gate(self) -> None:
+        missing = copy.deepcopy(self.document)
+        missing["human_gates"] = [
+            gate
+            for gate in missing["human_gates"]
+            if gate["attestation"] is None
+            or gate["attestation"]["key"] != "link-downloadable"
+        ]
+        errors = RIGHTS.validate_document(missing)
+        self.assertTrue(any("link-downloadable has no registered human gate" in item for item in errors), errors)
+
+        wrong_phase = copy.deepcopy(self.document)
+        gate = next(
+            row
+            for row in wrong_phase["human_gates"]
+            if row["attestation"] is not None
+            and row["attestation"]["key"] == "submitted-via-submittable"
+        )
+        gate["required_for"] = ["uploaded"]
+        errors = RIGHTS.validate_document(wrong_phase)
+        self.assertTrue(any("not owned by its canonical submitted phase" in item for item in errors), errors)
+
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        candidate["human_gates"] = [
+            gate
+            for gate in candidate["human_gates"]
+            if gate["attestation"] is None
+            or gate["attestation"]["key"] != "submitted-via-submittable"
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            blockers, _ = fixture_phase_blockers(candidate, "submitted", package=package)
+        self.assertTrue(
+            any("submitted-via-submittable has no registered human gate" in item for item in blockers),
+            blockers,
+        )
 
     def test_license_and_permission_layers_cannot_clear_each_other(self) -> None:
         candidate = copy.deepcopy(self.document)

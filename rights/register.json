@@ -19,7 +19,9 @@
         "summary": "Publishable derivative corpus registry for the 20 June 2017 session."
       },
       "schema": "danse.corpus.v1",
-      "frames": 162
+      "frames": 162,
+      "public_files": 651,
+      "public_tree_sha256": "24833805b7dab3eee32764fa4ead184ae1a7e9bdc21d4420592c5fa805f0927b"
     },
     "music": {
       "source": {
@@ -159,6 +161,36 @@
       "evidence": null,
       "attestation": {"key": "submission-copy-approved", "kind": "boolean", "values": [true]},
       "note": "Tracked copy is exact but its factual and artistic claims still require human approval."
+    },
+    {
+      "id": "link-password-protected",
+      "label": "Uploaded screener password protection",
+      "required_for": ["uploaded"],
+      "authority": "Anthony J. Padavano as the account owner",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "link-password-protected", "kind": "boolean", "values": [true]},
+      "note": "Only an account-owned upload check can establish password protection."
+    },
+    {
+      "id": "link-downloadable",
+      "label": "Uploaded screener download permission",
+      "required_for": ["uploaded"],
+      "authority": "Anthony J. Padavano as the account owner",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "link-downloadable", "kind": "boolean", "values": [true]},
+      "note": "Only an account-owned download rehearsal can establish this setting."
+    },
+    {
+      "id": "submitted-via-submittable",
+      "label": "ScreenDance filing through Submittable",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano as the applicant",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "submitted-via-submittable", "kind": "boolean", "values": [true]},
+      "note": "Only the applicant's durable filing receipt can establish submission."
     },
     {
       "id": "dancer-release-and-credit",
@@ -481,7 +513,7 @@
         {"path": "interaction/vendor/mediapipe/manifest.json", "sha256": "d9165f2c604d3fb721bcb4571df9468b8b25adbf00ba792271ef3b1b8454bc29", "summary": "Upstream source, integrity, transformations, and nine delivered file digests."}
       ],
       "uses": [
-        {"id": "distribution", "medium": "software-distribution", "required_for": ["public", "release"], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "cleared", "evidence": {"path": "interaction/vendor/mediapipe/Apache-2.0.txt", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "summary": "Apache-2.0 redistribution terms retained with the exact vendor bundle."}, "note": "License text and exact transformed-file manifest are shipped."}
+        {"id": "distribution", "medium": "software-distribution", "required_for": ["public", "release"], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "cleared", "evidence": {"path": "rights/evidence/mediapipe-distribution.json", "sha256": "b9fb90e4fd8a8356da7ac265a90b02d79aeb03ea1bfb1a8f3167d7c7e8193a8c", "summary": "Typed public-safe receipt binds the Apache-2.0 distribution decision and exact use scope."}, "note": "License text and exact transformed-file manifest are shipped."}
       ],
       "blocker": null
     },

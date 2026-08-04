@@ -66,6 +66,11 @@ SAFE_TIER = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
 PRIVATE_PATH = re.compile(r"(?:/Users/|/home/|[A-Za-z]:[\\/]Users[\\/]|file://|(?:^|\s)~[\\/])")
+ABSOLUTE_PATH = re.compile(
+    r"(?:(?:^|(?<=[\s(\[{=;,:'\"<>]))/(?!/)[^\s'\"<>]+"
+    r"|(?:^|(?<=[\s(\[{=;,'\"<>]))//[^/\s]+/[^\s'\"<>]+"
+    r"|(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s'\"<>]+)"
+)
 PRIVATE_PREFIXES = (".git/", ".work/", ".worktrees/", "pipeline/.work/", "sound/bank/")
 SENSITIVE_KEYS = {
     "address",
@@ -302,6 +307,55 @@ def validate_gate_decision_receipt(path: Path, gate: dict[str, Any]) -> tuple[An
     return decision if not errors else None, errors
 
 
+def validate_use_decision_receipt(
+    path: Path,
+    asset: dict[str, Any],
+    use: dict[str, Any],
+) -> list[str]:
+    """Require clearance evidence to bind one exact asset, use, and granted scope."""
+    label = f"asset use {asset['id']}/{use['id']} decision receipt"
+    try:
+        receipt = load_json(path, label, expose_path=False)
+    except RightsError as exc:
+        return [str(exc)]
+    expected_keys = {
+        "schema",
+        "asset_id",
+        "use_id",
+        "authority",
+        "decision",
+        "medium",
+        "required_for",
+        "territory",
+        "term",
+        "expires",
+        "promotion",
+        "archive",
+    }
+    errors: list[str] = []
+    if set(receipt) != expected_keys:
+        errors.append(f"{label} has fields outside the typed use-decision contract")
+    exact = {
+        "schema": "danse.rights.use-decision.v1",
+        "asset_id": asset["id"],
+        "use_id": use["id"],
+        "authority": asset["rights_holder"],
+        "decision": "cleared",
+        "medium": use["medium"],
+        "territory": use["territory"],
+        "term": use["term"],
+        "expires": use["expires"],
+        "promotion": use["promotion"],
+        "archive": use["archive"],
+    }
+    for key, expected in exact.items():
+        if receipt.get(key) != expected:
+            errors.append(f"{label} has a different {key.replace('_', ' ')}")
+    if not same_strings(receipt.get("required_for"), use["required_for"]):
+        errors.append(f"{label} has different phase scope")
+    return errors
+
+
 def safe_relative(value: object, label: str, *, expose_value: bool = True) -> str:
     if not isinstance(value, str) or not value:
         raise RightsError(f"{label} must be a non-empty relative path")
@@ -448,6 +502,102 @@ def _schema_errors(document: dict[str, Any], schema: dict[str, Any]) -> list[str
     return rendered
 
 
+@functools.cache
+def _pages_contract() -> Any:
+    """Load the canonical Pages allowlist without adding a second corpus census."""
+    path = ROOT / "scripts" / "build-pages.py"
+    spec = importlib.util.spec_from_file_location("danse_pages_source_contract", path)
+    if spec is None or spec.loader is None:
+        raise RightsError("cannot load the canonical Pages source contract")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except (ImportError, OSError, ValueError, AttributeError) as exc:
+        raise RightsError("cannot load the canonical Pages source contract") from exc
+    return module
+
+
+def public_corpus_identity(root: Path, tracked: set[str]) -> dict[str, Any]:
+    """Hash every corpus byte selected by the actual Pages allowlist."""
+    try:
+        relative_paths = sorted(_pages_contract().corpus_files(root))
+    except (OSError, ValueError, AttributeError, RuntimeError) as exc:
+        raise RightsError("cannot resolve the public corpus derivative inventory") from exc
+    untracked = set(relative_paths) - tracked
+    if untracked:
+        raise RightsError(
+            f"public corpus derivative inventory contains {len(untracked)} untracked file(s)"
+        )
+    records: list[dict[str, Any]] = []
+    for relative in relative_paths:
+        path = regular_file(root, relative, "public corpus derivative", expose_value=False)
+        digest, size, _ = _stable_file_measure(path, "public corpus derivative")
+        records.append({"path": relative, "bytes": size, "sha256": digest})
+    return {
+        "files": len(records),
+        "sha256": value_sha256(records),
+    }
+
+
+def _submission_assertion_contracts(
+    document: dict[str, Any],
+    submission: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Map every canonical manual/choice assertion to one phase-owning gate."""
+    gates = {
+        gate["attestation"]["key"]: gate
+        for gate in document["human_gates"]
+        if gate["attestation"] is not None
+    }
+    contracts: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    seen: set[str] = set()
+    for section in ("requirements", "approvals", "terms"):
+        rows = submission.get(section)
+        if not isinstance(rows, list):
+            errors.append(f"submission {section} has no assertion inventory")
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or row.get("check") not in {"manual", "choice"}:
+                continue
+            assertion_id = row.get("id")
+            phase = row.get("phase")
+            if not isinstance(assertion_id, str) or not SAFE_ID.fullmatch(assertion_id):
+                errors.append(f"submission {section} contains a malformed assertion")
+                continue
+            if assertion_id in seen:
+                errors.append(f"submission assertion is duplicated: {assertion_id}")
+                continue
+            seen.add(assertion_id)
+            if row["check"] == "choice":
+                values = row.get("values", row.get("choices"))
+                contract = {"kind": "choice", "values": values}
+                if (
+                    not isinstance(values, list)
+                    or len(values) < 2
+                    or not all(isinstance(value, str) and value for value in values)
+                ):
+                    errors.append(f"submission assertion {assertion_id} has invalid choices")
+                    continue
+            else:
+                contract = {"kind": "boolean", "values": [True]}
+            contracts[assertion_id] = contract
+            gate = gates.get(assertion_id)
+            if gate is None:
+                errors.append(f"submission assertion {assertion_id} has no registered human gate")
+                continue
+            if phase not in gate["required_for"]:
+                errors.append(
+                    f"submission assertion {assertion_id} is not owned by its canonical {phase} phase"
+                )
+            attestation = gate["attestation"]
+            if attestation["kind"] != contract["kind"] or {
+                json.dumps(value, sort_keys=True) for value in attestation["values"]
+            } != {json.dumps(value, sort_keys=True) for value in contract["values"]}:
+                errors.append(f"attestation contract disagrees for registered gate {assertion_id}")
+    return contracts, errors
+
+
 def _validate_bindings(
     root: Path,
     document: dict[str, Any],
@@ -467,6 +617,11 @@ def _validate_bindings(
             errors.append(f"binding corpus frame count is not {declared['frames']}")
         elif len({row.get("id") for row in frames if isinstance(row, dict)}) != len(frames):
             errors.append("binding corpus frame ids are not unique")
+        public_identity = public_corpus_identity(root, tracked)
+        if public_identity["files"] != declared["public_files"]:
+            errors.append("binding corpus public derivative file count has drifted")
+        if public_identity["sha256"] != declared["public_tree_sha256"]:
+            errors.append("binding corpus public derivative tree digest has drifted")
     except RightsError as exc:
         errors.append(str(exc))
 
@@ -541,6 +696,8 @@ def _validate_bindings(
         missing = sorted(set(declared["required_terms"]) - terms)
         if missing:
             errors.append(f"binding submission is missing published terms: {', '.join(missing)}")
+        _, assertion_errors = _submission_assertion_contracts(document, submission)
+        errors.extend(assertion_errors)
     except RightsError as exc:
         errors.append(str(exc))
     return errors
@@ -562,7 +719,7 @@ def validate_document(
             return [str(exc)]
     errors.extend(_schema_errors(document, schema))
     for location, value in _strings(document):
-        if PRIVATE_PATH.search(value):
+        if PRIVATE_PATH.search(value) or ABSOLUTE_PATH.search(value):
             errors.append(f"{location}: contains a private or machine-local path")
         if EMAIL.search(value):
             errors.append(f"{location}: contains an email address")
@@ -659,7 +816,7 @@ def validate_document(
         ):
             errors.append("the MediaPipe asset license disagrees with the exact package/model binding")
     uses: dict[tuple[str, str], dict[str, Any]] = {}
-    for asset in asset_rows:
+    for asset_index, asset in enumerate(asset_rows):
         asset_id = asset["id"]
         disposition = asset["disposition"]
         license_row = asset["license"]
@@ -689,7 +846,7 @@ def validate_document(
             errors.append(f"asset {asset_id} does not require private evidence but names a custodian")
 
         local_use_ids: set[str] = set()
-        for use in asset["uses"]:
+        for use_index, use in enumerate(asset["uses"]):
             use_id = use["id"]
             key = (asset_id, use_id)
             if use_id in local_use_ids:
@@ -717,6 +874,12 @@ def validate_document(
                     errors.append(f"asset {asset_id} use {use_id} is cleared from disposition {disposition}")
                 if use["evidence"] is None:
                     errors.append(f"asset {asset_id} use {use_id} is cleared without evidence")
+                else:
+                    evidence_path = verified.get(
+                        f"assets[{asset_index}] uses[{use_index}] evidence"
+                    )
+                    if evidence_path is not None:
+                        errors.extend(validate_use_decision_receipt(evidence_path, asset, use))
                 if use["territory"] == "pending" or use["term"] == "pending":
                     errors.append(f"asset {asset_id} use {use_id} is cleared with unsettled territory or term")
                 if use["promotion"] == "pending" or use["archive"] == "pending":
@@ -955,23 +1118,8 @@ def validate_attestation(
         submission = load_yaml(submission_path, "submission binding")
     except RightsError as exc:
         return [str(exc)]
-    for section in ("requirements", "approvals"):
-        for row in submission.get(section, []):
-            if not isinstance(row, dict) or row.get("check") != "manual" or not isinstance(row.get("id"), str):
-                continue
-            choices = row.get("choices")
-            contract = {
-                "kind": "choice" if isinstance(choices, list) and choices else "boolean",
-                "values": choices if isinstance(choices, list) and choices else [True],
-            }
-            existing = contracts.get(row["id"])
-            if existing is not None and (
-                existing["kind"] != contract["kind"]
-                or {json.dumps(value, sort_keys=True) for value in existing["values"]}
-                != {json.dumps(value, sort_keys=True) for value in contract["values"]}
-            ):
-                blockers.append(f"attestation contract disagrees for registered gate {row['id']}")
-            contracts.setdefault(row["id"], contract)
+    _, assertion_errors = _submission_assertion_contracts(document, submission)
+    blockers.extend(assertion_errors)
 
     unknown = [key for key in attestation if not isinstance(key, str) or key not in contracts]
     if unknown:
