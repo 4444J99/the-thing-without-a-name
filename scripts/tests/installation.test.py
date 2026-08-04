@@ -55,13 +55,26 @@ def run(*command: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def make_release(root: Path) -> None:
+def make_release(root: Path, spec: dict) -> None:
     (root / "bin").mkdir()
-    manifest = root / "release-manifest.json"
-    manifest.write_text('{"schema":"test.canonical-release.v1"}\n', encoding="utf-8")
     launcher = root / "bin/danse-launcher"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
+    manifest = {
+        "schema": spec["release"]["manifest_schema"],
+        "spec_contract_sha256": spec["identity"]["contract_sha256"],
+        "files": [
+            {
+                "path": "bin/danse-launcher",
+                "bytes": launcher.stat().st_size,
+                "sha256": file_digest(launcher),
+                "executable": True,
+            }
+        ],
+    }
+    (root / "release-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def evidence_for(spec: dict, release_root: Path, *, complete: bool = False) -> dict:
@@ -255,6 +268,7 @@ class InstallationContractTest(unittest.TestCase):
         for path in (
             ROOT / "installation/digital-twin.schema.json",
             ROOT / "installation/evidence.schema.json",
+            ROOT / "installation/release-manifest.schema.json",
         ):
             schema = load_json(path)
             self.assertEqual(
@@ -376,7 +390,7 @@ class InstallationContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             evidence = evidence_for(self.spec, release)
             self.assertEqual(
                 validate_evidence(
@@ -388,6 +402,10 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(plan["argv"], ["bin/danse-launcher", "--foreground"])
             self.assertEqual(plan["outputs"], ["projection-a", "projection-b"])
             self.assertEqual(plan["evidence_sha256"], canonical_sha256(evidence))
+            self.assertEqual(
+                plan["launcher"]["sha256"],
+                file_digest(release / "bin/danse-launcher"),
+            )
 
             evidence["venue"]["approved"] = False
             with self.assertRaisesRegex(
@@ -409,7 +427,7 @@ class InstallationContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             evidence = evidence_for(self.spec, release)
             evidence["release"]["manifest_sha256"] = "f" * 64
             with self.assertRaisesRegex(ContractError, "manifest digest"):
@@ -431,7 +449,7 @@ class InstallationContractTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             developer_root = Path(temporary)
-            make_release(developer_root)
+            make_release(developer_root, self.spec)
             (developer_root / ".git").mkdir()
             evidence = evidence_for(self.spec, developer_root)
             with self.assertRaisesRegex(ContractError, "Git metadata"):
@@ -439,12 +457,52 @@ class InstallationContractTest(unittest.TestCase):
                     evidence, self.spec, phase="runtime", release_root=developer_root
                 )
 
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            evidence = evidence_for(self.spec, release)
+            launcher = release / "bin/danse-launcher"
+            launcher.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+            launcher.chmod(0o755)
+            with self.assertRaisesRegex(ContractError, "release file digest drifted"):
+                validate_evidence(
+                    evidence, self.spec, phase="runtime", release_root=release
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            manifest_path = release / "release-manifest.json"
+            manifest = load_json(manifest_path)
+            manifest["spec_contract_sha256"] = "f" * 64
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            evidence = evidence_for(self.spec, release)
+            with self.assertRaisesRegex(ContractError, "another installation contract"):
+                validate_evidence(
+                    evidence, self.spec, phase="runtime", release_root=release
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            (release / "bin/unreviewed-helper").write_text(
+                "unbound release byte\n", encoding="utf-8"
+            )
+            evidence = evidence_for(self.spec, release)
+            with self.assertRaisesRegex(ContractError, "release inventory drifted"):
+                validate_evidence(
+                    evidence, self.spec, phase="runtime", release_root=release
+                )
+
     def test_hardware_and_calibration_must_cover_exact_roles_and_thresholds(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             evidence = evidence_for(self.spec, release)
             evidence["hardware"]["assets"].pop()
             with self.assertRaisesRegex(ContractError, "every required role"):
@@ -473,7 +531,7 @@ class InstallationContractTest(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             evidence = evidence_for(self.spec, release, complete=True)
             self.assertEqual(
                 validate_evidence(
@@ -542,7 +600,7 @@ class InstallationContractTest(unittest.TestCase):
     def test_foreground_supervisor_exhausts_a_bounded_restart_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
             clock = FakeClock()
             output = io.StringIO()
@@ -571,6 +629,13 @@ class InstallationContractTest(unittest.TestCase):
                     for call in calls
                 )
             )
+            self.assertTrue(
+                all(
+                    call[1]["env"]["DANSE_INSTALLATION_LAUNCHER_SHA256"]
+                    == plan["launcher"]["sha256"]
+                    for call in calls
+                )
+            )
             records = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(
                 [row["sequence"] for row in records], list(range(len(records)))
@@ -578,12 +643,36 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(records[-1]["event"], "recovery-budget-exhausted")
             self.assertNotIn(str(release), output.getvalue())
 
+    def test_foreground_supervisor_rechecks_launcher_bytes_before_every_exec(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
+            launcher = release / "bin/danse-launcher"
+            launcher.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+            launcher.chmod(0o755)
+            output = io.StringIO()
+            calls = []
+
+            result = supervise(
+                plan,
+                release,
+                Telemetry(output),
+                popen=lambda *args, **kwargs: calls.append((args, kwargs)),
+            )
+            self.assertEqual(result, 78)
+            self.assertEqual(calls, [])
+            records = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(records[-1]["event"], "launcher-integrity-failed")
+
     def test_health_failure_is_telemetried_and_cannot_restart_without_bound(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
-            make_release(release)
+            make_release(release, self.spec)
             evidence = evidence_for(self.spec, release)
             evidence["runtime"]["health_url"] = "http://127.0.0.1:8787/health"
             plan = runtime_plan(evidence, self.spec, release)

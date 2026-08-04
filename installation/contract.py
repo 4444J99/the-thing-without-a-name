@@ -191,7 +191,7 @@ def safe_file(root: Path, relative: Any, label: str) -> Path:
     return resolved
 
 
-def _file_sha256(path: Path) -> str:
+def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -215,7 +215,13 @@ def _unique(
     result: dict[Any, dict[str, Any]] = {}
     for index, record in enumerate(records):
         value = record.get(key)
-        if value in result or value in (None, ""):
+        try:
+            present = value in result
+        except TypeError as exc:
+            raise ContractError(
+                f"{label}[{index}].{key} must be a scalar identity"
+            ) from exc
+        if present or value in (None, ""):
             raise ContractError(f"{label}[{index}].{key} must be present and unique")
         result[value] = record
     return result
@@ -270,7 +276,7 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
         if not set(source) <= allowed or not {"id", "path", "sha256"} <= set(source):
             raise ContractError(f"source_contracts.{source_id} has an unknown shape")
         path = safe_file(root, source["path"], f"source_contracts.{source_id}.path")
-        if _file_sha256(path) != _sha256(
+        if file_sha256(path) != _sha256(
             source["sha256"], f"source_contracts.{source_id}.sha256"
         ):
             raise ContractError(f"source contract {source_id} bytes drifted")
@@ -704,13 +710,19 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
 
     release = _exact_keys(
         value["release"],
-        {"canonical_release_required", "developer_checkout_allowed", "manifest_name"},
+        {
+            "canonical_release_required",
+            "developer_checkout_allowed",
+            "manifest_name",
+            "manifest_schema",
+        },
         "release",
     )
     if release != {
         "canonical_release_required": True,
         "developer_checkout_allowed": False,
         "manifest_name": "release-manifest.json",
+        "manifest_schema": "danse.installation.release.v1",
     }:
         raise ContractError(
             "installation runtime must consume a canonical release, never a developer checkout"
@@ -899,9 +911,53 @@ def _approved(value: Any, label: str) -> None:
         raise ContractError(f"{label} must be explicitly approved")
 
 
+def _release_inventory(root: Path, manifest_relative: str) -> set[str]:
+    """Inventory regular release files without following links or Git metadata."""
+    inventory: set[str] = set()
+
+    def walk_error(exc: OSError) -> None:
+        raise ContractError("canonical release inventory cannot be read") from exc
+
+    for current_value, directories, filenames in os.walk(
+        root, topdown=True, followlinks=False, onerror=walk_error
+    ):
+        current = Path(current_value)
+        directories.sort()
+        filenames.sort()
+        for name in directories:
+            path = current / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                raise ContractError(
+                    f"canonical release may not contain a symlink: {relative}"
+                )
+            if name == ".git":
+                raise ContractError(
+                    "installation release root may not contain Git metadata"
+                )
+        for name in filenames:
+            path = current / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                raise ContractError(
+                    f"canonical release may not contain a symlink: {relative}"
+                )
+            if ".git" in PurePosixPath(relative).parts:
+                raise ContractError(
+                    "installation release root may not contain Git metadata"
+                )
+            if not path.is_file():
+                raise ContractError(
+                    f"canonical release may contain only regular files: {relative}"
+                )
+            if relative != manifest_relative:
+                inventory.add(relative)
+    return inventory
+
+
 def _validate_release(
     release: dict[str, Any], release_root: Path, spec: dict[str, Any]
-) -> Path:
+) -> tuple[Path, dict[str, dict[str, Any]]]:
     _exact_keys(
         release,
         {"root_kind", "manifest_path", "manifest_sha256", "developer_checkout"},
@@ -925,8 +981,6 @@ def _validate_release(
         raise ContractError(
             "installation runtime cannot use a developer checkout as its release root"
         )
-    if (root / ".git").exists():
-        raise ContractError("installation release root may not contain Git metadata")
     if release["manifest_path"] != spec["release"]["manifest_name"]:
         raise ContractError(
             "installation release manifest name disagrees with the digital twin"
@@ -934,11 +988,76 @@ def _validate_release(
     manifest = safe_file(
         root, release["manifest_path"], "evidence.release.manifest_path"
     )
-    if _file_sha256(manifest) != _receipt_sha(
+    if file_sha256(manifest) != _receipt_sha(
         release["manifest_sha256"], "evidence.release.manifest_sha256"
     ):
         raise ContractError("canonical release manifest digest does not match evidence")
-    return root
+    document = load_json(manifest)
+    _exact_keys(
+        document,
+        {"schema", "spec_contract_sha256", "files"},
+        "canonical release manifest",
+    )
+    if document["schema"] != spec["release"]["manifest_schema"]:
+        raise ContractError("canonical release manifest schema is unsupported")
+    if document["spec_contract_sha256"] != spec["identity"]["contract_sha256"]:
+        raise ContractError(
+            "canonical release manifest belongs to another installation contract"
+        )
+    records = _objects(document["files"], "canonical release manifest files")
+    paths: list[str] = []
+    for index, record in enumerate(records):
+        _exact_keys(
+            record,
+            {"path", "bytes", "sha256", "executable"},
+            f"canonical release manifest files[{index}]",
+        )
+        relative = record["path"]
+        if (
+            not isinstance(relative, str)
+            or PurePosixPath(relative).as_posix() != relative
+        ):
+            raise ContractError(
+                "canonical release manifest paths must be canonical relative paths"
+            )
+        paths.append(relative)
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ContractError(
+            "canonical release manifest paths must be unique and sorted"
+        )
+    by_path = {record["path"]: record for record in records}
+    for relative, record in by_path.items():
+        if relative == release["manifest_path"]:
+            raise ContractError("canonical release manifest may not inventory itself")
+        path = safe_file(root, relative, f"canonical release file {relative}")
+        byte_count = record["bytes"]
+        if (
+            isinstance(byte_count, bool)
+            or not isinstance(byte_count, int)
+            or byte_count < 0
+            or path.stat().st_size != byte_count
+        ):
+            raise ContractError(
+                f"canonical release file byte count drifted: {relative}"
+            )
+        if file_sha256(path) != _sha256(
+            record["sha256"], f"canonical release file {relative}.sha256"
+        ):
+            raise ContractError(f"canonical release file digest drifted: {relative}")
+        executable = record["executable"]
+        actual_executable = bool(path.stat().st_mode & 0o111)
+        if not isinstance(executable, bool) or executable != actual_executable:
+            raise ContractError(
+                f"canonical release file executable mode drifted: {relative}"
+            )
+    inventory = _release_inventory(root, release["manifest_path"])
+    if inventory != set(by_path):
+        missing = sorted(set(by_path) - inventory)
+        extra = sorted(inventory - set(by_path))
+        raise ContractError(
+            f"canonical release inventory drifted; missing={missing}, extra={extra}"
+        )
+    return root, by_path
 
 
 def _validate_health_url(value: Any) -> str | None:
@@ -1195,7 +1314,7 @@ def validate_evidence(
         )
     _receipt_sha(geometry["receipt_sha256"], "venue geometry receipt")
 
-    root = _validate_release(value["release"], release_root, spec)
+    root, release_files = _validate_release(value["release"], release_root, spec)
 
     hardware = _exact_keys(
         value["hardware"],
@@ -1312,6 +1431,11 @@ def validate_evidence(
         runtime["argv_sha256"], "runtime argv digest"
     ):
         raise ContractError("runtime argv digest is stale")
+    launcher = release_files.get(argv[0])
+    if launcher is None or launcher["executable"] is not True:
+        raise ContractError(
+            "runtime executable must be an executable file bound by the canonical release manifest"
+        )
     executable = safe_file(root, argv[0], "runtime executable")
     if not os.access(executable, os.X_OK):
         raise ContractError("runtime executable is not executable")
@@ -1463,12 +1587,15 @@ def runtime_plan(
 ) -> dict[str, Any]:
     validate_evidence(value, spec, phase="runtime", release_root=release_root)
     runtime = value["runtime"]
+    _, release_files = _validate_release(value["release"], release_root, spec)
+    launcher = release_files[runtime["argv"][0]]
     return {
         "schema": "danse.installation.runtime-plan.v1",
         "spec_contract_sha256": spec["identity"]["contract_sha256"],
         "evidence_id": value["evidence_id"],
         "evidence_sha256": canonical_sha256(value),
         "release_manifest_sha256": value["release"]["manifest_sha256"],
+        "launcher": copy.deepcopy(launcher),
         "argv": list(runtime["argv"]),
         "health_url": runtime["health_url"],
         "river": copy.deepcopy(runtime["river"]),

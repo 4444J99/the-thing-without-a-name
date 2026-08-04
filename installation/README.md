@@ -14,6 +14,7 @@ drop, or venue has been approved, installed, measured, or observed.
 | `contract.py` | Strict byte, identity, geometry, calibration, venue, hardware, runtime, wall-plug, and restore validator. |
 | `gates.json` | Current truth: every physical gate is blocked and issue #14 cannot close. |
 | `evidence.schema.json` | Shape a venue-owned external evidence receipt must have. No completed evidence is committed here. |
+| `release-manifest.schema.json` | Exact canonical-release inventory, byte counts, digests, executable modes, and installation-contract binding. |
 | `runtime.py` | On-demand foreground supervisor for one exact venue-approved launcher in a canonical release. |
 | `archive-disposition.json` | Claim-by-claim port/reject/defer record for the non-authoritative Limen proposal. |
 | `OPERATIONS.md` | Setup, calibration, operation, recovery, strike, transport, restore, troubleshooting, and conservation procedure. |
@@ -81,14 +82,15 @@ The runtime is one foreground process supervising one exact argument vector from
 an external venue receipt. It:
 
 - refuses developer checkouts, Git metadata, symlinks, absolute executables,
-  stale release manifests, unverified hardware, failed calibration, non-loopback
-  health URLs, and unapproved launchers; health probes use numeric loopback
-  addresses directly and bypass ambient proxy settings;
+  stale or incomplete release inventories, launchers absent from the manifest,
+  unverified hardware, failed calibration, non-loopback health URLs, and
+  unapproved launchers; health probes use numeric loopback addresses directly
+  and bypass ambient proxy settings;
 - passes the approved river seed, stream, epoch, output IDs, evidence ID, and
   contract digest through environment variables;
-- binds the canonical digest of the admitted evidence into the child environment
-  and emits append-only JSONL health/restart telemetry without local paths or
-  credentials;
+- rechecks the manifest-bound launcher bytes before every execution, binds the
+  canonical evidence and launcher digests into the child environment, and emits
+  append-only JSONL health/restart telemetry without local paths or credentials;
 - admits at most three restarts in a five-minute window with fixed backoff; and
 - exits when the budget is exhausted instead of looping forever.
 

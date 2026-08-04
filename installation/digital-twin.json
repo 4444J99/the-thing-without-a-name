@@ -3,7 +3,7 @@
   "identity": {
     "id": "danse-reference-installation-20260804",
     "status": "reference-simulation",
-    "contract_sha256": "56228ad36b4c31b1b033bc6324b6eafde92772f008216c49a665a2ea10cef457"
+    "contract_sha256": "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3"
   },
   "source_contracts": [
     {
@@ -176,6 +176,7 @@
   "release": {
     "canonical_release_required": true,
     "developer_checkout_allowed": false,
-    "manifest_name": "release-manifest.json"
+    "manifest_name": "release-manifest.json",
+    "manifest_schema": "danse.installation.release.v1"
   }
 }

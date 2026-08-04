@@ -25,6 +25,7 @@ from typing import Any, TextIO
 try:
     from .contract import (
         ContractError,
+        file_sha256,
         load_json,
         load_reference_contracts,
         runtime_plan,
@@ -33,6 +34,7 @@ try:
 except ImportError:  # Direct `python3 installation/runtime.py` execution.
     from contract import (  # type: ignore[no-redef]
         ContractError,
+        file_sha256,
         load_json,
         load_reference_contracts,
         runtime_plan,
@@ -107,8 +109,7 @@ def supervise(
     recovery = policy["recovery"]
     root = release_root.resolve(strict=True)
     relative_argv = plan["argv"]
-    executable = safe_file(root, relative_argv[0], "runtime executable")
-    argv = [str(executable), *relative_argv[1:]]
+    launcher = plan["launcher"]
     environment = {
         key: os.environ[key]
         for key in ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR")
@@ -119,6 +120,7 @@ def supervise(
             "DANSE_INSTALLATION_CONTRACT_SHA256": plan["spec_contract_sha256"],
             "DANSE_INSTALLATION_EVIDENCE_ID": plan["evidence_id"],
             "DANSE_INSTALLATION_EVIDENCE_SHA256": plan["evidence_sha256"],
+            "DANSE_INSTALLATION_LAUNCHER_SHA256": launcher["sha256"],
             "DANSE_INSTALLATION_OUTPUTS": ",".join(plan["outputs"]),
             "DANSE_RIVER_SEED": str(plan["river"]["seed"]),
             "DANSE_RIVER_STREAM": str(plan["river"]["stream"]),
@@ -151,6 +153,20 @@ def supervise(
             restart_times.append(clock())
 
         attempt += 1
+        try:
+            executable = safe_file(root, relative_argv[0], "runtime executable")
+            launcher_holds = (
+                launcher["path"] == relative_argv[0]
+                and executable.stat().st_size == launcher["bytes"]
+                and file_sha256(executable) == launcher["sha256"]
+                and bool(executable.stat().st_mode & 0o111)
+            )
+        except (ContractError, OSError):
+            launcher_holds = False
+        if not launcher_holds:
+            telemetry.emit("launcher-integrity-failed", attempt=attempt)
+            return 78
+        argv = [str(executable), *relative_argv[1:]]
         telemetry.emit("launcher-start", attempt=attempt)
         try:
             process = popen(argv, cwd=root, env=environment, shell=False)
@@ -275,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_id=plan["evidence_id"],
             evidence_sha256=plan["evidence_sha256"],
             release_manifest_sha256=plan["release_manifest_sha256"],
+            launcher_sha256=plan["launcher"]["sha256"],
         )
 
         def interrupt_foreground(_signum: int, _frame: Any) -> None:

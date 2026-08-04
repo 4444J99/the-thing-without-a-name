@@ -14,7 +14,9 @@ insurance, and public-operation decisions.
 3. Obtain written venue approval for measured room dimensions, egress, mounting,
    surface material, projector/lens/throw, power distribution, ventilation,
    interface/speaker routing, cabling, level limits, and the foreground launcher.
-4. Confirm that the release contains no Git metadata or developer-only tooling.
+4. Confirm that the release contains no Git metadata or developer-only tooling,
+   and that its manifest inventories every delivered file. The approved launcher
+   path, bytes, digest, and executable mode must match that inventory exactly.
 5. Print or retain an offline copy of this procedure, the digital twin, release
    manifest, calibration plan, and venue emergency contacts.
 
