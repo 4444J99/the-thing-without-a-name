@@ -26,6 +26,8 @@ jobs:
       - run: python scripts/tests/pages-artifact.test.py
       - run: python scripts/tests/release-manifest.test.py
       - run: python scripts/tests/danse-delivery.test.py
+      - run: node scripts/tests/interaction.test.mjs
       - run: python -m py_compile render/*.py pipeline/*.py sound/*.py submission/*.py scripts/*.py
+      - run: node --check interaction/adapter.js && node --check interaction/camera.js && node --check interaction/controller.js && node --check interaction/session.js
       - run: node --check sound/control.mjs
       - run: bash -n done.sh
