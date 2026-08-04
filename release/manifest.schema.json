@@ -18,6 +18,7 @@
     "claims",
     "credits",
     "media",
+    "products",
     "gates"
   ],
   "properties": {
@@ -45,6 +46,11 @@
       "type": "array",
       "minItems": 1,
       "items": {"$ref": "#/$defs/media"}
+    },
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/product"}
     },
     "gates": {
       "type": "array",
@@ -411,6 +417,24 @@
         "source": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/source"}]},
         "clearance": {"$ref": "#/$defs/clearance"},
         "alt_text": {"type": ["string", "null"]}
+      }
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "label", "path", "required_for", "status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"const": "generated-document"},
+        "label": {"type": "string", "minLength": 1},
+        "path": {"$ref": "#/$defs/path"},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["public", "release"]}
+        },
+        "status": {"enum": ["pending", "ready"]}
       }
     },
     "gate": {

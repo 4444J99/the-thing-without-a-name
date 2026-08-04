@@ -9,11 +9,13 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest import mock
 
 from pypdf import PdfReader
 
@@ -70,6 +72,46 @@ def load_pages_builder():
 
 
 PAGES = load_pages_builder()
+
+
+def initialize_git_fixture(root: Path) -> str:
+    subprocess.run(
+        ["git", "-C", str(root), "init", "-q"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "add", "."],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Danse Test",
+            "-c",
+            "user.email=danse-test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 class Markup(HTMLParser):
@@ -172,6 +214,8 @@ def complete_manifest(root: Path) -> dict:
             "evidence": copy.deepcopy(evidence),
         }
         medium["alt_text"] = f"Synthetic accessible description for {medium['label']}."
+    for product in manifest["products"]:
+        product["status"] = "ready"
     for gate in manifest["gates"]:
         gate["state"] = "satisfied"
         gate["evidence"] = copy.deepcopy(evidence)
@@ -324,6 +368,26 @@ class ProductionManifestTest(unittest.TestCase):
         robots = [meta for meta in markup.metas if meta.get("name") == "robots"]
         self.assertEqual(robots[0]["content"], "noindex,nofollow")
 
+    def test_project_resources_are_accessible_receipted_artifact_links(self) -> None:
+        markup = Markup()
+        markup.feed((self.output / "project/index.html").read_text(encoding="utf-8"))
+        self.assertIn("resources", markup.by_id)
+        hrefs = {link.get("href") for link in markup.links}
+        products = {product["id"]: product for product in self.manifest["products"]}
+        expected = {
+            f"../{products[product_id]['path']}"
+            for product_id, _label in BUILD.PROJECT_RESOURCES
+        }
+        self.assertTrue(expected <= hrefs)
+        for href in expected:
+            target = (self.output / "project" / href).resolve()
+            self.assertTrue(target.is_relative_to(self.output.resolve()))
+            self.assertTrue(target.is_file(), href)
+        BUILD.verify_project_links(
+            self.output,
+            {record["path"] for record in self.receipt["files"]},
+        )
+
     def test_pdf_is_deterministic_structured_and_visibly_draft(self) -> None:
         path = self.output / BUILD.PDF_NAME
         reader = PdfReader(str(path))
@@ -352,6 +416,12 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertIn(self.manifest["credits"][0]["role"], credits)
         self.assertEqual(len(inventory["media"]), len(self.manifest["media"]))
         self.assertTrue(all(item["released"] is None for item in inventory["media"]))
+        self.assertEqual(len(inventory["products"]), len(self.manifest["products"]))
+        for product in inventory["products"]:
+            artifact = product["artifact"]
+            generated = self.output / artifact["path"]
+            self.assertEqual(artifact["bytes"], generated.stat().st_size)
+            self.assertEqual(artifact["sha256"], CONTRACT.sha256(generated))
         self.assertFalse(calendar["publishes_automatically"])
 
     def test_pages_allowlist_still_excludes_project_and_release_surfaces(self) -> None:
@@ -391,8 +461,54 @@ class DeterminismAndCompletedPhaseTest(unittest.TestCase):
             self.assertEqual(receipt["phase"], "release")
             assets = [record for record in receipt["files"] if record["path"].startswith("media/assets/")]
             self.assertEqual(len(assets), len(manifest["media"]))
+            generated_inventory = json.loads(
+                (output / "media/release-media.json").read_text()
+            )["products"]
+            self.assertEqual(
+                {product["id"] for product in generated_inventory},
+                {product["id"] for product in manifest["products"]},
+            )
+            self.assertFalse(
+                any(
+                    product["path"].startswith("media/assets/")
+                    for product in manifest["products"]
+                )
+            )
+            for product in generated_inventory:
+                artifact = product["artifact"]
+                path = output / artifact["path"]
+                self.assertEqual(artifact["bytes"], path.stat().st_size)
+                self.assertEqual(artifact["sha256"], CONTRACT.sha256(path))
             captions = (output / "accessibility/captions.en.vtt").read_text()
             self.assertIn("00:00:00.000 --> 00:00:02.000", captions)
+
+    def test_media_source_swap_after_validation_fails_without_an_artifact_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = fixture_root(base)
+            manifest = complete_manifest(root)
+            medium = manifest["media"][0]
+            source = medium["source"]
+            source_path = root / source["path"]
+            replacement = b"x" * source["bytes"]
+            original_source_file = BUILD.source_file
+            swapped = False
+
+            def replace_after_validation(check_root, relative, label):
+                nonlocal swapped
+                path = original_source_file(check_root, relative, label)
+                if relative == source["path"] and not swapped:
+                    source_path.write_bytes(replacement)
+                    swapped = True
+                return path
+
+            output = base / "artifact"
+            with mock.patch.object(BUILD, "source_file", side_effect=replace_after_validation):
+                with self.assertRaisesRegex(CONTRACT.ReleaseError, "changed after manifest validation"):
+                    BUILD.build(root, output, "release", TEST_COMMIT)
+            self.assertTrue(swapped)
+            self.assertFalse((output / BUILD.ARTIFACT_MANIFEST).exists())
+            self.assertFalse((output / source["destination"]).exists())
 
     def test_public_phase_does_not_require_release_only_lifecycle_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -416,6 +532,63 @@ class DeterminismAndCompletedPhaseTest(unittest.TestCase):
                 CONTRACT.validate_release(root, phase="release")
             receipt = BUILD.build(root, base / "public-artifact", "public", TEST_COMMIT)
             self.assertEqual(receipt["phase"], "public")
+
+
+class ProductionCliSourceTest(unittest.TestCase):
+    def test_cli_accepts_only_the_clean_exact_git_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = fixture_root(base)
+            (root / "tracked-sentinel.txt").write_text("clean\n", encoding="utf-8")
+            commit = initialize_git_fixture(root)
+            command = [
+                sys.executable,
+                str(ROOT / "scripts/build-release.py"),
+                "--root",
+                str(root),
+                "--phase",
+                "draft",
+                "--source-commit",
+                commit,
+            ]
+
+            clean_output = base / "clean-artifact"
+            clean = subprocess.run(
+                [*command, "--output", str(clean_output)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+            self.assertTrue((clean_output / BUILD.ARTIFACT_MANIFEST).is_file())
+
+            wrong_output = base / "wrong-artifact"
+            wrong = subprocess.run(
+                [
+                    *command[:-1],
+                    "b" * 40,
+                    "--output",
+                    str(wrong_output),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(wrong.returncode, 0)
+            self.assertIn("does not match checkout HEAD", wrong.stderr)
+            self.assertFalse(wrong_output.exists())
+
+            (root / "tracked-sentinel.txt").write_text("dirty\n", encoding="utf-8")
+            dirty_output = base / "dirty-artifact"
+            dirty = subprocess.run(
+                [*command, "--output", str(dirty_output)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn("tracked changes", dirty.stderr)
+            self.assertFalse(dirty_output.exists())
 
 
 class AdversarialManifestTest(unittest.TestCase):
@@ -559,6 +732,26 @@ class AdversarialArtifactTest(unittest.TestCase):
     def test_unrecorded_file_fails(self) -> None:
         (self.output / "private.txt").write_text("not allowlisted\n")
         with self.assertRaisesRegex(CONTRACT.ReleaseError, "inventory mismatch"):
+            BUILD.verify_artifact(self.output, TEST_COMMIT)
+
+    def test_receipted_project_link_to_source_manifest_fails(self) -> None:
+        project = self.output / "project/index.html"
+        project.write_text(
+            project.read_text(encoding="utf-8").replace(
+                "</main>",
+                '<p><a href="../release/manifest.json">Source manifest</a></p></main>',
+            ),
+            encoding="utf-8",
+        )
+        receipt_path = self.output / BUILD.ARTIFACT_MANIFEST
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        record = next(
+            record for record in receipt["files"] if record["path"] == "project/index.html"
+        )
+        record["bytes"] = project.stat().st_size
+        record["sha256"] = CONTRACT.sha256(project)
+        receipt_path.write_bytes(CONTRACT.canonical_json(receipt))
+        with self.assertRaisesRegex(CONTRACT.ReleaseError, "missing internal target"):
             BUILD.verify_artifact(self.output, TEST_COMMIT)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")

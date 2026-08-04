@@ -2366,6 +2366,7 @@ def _release_manifest_shape_errors(
         "claims",
         "credits",
         "media",
+        "products",
         "gates",
     }
     top_keys = set(manifest)

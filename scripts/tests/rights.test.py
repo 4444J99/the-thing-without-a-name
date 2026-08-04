@@ -514,6 +514,40 @@ class RightsContractTest(unittest.TestCase):
             self.assertEqual(media[media_id]["clearance"]["status"], "pending")
             self.assertIsNone(media[media_id]["clearance"]["evidence"])
 
+        products = manifest["products"]
+        self.assertEqual(
+            [(row["id"], row["label"], row["path"]) for row in products],
+            [
+                ("project-page-copy", "Approved public project page", "project/index.html"),
+                (
+                    "pitch-pdf-copy",
+                    "Approved installation pitch PDF",
+                    "pitch/danse-installation-pitch.pdf",
+                ),
+                (
+                    "accessibility-copy",
+                    "Approved accessibility statement",
+                    "accessibility/accessibility.md",
+                ),
+                (
+                    "caption-track-copy",
+                    "Approved English caption track",
+                    "accessibility/captions.en.vtt",
+                ),
+                (
+                    "transcript-copy",
+                    "Approved public transcript",
+                    "accessibility/transcript.txt",
+                ),
+                ("press-kit-copy", "Approved public press kit", "press/press-kit.md"),
+                ("credits-copy", "Approved public credits", "press/credits.txt"),
+            ],
+        )
+        for product in products:
+            self.assertEqual(product["kind"], "generated-document")
+            self.assertEqual(product["required_for"], ["public", "release"])
+            self.assertEqual(product["status"], "pending")
+
         credits = {row["id"]: row for row in manifest["credits"]}
         credit_rules = {row["credit_id"]: row for row in self.document["credit_rules"]}
         self.assertEqual(set(credits), set(credit_rules))
@@ -1482,15 +1516,16 @@ class RightsContractTest(unittest.TestCase):
             release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())
             manifest["status"] = []
+            omitted_media_id = candidate["release_rules"][0]["media_id"]
             manifest["media"] = [
-                row for row in manifest["media"] if row["id"] != "project-page-copy"
+                row for row in manifest["media"] if row["id"] != omitted_media_id
             ]
             release.write_text(json.dumps(manifest))
             blockers, _ = RIGHTS.validate_release_manifest(
                 candidate, release, "public", root=root, register_path=register
             )
             self.assertTrue(any("status is not valid" in blocker for blocker in blockers), blockers)
-            self.assertTrue(any("project-page-copy" in blocker for blocker in blockers), blockers)
+            self.assertTrue(any(omitted_media_id in blocker for blocker in blockers), blockers)
 
             release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())

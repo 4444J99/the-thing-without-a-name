@@ -349,8 +349,12 @@ python3 scripts/tests/release-manifest.test.py
 
 Draft output is visibly marked and `noindex`. Public and release phases fail closed
 until the exact cut, room, rights, accessibility, identity, custody, restore, and real
-presentation receipts exist. The Pages allowlist does not include `release/` or
-`project/`; building these files neither deploys nor sends anything. See
+presentation receipts exist. Source `release/` and `project/` paths never enter the
+Pages allowlist. After the public predicates pass, the deployment workflow builds and
+verifies a separate public release artifact, then copies only its receipt-bound
+`/project/`, generated public documents, and cleared external media into the staged
+Pages artifact. With the current pending gates, that workflow stops before upload or
+deployment. Building review files locally never deploys or sends anything. See
 [`release/README.md`](release/README.md) for the phase and evidence contract.
 
 ## Provenance

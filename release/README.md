@@ -64,9 +64,10 @@ The output contains:
   snapshot and receipt, source-evidence manifest, phase, and version
 
 The builder accepts only an absent or empty output outside the repository, rejects
-symlinks and path traversal, sets deterministic file timestamps, and reproduces the
-same PDF and other bytes for the same manifest, phase, dependency version, and source
-commit. Generated outputs are not committed from the draft phase.
+symlinks and path traversal, and checks that CLI builds start and finish on the clean
+Git worktree named by the exact source commit. It sets deterministic file timestamps
+and reproduces the same PDF and other bytes for the same manifest, phase, dependency
+version, and source commit. Generated outputs are not committed from the draft phase.
 
 ## Closing a gate
 
@@ -75,6 +76,11 @@ tracked public-safe evidence file and its SHA-256. Ready media also names an exa
 source path, SHA-256, byte count, public destination under `media/assets/`, and
 accessible description. Its ID and phase scope must match `rights/register.json`,
 and its clearance must satisfy the typed rights/production receipt contract.
+Generated project, pitch, accessibility, caption, transcript, press, and credit
+products are a separate manifest inventory: they never name prebuilt source copies.
+Their exact output bytes are derived from the manifest and recorded in the release
+artifact receipt. The generated project page links directly to each public access and
+presentation product, and artifact verification rejects broken or escaping local links.
 Private releases, signatures, contacts, raw media, package roots, and credentials stay
 in their owning custody; only their redacted receipt can be referenced here.
 
@@ -91,7 +97,8 @@ Before changing `status` to `public-approved` or `released`:
 ## Publication boundary
 
 The root GitHub Pages artifact remains the immersive artwork. `scripts/build-pages.py`
-does not include `release/` or `project/`; the Pages regression asserts both stay out.
-The generated `/project/` route may enter a future Pages allowlist only after the
-`public` predicate succeeds and a separately reviewed deployment change binds its
-artifact receipt.
+never copies source `release/` or `project/`. After public rights and release phases
+pass, it can accept one separately built and verified public release artifact and copy
+only the receipt-bound products and cleared public media declared by that artifact.
+Draft, missing, wrong-commit, tampered, symlinked, or overfull release artifacts fail
+before Pages bytes are staged. Current pending gates stop the workflow before upload.

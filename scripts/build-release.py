@@ -9,11 +9,14 @@ import html
 import io
 import os
 import platform
+import posixpath
 import re
-import shutil
+import stat
+import subprocess
 import textwrap
+from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 import pypdf
 import reportlab
@@ -28,6 +31,7 @@ from release_contract import (
     EXPECTED_OPPORTUNITY_RECEIPT_SHA256,
     EXPECTED_OPPORTUNITY_SHA256,
     EXPECTED_SOURCE_EVIDENCE_SHA256,
+    GENERATED_PRODUCT_PATHS,
     HEX64,
     MANIFEST,
     PHASES,
@@ -57,6 +61,30 @@ GENERATED_PATHS = (
     "press/posting-calendar.json",
     "media/release-media.json",
 )
+PROJECT_RESOURCES = (
+    ("pitch-pdf-copy", "Installation pitch (PDF)"),
+    ("accessibility-copy", "Accessibility statement"),
+    ("caption-track-copy", "English captions (WebVTT)"),
+    ("transcript-copy", "Transcript (plain text)"),
+    ("press-kit-copy", "Press kit"),
+    ("credits-copy", "Credits"),
+)
+
+
+class _ProjectMarkup(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ids: set[str] = set()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        element_id = values.get("id")
+        if element_id:
+            self.ids.add(element_id)
+        href = values.get("href")
+        if tag == "a" and href:
+            self.hrefs.append(href)
 
 
 def _h(value: object) -> str:
@@ -159,6 +187,23 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
             "</li>"
         )
 
+    generated_products = []
+    for product in manifest["products"]:
+        generated_products.append(
+            "<li>"
+            f'<div><strong>{_h(product["label"])}</strong>{_status(product["status"])}</div>'
+            f'<p>Deterministically generated at <code>{_h(product["path"])}</code> from this manifest; no prebuilt source copy is accepted.</p>'
+            "</li>"
+        )
+
+    products_by_id = {product["id"]: product for product in manifest["products"]}
+    resources = []
+    for product_id, label in PROJECT_RESOURCES:
+        product = products_by_id[product_id]
+        resources.append(
+            f'<li><a href="../{_h(product["path"])}">{_h(label)}</a></li>'
+        )
+
     links = "".join(
         f'<li><a href="{_h(link["url"])}">{_h(link["label"])}</a></li>'
         for link in press["canonical_links"]
@@ -256,6 +301,7 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
       <nav class="actions" aria-label="Primary">
         <a class="button primary" href="../">Enter the live artwork</a>
         <a class="button" href="#access">Accessibility</a>
+        <a class="button" href="#resources">Resources</a>
         <a class="button" href="#evidence">Evidence and release state</a>
       </nav>
     </header>
@@ -266,9 +312,10 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
       <section aria-labelledby="rider-title"><p class="kicker">Technical rider</p><h2 id="rider-title">Designed for validation, not guesswork</h2><ul class="clean">{''.join(rider)}</ul></section>
       <section id="installation-contract" aria-labelledby="installation-contract-title"><div class="grid"><div><p class="kicker">Reference contract</p><h2 id="installation-contract-title">A measured room is still required</h2><p>The release binds reference simulation <strong>{_h(reference['spec_id'])}</strong> at contract digest <code>{_h(reference['spec_contract_sha256'])}</code>. It is a deterministic design input, not evidence that a venue, hardware path, calibration, runtime recovery, or restore rehearsal has passed.</p><p><a href="{_h(twin_url)}">Inspect the exact digital twin</a> · <a href="{_h(gates_url)}">Inspect the exact gate ledger</a></p></div><aside class="panel"><h3>Physical predicates</h3><p>{len(reference['blocked_gates'])} gates remain blocked in the bound reference ledger; issue 14 cannot close from this simulation.</p><ul>{physical_gates}</ul></aside></div></section>
       <section id="access" aria-labelledby="access-title"><div class="grid"><div><p class="kicker">Accessibility</p><h2 id="access-title">A complete work with or without camera, motion, or sound</h2><p><strong>Visual description.</strong> {_h(accessibility['alt_text'])}</p><p><strong>Motion.</strong> {_h(accessibility['motion_note'])}</p><p><strong>Audio.</strong> {_h(accessibility['audio_note'])}</p></div><aside class="panel"><h3>Fallbacks</h3><p>{_h(accessibility['reduced_motion'])}</p><p>{_h(accessibility['silent_fallback'])}</p><p>Captions: {_h(accessibility['captions']['status'])}. Transcript: {_h(accessibility['transcript']['status'])}.</p></aside></div></section>
+      <section id="resources" aria-labelledby="resources-title"><div class="grid"><div><p class="kicker">Resources</p><h2 id="resources-title">Access and presentation downloads</h2><p>These files are generated from the same approved release manifest and authenticated by the release receipt.</p></div><nav class="panel" aria-label="Project resources"><ul class="clean">{''.join(resources)}</ul></nav></div></section>
       <section aria-labelledby="press-title"><div class="grid"><div><p class="kicker">For presentation</p><h2 id="press-title">Synopsis</h2><p>{_h(press['synopsis_long'])}</p></div><aside class="panel"><h3>Canonical links</h3><ul>{links}</ul><h3>Seed sharing</h3><p>{_h(press['seed_sharing']['note'])}</p><p><a href="{_h(press['seed_sharing']['example_url'])}">Open archival seed {press['seed_sharing']['archival_seed']}</a></p></aside></div></section>
       <section id="evidence" aria-labelledby="evidence-title"><p class="kicker">Release truth</p><h2 id="evidence-title">Claims and evidence</h2><ul class="clean">{''.join(claims)}</ul></section>
-      <section aria-labelledby="credits-title"><div class="grid"><div><h2 id="credits-title">Credits</h2><ul class="clean">{''.join(credits)}</ul></div><div><h2>Release media</h2><ul class="clean">{''.join(media)}</ul></div></div></section>
+      <section aria-labelledby="credits-title"><div class="grid"><div><h2 id="credits-title">Credits</h2><ul class="clean">{''.join(credits)}</ul></div><div><h2>External release media</h2><ul class="clean">{''.join(media)}</ul><h3>Generated release products</h3><ul class="clean">{''.join(generated_products)}</ul></div></div></section>
       {f'<section aria-labelledby="gates-title"><p class="kicker">Draft gate ledger</p><h2 id="gates-title">What must happen before publication</h2><ul class="clean">{"".join(open_gates)}</ul></section>' if draft else ''}
     </main>
     <footer><p>{_h(identity['canonical_title'])} by {_h(identity['artist'])}. Built from release manifest {_h(manifest['version'])}, source {_h(commit)}. No account action, public send, or deployment is performed by this build.</p></footer>
@@ -411,7 +458,12 @@ def credits_text(manifest: dict, phase: str) -> bytes:
     return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
 
 
-def media_inventory(manifest: dict, phase: str, copied: list[dict]) -> bytes:
+def media_inventory(
+    manifest: dict,
+    phase: str,
+    copied: list[dict],
+    generated: list[dict],
+) -> bytes:
     records = []
     copied_by_id = {record["id"]: record for record in copied}
     for medium in sorted(manifest["media"], key=lambda item: item["id"]):
@@ -434,6 +486,20 @@ def media_inventory(manifest: dict, phase: str, copied: list[dict]) -> bytes:
                 "released": released,
             }
         )
+    generated_by_id = {record["id"]: record for record in generated}
+    products = []
+    for product in sorted(manifest["products"], key=lambda item: item["id"]):
+        products.append(
+            {
+                "id": product["id"],
+                "kind": product["kind"],
+                "label": product["label"],
+                "required_for": product["required_for"],
+                "status": product["status"],
+                "path": product["path"],
+                "artifact": generated_by_id[product["id"]],
+            }
+        )
     return canonical_json(
         {
             "schema": "danse.release-media.v1",
@@ -441,6 +507,7 @@ def media_inventory(manifest: dict, phase: str, copied: list[dict]) -> bytes:
             "version": manifest["version"],
             "phase": phase,
             "media": records,
+            "products": products,
         }
     )
 
@@ -659,6 +726,50 @@ def write_bytes(output: Path, relative: str, data: bytes) -> Path:
     return target
 
 
+def copy_manifested_media(
+    source_path: Path,
+    target: Path,
+    record: dict,
+    label: str,
+) -> dict:
+    """Copy one approved source through a stable descriptor and recheck its bytes."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    digest = hashlib.sha256()
+    copied_bytes = 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(source_path, flags)
+        with os.fdopen(descriptor, "rb") as source_handle:
+            if not stat.S_ISREG(os.fstat(source_handle.fileno()).st_mode):
+                raise ReleaseError(f"{label} is no longer a regular file")
+            with target.open("xb") as target_handle:
+                for block in iter(lambda: source_handle.read(1 << 20), b""):
+                    digest.update(block)
+                    copied_bytes += len(block)
+                    target_handle.write(block)
+    except FileExistsError as exc:
+        raise ReleaseError(f"{label} destination appeared during the build") from exc
+    except OSError as exc:
+        if target.exists() and not target.is_symlink():
+            target.unlink()
+        raise ReleaseError(f"cannot copy {label}: {exc}") from exc
+
+    copied_sha256 = digest.hexdigest()
+    if copied_bytes != record["bytes"] or copied_sha256 != record["sha256"]:
+        target.unlink()
+        raise ReleaseError(f"{label} changed after manifest validation")
+    if target.stat().st_size != copied_bytes or sha256(target) != copied_sha256:
+        target.unlink()
+        raise ReleaseError(f"{label} destination changed during the build")
+    target.chmod(0o644)
+    os.utime(target, (0, 0), follow_symlinks=False)
+    return {
+        "path": target,
+        "bytes": copied_bytes,
+        "sha256": copied_sha256,
+    }
+
+
 def artifact_inventory(root: Path) -> set[str]:
     if root.is_symlink() or not root.is_dir():
         raise ReleaseError(f"release artifact root must be a regular directory: {root}")
@@ -676,6 +787,88 @@ def artifact_inventory(root: Path) -> set[str]:
                 raise ReleaseError(f"release artifact contains a non-regular file: {relative}")
             files.add(relative)
     return files
+
+
+def validate_git_source(root: Path, expected_commit: str) -> None:
+    """Bind a production CLI build to one clean, exact Git worktree."""
+    root = root.absolute().resolve()
+    expected_commit = source_commit(root, expected_commit)
+    identity = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = identity.stdout.splitlines()
+    if identity.returncode != 0 or len(lines) != 2:
+        detail = identity.stderr.strip() or "source root is not a Git worktree"
+        raise ReleaseError(f"cannot authenticate source checkout: {detail}")
+    if Path(lines[0]).resolve() != root:
+        raise ReleaseError("source root must be the Git worktree top level")
+    actual_commit = lines[1].strip().lower()
+    if actual_commit != expected_commit:
+        raise ReleaseError(
+            f"source commit {expected_commit} does not match checkout HEAD {actual_commit}"
+        )
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=no",
+            "--ignore-submodules=none",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        raise ReleaseError(f"cannot inspect source checkout: {status.stderr.strip()}")
+    if status.stdout:
+        raise ReleaseError("source checkout has tracked changes")
+
+
+def verify_project_links(
+    output: Path,
+    delivered_paths: set[str],
+    *,
+    require_artwork_root: bool = False,
+) -> None:
+    """Require every local project link to stay inside the release boundary."""
+    project_path = output / "project/index.html"
+    parser = _ProjectMarkup()
+    try:
+        parser.feed(project_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        raise ReleaseError(f"project page cannot be inspected: {exc}") from exc
+    for href in parser.hrefs:
+        parsed = urlsplit(href)
+        if parsed.scheme or parsed.netloc:
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ReleaseError(f"project page has a non-HTTPS external link: {href}")
+            continue
+        if not parsed.path:
+            if parsed.fragment and parsed.fragment not in parser.ids:
+                raise ReleaseError(f"project page names a missing fragment: #{parsed.fragment}")
+            continue
+        decoded = unquote(parsed.path)
+        relative = posixpath.normpath(posixpath.join("project", decoded))
+        if relative == ".":
+            if decoded not in {"..", "../"}:
+                raise ReleaseError(f"project page has an unsafe root link: {href}")
+            if require_artwork_root and "index.html" not in delivered_paths:
+                raise ReleaseError("project page artwork-root link has no delivered index")
+            continue  # The artwork root enters only when Pages composes this artifact.
+        try:
+            relative = safe_relative(relative, f"project-page link {href!r}")
+        except ReleaseError as exc:
+            raise ReleaseError(f"project page link escapes the release artifact: {href}") from exc
+        if relative not in delivered_paths:
+            raise ReleaseError(f"project page names a missing internal target: {relative}")
+        if parsed.fragment and relative == "project/index.html" and parsed.fragment not in parser.ids:
+            raise ReleaseError(f"project page names a missing fragment: #{parsed.fragment}")
 
 
 def _verify_pdf(path: Path, phase: str, title: str) -> None:
@@ -826,6 +1019,7 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         )
 
     project = (output / "project/index.html").read_text(encoding="utf-8")
+    verify_project_links(output, set(paths))
     draft = receipt["phase"] == "draft"
     if ('name="robots" content="noindex,nofollow"' in project) != draft:
         raise ReleaseError("project-page robot policy does not match artifact phase")
@@ -851,10 +1045,19 @@ def project_title(project: str) -> str:
     return html.unescape(match.group(1))
 
 
-def build(root: Path, output: Path, phase: str, commit: str) -> dict:
+def build(
+    root: Path,
+    output: Path,
+    phase: str,
+    commit: str,
+    *,
+    require_git_source: bool = False,
+) -> dict:
     root = root.absolute()
-    manifest = validate_release(root, phase=phase)
     commit = source_commit(root, commit)
+    if require_git_source:
+        validate_git_source(root, commit)
+    manifest = validate_release(root, phase=phase)
     output = output.absolute()
     if output.is_symlink():
         raise ReleaseError(f"refusing symlinked release output: {output}")
@@ -869,25 +1072,32 @@ def build(root: Path, output: Path, phase: str, commit: str) -> dict:
     copied: list[dict] = []
     for medium in manifest["media"]:
         source = medium["source"]
-        if medium["status"] != "ready" or medium["clearance"]["status"] != "cleared" or source is None:
+        if (
+            phase not in medium["required_for"]
+            or medium["status"] != "ready"
+            or medium["clearance"]["status"] != "cleared"
+            or source is None
+        ):
             continue
         source_path = source_file(root, source["path"], f"media {medium['id']} source")
         destination = safe_relative(source["destination"], f"media {medium['id']} destination")
         target = output / PurePosixPath(destination)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source_path, target, follow_symlinks=False)
-        target.chmod(0o644)
-        os.utime(target, (0, 0), follow_symlinks=False)
+        copied_record = copy_manifested_media(
+            source_path,
+            target,
+            source,
+            f"media {medium['id']} source",
+        )
         copied.append(
             {
                 "id": medium["id"],
                 "path": destination,
-                "bytes": target.stat().st_size,
-                "sha256": sha256(target),
+                "bytes": copied_record["bytes"],
+                "sha256": copied_record["sha256"],
             }
         )
 
-    products = {
+    generated_files = {
         "project/index.html": project_html(manifest, phase, commit),
         PDF_NAME: pitch_pdf(manifest, phase, commit),
         "accessibility/accessibility.md": accessibility_markdown(manifest, phase),
@@ -904,11 +1114,30 @@ def build(root: Path, output: Path, phase: str, commit: str) -> dict:
                 "items": manifest["press"]["posting_calendar"],
             }
         ),
-        "media/release-media.json": media_inventory(manifest, phase, copied),
     }
-    if set(products) != set(GENERATED_PATHS):
+    generated_products = []
+    for product in manifest["products"]:
+        relative = product["path"]
+        if GENERATED_PRODUCT_PATHS.get(product["id"]) != relative or relative not in generated_files:
+            raise ReleaseError(f"generated product {product['id']} has no canonical builder output")
+        data = generated_files[relative]
+        generated_products.append(
+            {
+                "id": product["id"],
+                "path": relative,
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    generated_files["media/release-media.json"] = media_inventory(
+        manifest,
+        phase,
+        copied,
+        generated_products,
+    )
+    if set(generated_files) != set(GENERATED_PATHS):
         raise ReleaseError("release builder's generated output contract drifted")
-    for relative, data in products.items():
+    for relative, data in generated_files.items():
         write_bytes(output, relative, data)
 
     files = []
@@ -959,6 +1188,8 @@ def build(root: Path, output: Path, phase: str, commit: str) -> dict:
         },
         "files": files,
     }
+    if require_git_source:
+        validate_git_source(root, commit)
     write_bytes(output, ARTIFACT_MANIFEST, canonical_json(receipt))
     return verify_artifact(output, commit)
 
@@ -979,6 +1210,7 @@ def main() -> int:
                 args.output,
                 args.phase,
                 source_commit(args.root, args.source_commit),
+                require_git_source=True,
             )
         else:
             receipt = verify_artifact(args.verify, args.source_commit)

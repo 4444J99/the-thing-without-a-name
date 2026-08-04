@@ -381,7 +381,7 @@
       "public_credit": {"state": "pending", "label": null, "note": "No object-by-object credit or legal disposition is approved."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "README.md", "sha256": "e8f42e78f46e4e072497b19e0867fb7568c8f6f7f0e4ddebbfb664616dfe09fc", "summary": "Public project description records the framed poster wall."},
+        {"path": "README.md", "sha256": "d139c14fad1df1d5b233a1fbd4f545a7b9be591673107ece06509a54ca671f07", "summary": "Public project description records the framed poster wall."},
         {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exact visual source inventory to be reviewed."}
       ],
       "uses": [
@@ -621,14 +621,7 @@
     {"media_id": "project-social-card", "destination": "media/assets/project-social-card.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
     {"media_id": "accessible-trailer", "destination": "media/assets/accessible-trailer.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
     {"media_id": "score-driven-master", "destination": "media/assets/score-driven-master.mov", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "installation-proof", "destination": "media/assets/installation-proof.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]},
-    {"media_id": "project-page-copy", "destination": "media/assets/project-page.html", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "pitch-pdf-copy", "destination": "media/assets/pitch.pdf", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "accessibility-copy", "destination": "media/assets/accessibility.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "caption-track-copy", "destination": "media/assets/captions.en.vtt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "transcript-copy", "destination": "media/assets/transcript.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "press-kit-copy", "destination": "media/assets/press-kit.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
-    {"media_id": "credits-copy", "destination": "media/assets/credits.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]}
+    {"media_id": "installation-proof", "destination": "media/assets/installation-proof.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]}
   ],
   "credit_rules": [
     {"credit_id": "artist-credit", "asset": "project-software-design", "gate": "rights-declaration-approved"},

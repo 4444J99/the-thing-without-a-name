@@ -24,6 +24,15 @@ EXPECTED_OPPORTUNITY_SHA256 = "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810
 EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "3a2d3b9eaed6f14f869fc08fa2e0baf02b868116ec0e1b206f23c1ec3e2a94ee"
 EXPECTED_SOURCE_EVIDENCE_SHA256 = "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37"
 PHASES = ("draft", "public", "release")
+GENERATED_PRODUCT_PATHS = {
+    "project-page-copy": "project/index.html",
+    "pitch-pdf-copy": "pitch/danse-installation-pitch.pdf",
+    "accessibility-copy": "accessibility/accessibility.md",
+    "caption-track-copy": "accessibility/captions.en.vtt",
+    "transcript-copy": "accessibility/transcript.txt",
+    "press-kit-copy": "press/press-kit.md",
+    "credits-copy": "press/credits.txt",
+}
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 PRIVATE_PREFIXES = (
@@ -162,6 +171,8 @@ def public_copy_strings(manifest: dict[str, Any]) -> Iterator[str]:
     for medium in manifest["media"]:
         yield medium["label"]
         yield medium["alt_text"] or ""
+    for product in manifest["products"]:
+        yield product["label"]
     for gate in manifest["gates"]:
         yield gate["id"]
         yield gate["owner"]
@@ -404,6 +415,10 @@ def _validate_evidence_states(root: Path, manifest: dict[str, Any]) -> None:
                 f"media {medium['id']} with {clearance['status']} clearance may not carry completion evidence"
             )
 
+    products = {product["id"]: product["path"] for product in manifest["products"]}
+    if products != GENERATED_PRODUCT_PATHS:
+        raise ReleaseError("generated release product inventory or destination drifted")
+
     for gate in manifest["gates"]:
         evidence = gate["evidence"]
         if gate["state"] == "satisfied":
@@ -454,6 +469,9 @@ def phase_blockers(manifest: dict[str, Any], phase: str) -> list[str]:
             )
         if medium["source"] is None:
             blockers.append(f"media {medium['id']} has no source")
+    for product in manifest["products"]:
+        if phase in product["required_for"] and product["status"] != "ready":
+            blockers.append(f"generated product {product['id']} is {product['status']}")
     for claim in manifest["claims"]:
         if claim["publish"] and claim["status"] != "verified":
             blockers.append(f"published claim {claim['id']} is {claim['status']}")
@@ -519,9 +537,15 @@ def validate_release(
     claim_ids = unique_ids(manifest["claims"], "claim")
     credit_ids = unique_ids(manifest["credits"], "credit")
     media_ids = unique_ids(manifest["media"], "media")
+    product_ids = unique_ids(manifest["products"], "product")
     gate_ids = unique_ids(manifest["gates"], "gate")
-    if claim_ids & credit_ids or claim_ids & media_ids or credit_ids & media_ids:
-        raise ReleaseError("claim, credit, and media ids must not collide")
+    identity_groups = (claim_ids, credit_ids, media_ids, product_ids)
+    if any(
+        left & right
+        for index, left in enumerate(identity_groups)
+        for right in identity_groups[index + 1 :]
+    ):
+        raise ReleaseError("claim, credit, media, and product ids must not collide")
 
     calendar = manifest["press"]["posting_calendar"]
     if [item["sequence"] for item in calendar] != list(range(1, len(calendar) + 1)):

@@ -395,104 +395,64 @@
         "evidence": null
       },
       "alt_text": null
-    },
+    }
+  ],
+  "products": [
     {
       "id": "project-page-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved public project page",
+      "path": "project/index.html",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 16 and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "pitch-pdf-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved installation pitch PDF",
+      "path": "pitch/danse-installation-pitch.pdf",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 14, 16, and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "accessibility-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved accessibility statement",
+      "path": "accessibility/accessibility.md",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 16 and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "caption-track-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved English caption track",
+      "path": "accessibility/captions.en.vtt",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 10, 16, and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "transcript-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved public transcript",
+      "path": "accessibility/transcript.txt",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 10, 16, and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "press-kit-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved public press kit",
+      "path": "press/press-kit.md",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 16 and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     },
     {
       "id": "credits-copy",
-      "kind": "interactive-document",
+      "kind": "generated-document",
       "label": "Approved public credits",
+      "path": "press/credits.txt",
       "required_for": ["public", "release"],
-      "status": "pending",
-      "source": null,
-      "clearance": {
-        "status": "pending",
-        "owner": "Issues 16 and 17 and Anthony",
-        "evidence": null
-      },
-      "alt_text": null
+      "status": "pending"
     }
   ],
   "gates": [
