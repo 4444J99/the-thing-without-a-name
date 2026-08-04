@@ -42,6 +42,7 @@ camera must be withheld from generated cuts.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -80,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 44
+FLOOR = 48
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -645,6 +646,60 @@ def check_arrival() -> None:
 # ── 5b. the film is filable ────────────────────────────────────────────────────
 
 REGISTER = APP / "submission" / "screendance-2027.yaml"
+OPPORTUNITY_CHECKER = APP / "scripts" / "check-opportunities.py"
+OPPORTUNITY_TEST = APP / "scripts" / "tests" / "opportunities.test.py"
+
+
+def check_opportunities() -> None:
+    """The release and urgent filing must share one frozen call registry."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "danse_opportunity_invariant", OPPORTUNITY_CHECKER
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("checker module could not be loaded")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        snapshot = checker.validate_registry()
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry unavailable")
+        return
+    except Exception as exc:
+        check("every named opportunity has a source-verified disposition", False, str(exc))
+        check("filing consumes the exact frozen opportunity digest", False, "registry invalid")
+        return
+
+    tests = subprocess.run(
+        [sys.executable, str(OPPORTUNITY_TEST)],
+        cwd=APP,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tests.returncode:
+        output = (tests.stderr or tests.stdout).strip()
+        detail = output.splitlines()[-1] if output else f"test process exited {tests.returncode}"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry regressions failed")
+        return
+
+    check(
+        "every named opportunity has a source-verified disposition",
+        len(snapshot["opportunities"]) == 17,
+        f"{len(snapshot['opportunities'])} targets · {len(snapshot['ranked_actions'])} freeze-time actions",
+    )
+    try:
+        receipt = checker.validate_binding(snapshot)
+    except Exception as exc:
+        check("filing consumes the exact frozen opportunity digest", False, str(exc))
+        return
+    check(
+        "filing consumes the exact frozen opportunity digest",
+        True,
+        f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}…",
+    )
 
 
 def check_submission(program: dict, river: dict) -> None:
@@ -928,6 +983,81 @@ def check_purity() -> None:
     )
 
 
+# ── 3b. convergence and private custody stay fail-closed ──────────────────────
+
+CONVERGENCE_CHECK = APP / "scripts" / "check-convergence.py"
+CONVERGENCE_TEST = APP / "scripts" / "tests" / "convergence.test.py"
+PRIVATE_CUSTODY = APP / "docs" / "continuations" / "alpha-omega" / "private-custody-20260804.json"
+
+
+def check_convergence_receipts() -> None:
+    """Keep repository cleanup subordinate to durable, redacted custody proof."""
+    result = subprocess.run(
+        [sys.executable, str(CONVERGENCE_CHECK), "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    regressions = subprocess.run(
+        [sys.executable, str(CONVERGENCE_TEST)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    detail = (result.stderr or result.stdout or regressions.stderr or regressions.stdout).strip().splitlines()
+    check(
+        "the convergence, archive, and session receipts validate adversarially",
+        result.returncode == 0 and regressions.returncode == 0,
+        detail[-1] if detail else "danse.convergence.v1 plus fail-closed regression suite",
+    )
+
+    try:
+        custody = load(PRIVATE_CUSTODY)
+        required = custody["policy"]["required_independent_verified_copies"]
+        violations = []
+        for root in custody["roots"]:
+            copies = root.get("independent_verified_copies") or []
+            valid = [
+                copy
+                for copy in copies
+                if copy.get("verified") is True
+                and isinstance(copy.get("medium_id"), str)
+                and bool(copy["medium_id"].strip())
+                and isinstance(copy.get("manifest_sha256"), str)
+                and bool(re.fullmatch(r"[0-9a-f]{64}", copy["manifest_sha256"]))
+            ]
+            media = {copy["medium_id"].strip() for copy in valid}
+            manifests = {copy["manifest_sha256"] for copy in valid}
+            restore = root.get("restore_rehearsal") or {}
+            acceptance = root.get("human_acceptance") or {}
+            eligible = (
+                result.returncode == 0
+                and len(media) >= required
+                and len(manifests) == 1
+                and restore.get("ok") is True
+                and isinstance(restore.get("receipt"), str)
+                and bool(restore["receipt"].strip())
+                and acceptance.get("ok") is True
+                and isinstance(acceptance.get("receipt"), str)
+                and bool(acceptance["receipt"].strip())
+                and root.get("tracked_tree_clean") is True
+            )
+            cleanup_authorized = root.get("cleanup_authorized")
+            if not isinstance(cleanup_authorized, bool) or (cleanup_authorized is True and not eligible):
+                violations.append(root.get("id", "unnamed"))
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            not violations,
+            ", ".join(violations) if violations else f"{len(custody['roots'])} material roots remain fail-closed",
+        )
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            False,
+            str(exc),
+        )
+
+
 # ── 4. every frame the score names is deliverable ──────────────────────────────
 
 
@@ -1000,6 +1130,10 @@ def main() -> int:
         check_arrival()
     else:
         NOTE.append(f"no film program at {PROGRAM.relative_to(ROOT)} — the piece runs free, nothing is cut")
+    print("\n repository convergence retains private custody")
+    check_convergence_receipts()
+    print("\n the release follows one frozen opportunity registry")
+    check_opportunities()
     print("\n the corpus is deliverable")
     check_delivery(score, manifest)
     print("\n the sound is the same film")

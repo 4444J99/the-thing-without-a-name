@@ -1,0 +1,60 @@
+{
+  "schema": "danse.archive-dispositions.v1",
+  "recorded_at": "2026-08-04T01:27:26Z",
+  "source": {
+    "repository": "organvm/limen",
+    "branch": "archive/danse-predecessor-experiments-20260802",
+    "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+    "merge_wholesale": false
+  },
+  "artifacts": [
+    {
+      "id": "visitor-pose-prototype",
+      "paths": ["apps/danse/join.html", "apps/danse/index.html"],
+      "status": "active",
+      "disposition": "Port only the body-derived modulation concept through issue #13. Reject the CDN-dependent implementation and require explicit permission, dropout, privacy, accessibility, and no-camera behavior."
+    },
+    {
+      "id": "stateful-spatial-score-prototype",
+      "paths": ["apps/danse/engine/score.js", "apps/danse/sound/score.py"],
+      "status": "superseded",
+      "disposition": "Reject accumulated WebAudio scheduling and timer state as a canonical engine contract. Port only deterministic typed musical and plane-event ideas through issues #9 and #11, queried by absolute time."
+    },
+    {
+      "id": "browser-audio-harness",
+      "paths": ["apps/danse/test-audio.html"],
+      "status": "archived",
+      "disposition": "Retain as historical internal test material. It is not an artwork route and must not enter the Pages allowlist or release artifact."
+    },
+    {
+      "id": "cloudflare-deployment-experiment",
+      "paths": [".github/workflows/deploy-danse.yml"],
+      "status": "superseded",
+      "disposition": "Superseded by the staged, allowlisted GitHub Pages artifact merged in Danse PR #24. Do not port the workflow."
+    },
+    {
+      "id": "theoretical-framework",
+      "paths": ["docs/plans/2026-07-31-danse-theoretical-framework.md"],
+      "status": "archived",
+      "disposition": "Preserve as historical working theory. It contains unapproved claims and is not cleared public copy; any future use requires deliberate editing and release-manifest evidence."
+    },
+    {
+      "id": "installation-proposal",
+      "paths": ["docs/plans/danse-installation-spec.md", "organs/artist/chambers/danse.yaml"],
+      "status": "active",
+      "disposition": "Use as non-authoritative input to issue #14. Venue-approved dimensions, routing, recovery, and three wall-plug proofs must come from the canonical repository before this can be called a specification."
+    },
+    {
+      "id": "submission-attestation",
+      "paths": ["apps/danse/.work/submission/attest.yaml"],
+      "status": "superseded",
+      "disposition": "The archive commit removed the unsupported attestation. Filing and upload can be recorded only by the canonical phase predicates in issue #2."
+    },
+    {
+      "id": "private-brainstorm-history",
+      "paths": [],
+      "status": "not recorded",
+      "disposition": "No Danse-specific durable artifact was found in the configured Claude, Agy, or Codex history surfaces. Unrecorded conversations cannot be reconstructed; no creative claim is inferred from their absence."
+    }
+  ]
+}
