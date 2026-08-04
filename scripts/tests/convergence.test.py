@@ -22,11 +22,29 @@ def load_module():
     return module
 
 
+def load_v2_tests():
+    spec = importlib.util.spec_from_file_location(
+        "danse_convergence_v2_regressions",
+        ROOT / "scripts" / "tests" / "convergence-v2.test.py",
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("convergence v2 regression module could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 CHECK = load_module()
+V2_TESTS = load_v2_tests()
 CONVERGENCE = CHECK.load(ROOT / CHECK.CONVERGENCE)
 CUSTODY = CHECK.load(ROOT / CHECK.CUSTODY)
 ARCHIVE = CHECK.load(ROOT / CHECK.ARCHIVE)
 CLOSEOUT = (ROOT / CHECK.CLOSEOUT).read_text(encoding="utf-8")
+
+# The portable checker already executes this v1 regression entry point. Re-export
+# the additive suite so the same command proves both immutable generations without
+# changing the release-bound scripts/check-danse.py bytes.
+ConvergenceV2ReceiptTest = V2_TESTS.ConvergenceV2ReceiptTest
 
 
 def errors(convergence=None, custody=None, archive=None, closeout=None):

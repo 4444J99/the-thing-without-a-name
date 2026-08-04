@@ -1,0 +1,690 @@
+{
+  "schema": "danse.convergence.v2",
+  "recorded_at": "2026-08-04T09:56:00Z",
+  "supersedes": {
+    "path": "docs/continuations/alpha-omega/convergence-20260804.json",
+    "canonical_json_sha256": "48921ac617ddb1f167c5b1b51648bae845a5c2d7cc585673ba35ab51943b45c3",
+    "policy": "The v1 receipt is immutable. This file is an additive census, not a rewrite."
+  },
+  "status_vocabulary": [
+    "merged",
+    "active",
+    "archived",
+    "ported",
+    "superseded",
+    "blocked",
+    "not recorded"
+  ],
+  "scope": {
+    "canonical_repository": "organvm/the-thing-without-a-name",
+    "source_main": "e61df155850dc91b5a86f0cf4d2ef891a4e6d885",
+    "boundary": "Every local and canonical-remote Danse branch, linked worktree, canonical stash, pull request, issue, visible agent outcome, and the explicitly related Limen archive and successor-interface receipts visible at recorded_at.",
+    "post_snapshot_receipt_target": "https://github.com/organvm/the-thing-without-a-name/issues/20"
+  },
+  "snapshot_relationships": {
+    "custody": {
+      "path": "docs/continuations/alpha-omega/private-custody-20260804-v2.json",
+      "recorded_at": "2026-08-04T09:56:00Z"
+    },
+    "archive": {
+      "path": "docs/continuations/alpha-omega/archive-dispositions-20260804-v2.json",
+      "recorded_at": "2026-08-04T09:56:00Z"
+    }
+  },
+  "remotes": [
+    {
+      "id": "canonical-origin",
+      "status": "active",
+      "fetch": "https://github.com/organvm/the-thing-without-a-name.git",
+      "push": "https://github.com/organvm/the-thing-without-a-name.git"
+    },
+    {
+      "id": "predecessor-archive-origin",
+      "status": "archived",
+      "fetch": "https://github.com/organvm/limen.git",
+      "push": "https://github.com/organvm/limen.git"
+    }
+  ],
+  "branches": [
+    {
+      "id": "main",
+      "local_head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "remote_head": "e61df155850dc91b5a86f0cf4d2ef891a4e6d885",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": false,
+      "cleanup_candidate": false,
+      "receipt": "The custody-bearing default checkout is intentionally 89 commits behind canonical origin/main and is retained."
+    },
+    {
+      "id": "agent/alpha-omega-control-surface",
+      "local_head": "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+      "remote_head": "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/19"
+    },
+    {
+      "id": "agent/screendance-published-terms",
+      "local_head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+      "remote_head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/23"
+    },
+    {
+      "id": "docs/alpha-omega-final-convergence-20260804",
+      "local_head": "e61df155850dc91b5a86f0cf4d2ef891a4e6d885",
+      "remote_head": null,
+      "status": "active",
+      "main_reachable": true,
+      "remote_parity": false,
+      "cleanup_candidate": false,
+      "receipt": "docs/continuations/alpha-omega/convergence-20260804-v2.json"
+    },
+    {
+      "id": "docs/convergence-custody-receipt-20260803",
+      "local_head": "69ba6e74950eea7734162f450fd72277b5513c6f",
+      "remote_head": "69ba6e74950eea7734162f450fd72277b5513c6f",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/26"
+    },
+    {
+      "id": "feat/canonical-import-20260802",
+      "local_head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+      "remote_head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/1"
+    },
+    {
+      "id": "feat/installation-digital-twin-20260804",
+      "local_head": "a3be5d89a211c0bde0c066b13d642729058eb217",
+      "remote_head": "a3be5d89a211c0bde0c066b13d642729058eb217",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/33"
+    },
+    {
+      "id": "feat/local-pose-input-20260803",
+      "local_head": "766378a04c3382e3ce660d5870f5b4b471cbb3c8",
+      "remote_head": "766378a04c3382e3ce660d5870f5b4b471cbb3c8",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/28"
+    },
+    {
+      "id": "feat/music-score-fixtures-20260803",
+      "local_head": "84f579bf151ab5e3d02482850d1bd82fa7b73a39",
+      "remote_head": "84f579bf151ab5e3d02482850d1bd82fa7b73a39",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/25"
+    },
+    {
+      "id": "feat/opportunity-registry-snapshot-20260804",
+      "local_head": "4b21dc3ca57abdad5aa7583b6d09ee31cd1f7886",
+      "remote_head": "4b21dc3ca57abdad5aa7583b6d09ee31cd1f7886",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/27"
+    },
+    {
+      "id": "feat/private-custody-snapshot-20260804",
+      "local_head": "ac50e3ed8bf87681559db712177b4f0870c7222b",
+      "remote_head": "ac50e3ed8bf87681559db712177b4f0870c7222b",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/32"
+    },
+    {
+      "id": "feat/release-manifest-project-20260804",
+      "local_head": "7e689b77629e337c255639ce4ebd4b85c9845438",
+      "remote_head": "7e689b77629e337c255639ce4ebd4b85c9845438",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/29"
+    },
+    {
+      "id": "feat/rights-attribution-register-20260804",
+      "local_head": "31593c13d41cd708ac3c866b2f3cdaebc6a89ab6",
+      "remote_head": "31593c13d41cd708ac3c866b2f3cdaebc6a89ab6",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/31"
+    },
+    {
+      "id": "feat/spatial-room-events-20260803",
+      "local_head": "31248ddc1e31ff027a1022fc5b2c7e530b1d6164",
+      "remote_head": "31248ddc1e31ff027a1022fc5b2c7e530b1d6164",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/30"
+    },
+    {
+      "id": "fix/pages-hud-allowlist-20260803",
+      "local_head": "00c891b21747d498230a29ae03d10ddbe45f5983",
+      "remote_head": "00c891b21747d498230a29ae03d10ddbe45f5983",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/24"
+    },
+    {
+      "id": "fix/reel-publishable-mode-closeout-20260802",
+      "local_head": "8d621b14a1952b4627732ae2aa844f133c21b69c",
+      "remote_head": "8d621b14a1952b4627732ae2aa844f133c21b69c",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/6"
+    },
+    {
+      "id": "fix/reel-single-segment-closeout-20260802",
+      "local_head": "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe",
+      "remote_head": "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/5"
+    },
+    {
+      "id": "work/canonical-merge-closeout-20260802",
+      "local_head": "b26b1a796d4356959a9e9e451da682457822a79b",
+      "remote_head": "b26b1a796d4356959a9e9e451da682457822a79b",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": true,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/4"
+    },
+    {
+      "id": "work/danse-alpha-omega-20260803",
+      "local_head": "55891b5044ceecb35b405f89f72add8590c146ae",
+      "remote_head": "55891b5044ceecb35b405f89f72add8590c146ae",
+      "status": "merged",
+      "main_reachable": true,
+      "remote_parity": true,
+      "cleanup_candidate": false,
+      "receipt": "Identity-locked predecessor retained for the active successor lineage; PR #18 merged it as 5ba1c8090d6172bcea1e0dc908d55075de49a5ea."
+    },
+    {
+      "id": "work/danse-alpha-omega-20260803-s2",
+      "local_head": "887dd5472adffc3b8768700502454c7ee887c5f5",
+      "remote_head": "887dd5472adffc3b8768700502454c7ee887c5f5",
+      "status": "active",
+      "main_reachable": false,
+      "remote_parity": true,
+      "cleanup_candidate": false,
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/issues/7#issuecomment-5177358998"
+    }
+  ],
+  "worktrees": [
+    {
+      "id": "canonical-default",
+      "branch": "main",
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 18,
+      "ignored_classes": ["linked-worktree-container", "python-bytecode-cache"],
+      "observed_kib": 60152952,
+      "size_includes_linked_worktrees": true,
+      "cleanup_authorized": false,
+      "reason": "Default checkout and parent of linked worktrees; retain."
+    },
+    {
+      "id": "canonical-import",
+      "branch": "feat/canonical-import-20260802",
+      "head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 5,
+      "ignored_classes": ["editable-install-metadata"],
+      "observed_kib": 33112,
+      "cleanup_authorized": true,
+      "reason": "PR #1 is merged and the ignored inventory is reproducible metadata only."
+    },
+    {
+      "id": "alpha-omega-control",
+      "branch": "agent/alpha-omega-control-surface",
+      "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 23,
+      "ignored_classes": ["python-bytecode-cache"],
+      "observed_kib": 33936,
+      "cleanup_authorized": true,
+      "reason": "PR #19 is merged and the ignored inventory is reproducible cache only."
+    },
+    {
+      "id": "final-convergence",
+      "branch": "docs/alpha-omega-final-convergence-20260804",
+      "head": "e61df155850dc91b5a86f0cf4d2ef891a4e6d885",
+      "status": "active",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 0,
+      "ignored_classes": [],
+      "observed_kib": 75372,
+      "cleanup_authorized": false,
+      "reason": "Owns this additive v2 census and remains active through exact-head review."
+    },
+    {
+      "id": "canonical-closeout-material-custody",
+      "branch": null,
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "blocked",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 1203,
+      "ignored_classes": [
+        "identity-capsule",
+        "generated-work-and-packages",
+        "local-corpus",
+        "derived-grain-bank",
+        "private-source-register",
+        "python-bytecode-cache",
+        "editable-install-metadata"
+      ],
+      "observed_kib": 59154600,
+      "cleanup_authorized": false,
+      "reason": "Material custody lacks two independent checksum copies, a clean restore, and owner acceptance."
+    },
+    {
+      "id": "convergence-custody",
+      "branch": "docs/convergence-custody-receipt-20260803",
+      "head": "69ba6e74950eea7734162f450fd72277b5513c6f",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 25,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 34368,
+      "cleanup_authorized": true,
+      "reason": "PR #26 is merged and the ignored inventory is reproducible cache and metadata only."
+    },
+    {
+      "id": "alpha-omega-first-capsule",
+      "branch": "work/danse-alpha-omega-20260803",
+      "head": "55891b5044ceecb35b405f89f72add8590c146ae",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 33,
+      "ignored_classes": ["identity-locked-private-capsule", "python-bytecode-cache"],
+      "observed_kib": 34048,
+      "cleanup_authorized": false,
+      "reason": "Never edit, rerun, or reclaim the predecessor while successor lineage remains active."
+    },
+    {
+      "id": "alpha-omega-successor-capsule",
+      "branch": "work/danse-alpha-omega-20260803-s2",
+      "head": "887dd5472adffc3b8768700502454c7ee887c5f5",
+      "status": "active",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 10,
+      "ignored_classes": ["active-private-capsule"],
+      "observed_kib": 75536,
+      "cleanup_authorized": false,
+      "reason": "Admitted successor remains active through its inherited absolute deadline."
+    },
+    {
+      "id": "installation-digital-twin",
+      "branch": "feat/installation-digital-twin-20260804",
+      "head": "a3be5d89a211c0bde0c066b13d642729058eb217",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 42,
+      "ignored_classes": ["ruff-cache", "python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 76204,
+      "cleanup_authorized": true,
+      "reason": "PR #33 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "local-pose-input",
+      "branch": "feat/local-pose-input-20260803",
+      "head": "766378a04c3382e3ce660d5870f5b4b471cbb3c8",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 41,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 75592,
+      "cleanup_authorized": true,
+      "reason": "PR #28 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "music-score-fixtures",
+      "branch": "feat/music-score-fixtures-20260803",
+      "head": "84f579bf151ab5e3d02482850d1bd82fa7b73a39",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 25,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 34260,
+      "cleanup_authorized": true,
+      "reason": "PR #25 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "opportunity-registry",
+      "branch": "feat/opportunity-registry-snapshot-20260804",
+      "head": "4b21dc3ca57abdad5aa7583b6d09ee31cd1f7886",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 26,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 34536,
+      "cleanup_authorized": true,
+      "reason": "PR #27 and issue #15 are terminal; ignored bytes are reproducible caches."
+    },
+    {
+      "id": "pages-hud-allowlist",
+      "branch": "fix/pages-hud-allowlist-20260803",
+      "head": "00c891b21747d498230a29ae03d10ddbe45f5983",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 21,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 33744,
+      "cleanup_authorized": true,
+      "reason": "PR #24 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "private-custody-snapshot",
+      "branch": "feat/private-custody-snapshot-20260804",
+      "head": "ac50e3ed8bf87681559db712177b4f0870c7222b",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 57,
+      "ignored_classes": ["ruff-cache", "python-bytecode-cache"],
+      "observed_kib": 77368,
+      "cleanup_authorized": true,
+      "reason": "PR #32 is merged; this small tooling worktree contains no custody source, copy, or restore bytes."
+    },
+    {
+      "id": "release-manifest-project",
+      "branch": "feat/release-manifest-project-20260804",
+      "head": "7e689b77629e337c255639ce4ebd4b85c9845438",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 1421,
+      "ignored_classes": [
+        "reproducible-release-qa-virtualenv",
+        "reproducible-project-and-pdf-raster-audits",
+        "python-bytecode-cache",
+        "editable-install-metadata"
+      ],
+      "qa_raster_files": 34,
+      "observed_kib": 148352,
+      "cleanup_authorized": true,
+      "reason": "PR #29 is merged. The exact release and PDF digests are durable; ignored raster audits and the QA environment are reproducible from the reviewed head."
+    },
+    {
+      "id": "rights-attribution",
+      "branch": "feat/rights-attribution-register-20260804",
+      "head": "31593c13d41cd708ac3c866b2f3cdaebc6a89ab6",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 87,
+      "ignored_classes": ["ruff-cache", "python-bytecode-cache"],
+      "observed_kib": 77376,
+      "cleanup_authorized": true,
+      "reason": "PR #31 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "screendance-published-terms",
+      "branch": "agent/screendance-published-terms",
+      "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 14,
+      "ignored_classes": ["python-bytecode-cache"],
+      "observed_kib": 33664,
+      "cleanup_authorized": true,
+      "reason": "PR #23 is merged and all ignored bytes are reproducible development caches."
+    },
+    {
+      "id": "spatial-room-events",
+      "branch": "feat/spatial-room-events-20260803",
+      "head": "31248ddc1e31ff027a1022fc5b2c7e530b1d6164",
+      "status": "merged",
+      "tracked_clean": true,
+      "untracked_items": 0,
+      "ignored_items": 28,
+      "ignored_classes": ["python-bytecode-cache", "editable-install-metadata"],
+      "observed_kib": 75324,
+      "cleanup_authorized": true,
+      "reason": "PR #30 is merged and all ignored bytes are reproducible development caches."
+    }
+  ],
+  "stashes": {
+    "canonical_repository": [],
+    "related_limen_repository": {
+      "observed_count": 16,
+      "danse_subject_matches": 0,
+      "status": "not recorded",
+      "reason": "No stash subject names Danse. Attribution cannot be inferred, so no Limen stash was edited, applied, or dropped."
+    }
+  },
+  "pull_requests": [
+    {"id": 1, "status": "merged", "head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba", "merge": "3c588c6309600590d8eccd33872c53b7b2e17125"},
+    {"id": 4, "status": "merged", "head": "b26b1a796d4356959a9e9e451da682457822a79b", "merge": "967cf2db90d47d86fc627c451120a6375ac15814"},
+    {"id": 5, "status": "merged", "head": "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe", "merge": "a70d68467f564428ffcf8e6f3bb2141a589e0fd8"},
+    {"id": 6, "status": "merged", "head": "8d621b14a1952b4627732ae2aa844f133c21b69c", "merge": "aa8afef941410c0790f60ea79b1eb04deb3baa43"},
+    {"id": 18, "status": "merged", "head": "55891b5044ceecb35b405f89f72add8590c146ae", "merge": "5ba1c8090d6172bcea1e0dc908d55075de49a5ea"},
+    {"id": 19, "status": "merged", "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25", "merge": "519573e427bdf376e9ad03cdd2c7ab8871211398"},
+    {"id": 23, "status": "merged", "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d", "merge": "abf0ba5f517f3b96a32b0afa78f5f0b58d354116"},
+    {"id": 24, "status": "merged", "head": "00c891b21747d498230a29ae03d10ddbe45f5983", "merge": "697f74ceb4ee11fe3cce380d85913afa86313d0b"},
+    {"id": 25, "status": "merged", "head": "84f579bf151ab5e3d02482850d1bd82fa7b73a39", "merge": "f1c034c8b3011948e60c51566252827e55bac49c"},
+    {"id": 26, "status": "merged", "head": "69ba6e74950eea7734162f450fd72277b5513c6f", "merge": "d8ecf125995db72d4ed55976c6ae6c2b2d7b8c06"},
+    {"id": 27, "status": "merged", "head": "4b21dc3ca57abdad5aa7583b6d09ee31cd1f7886", "merge": "7b885517c0d41b459343934d28edc902493f800a"},
+    {"id": 28, "status": "merged", "head": "766378a04c3382e3ce660d5870f5b4b471cbb3c8", "merge": "189588d1776f16a596ced910329f2f3e76643414"},
+    {"id": 29, "status": "merged", "head": "7e689b77629e337c255639ce4ebd4b85c9845438", "merge": "e61df155850dc91b5a86f0cf4d2ef891a4e6d885"},
+    {"id": 30, "status": "merged", "head": "31248ddc1e31ff027a1022fc5b2c7e530b1d6164", "merge": "f19244afbce94015e78b7f746b07d267ed9e67ae"},
+    {"id": 31, "status": "merged", "head": "31593c13d41cd708ac3c866b2f3cdaebc6a89ab6", "merge": "9b1d3fd67761317a2c44f8b705b0c0d21a190826"},
+    {"id": 32, "status": "merged", "head": "ac50e3ed8bf87681559db712177b4f0870c7222b", "merge": "7c6bf8b105e57b0f8dc91164a7e4af1e0c083730"},
+    {"id": 33, "status": "merged", "head": "a3be5d89a211c0bde0c066b13d642729058eb217", "merge": "e2545f9ef27afcb74a57309fa367fa56eada5c7f"}
+  ],
+  "issues": [
+    {"id": 2, "github_state": "open", "status": "blocked", "receipt": "Account-owned upload, filing terms, fee, archive choice, and submitted-phase receipt remain human gates."},
+    {"id": 3, "github_state": "open", "status": "blocked", "receipt": "Every archive artifact is dispositioned in v2; the accepted spatial port retains issue #11 real-room validation as its external terminal predicate."},
+    {"id": 7, "github_state": "open", "status": "active", "receipt": "Alpha to Omega epic; successor launch progress is https://github.com/organvm/the-thing-without-a-name/issues/7#issuecomment-5177358998."},
+    {"id": 8, "github_state": "open", "status": "blocked", "receipt": "Fixture repertoire exists; owner repertoire selection and exact owned source bytes remain required."},
+    {"id": 9, "github_state": "open", "status": "blocked", "receipt": "Shared score fixture is merged; final owned MIDI compilation and explicit audiovisual acceptance depend on issue #8."},
+    {"id": 10, "github_state": "open", "status": "blocked", "receipt": "A fresh score-driven cut, artistic acceptance, final package, and two-copy custody do not yet exist."},
+    {"id": 11, "github_state": "open", "status": "blocked", "receipt": "The deterministic room-event bus is merged; real-room, multichannel, restart, and presentation evidence require external venue and hardware state."},
+    {"id": 12, "github_state": "open", "status": "blocked", "receipt": "No actual filing, exhibition, presentation lifecycle, terminal release, or restore-tested independent custody exists."},
+    {"id": 13, "github_state": "closed", "status": "merged", "receipt": "PR #28 merged as 189588d1776f16a596ced910329f2f3e76643414 with permission, dropout, privacy, accessibility, and no-camera fallbacks."},
+    {"id": 14, "github_state": "open", "status": "blocked", "receipt": "PR #33 merged the evidence-bound twin; all eight physical venue, hardware, calibration, recovery, and owner-acceptance gates remain blocked."},
+    {"id": 15, "github_state": "closed", "status": "merged", "receipt": "PR #27 froze the snapshot and PR #29 bound its exact digest into the release; continuing maintenance is issue #22."},
+    {"id": 16, "github_state": "open", "status": "blocked", "receipt": "PR #31 merged the exact-byte register; dancer, biography, final-cut, recording, and public-use attestations remain human gates."},
+    {"id": 17, "github_state": "open", "status": "blocked", "receipt": "PR #29 merged the release framework and project page; clearance and evidence gates intentionally prevent a new public deployment."},
+    {"id": 20, "github_state": "open", "status": "active", "receipt": "This v2 census owns exact-head review and the post-merge cleanup receipt."},
+    {"id": 21, "github_state": "open", "status": "blocked", "receipt": "Neither protected material root has two independent verified copies, an accepted clean restore, or cleanup authorization."},
+    {"id": 22, "github_state": "open", "status": "active", "receipt": "Post-freeze opportunity maintenance continues outside the Alpha to Omega milestone."
+    }
+  ],
+  "related_repository": {
+    "repository": "organvm/limen",
+    "default_head": "8a867064d76b8f574b2586d2dd737ed75e550bef",
+    "default_worktree_status": "active",
+    "local_changes": "Unrelated user changes were observed and preserved; no attribution to Danse is inferred.",
+    "archive_branch": {
+      "id": "archive/danse-predecessor-experiments-20260802",
+      "local_head": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "remote_head": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "status": "archived",
+      "remote_parity": true,
+      "merge_wholesale": false
+    },
+    "pull_requests": [
+      {"id": 1799, "status": "merged", "head": "04c2f464ae8b56ba3bfc8343327d22ecef7532c0", "merge": "a5bb0d886208fadc0cd592047f2078ced8cb44df"},
+      {"id": 1804, "status": "merged", "head": "9fbbc7bfe24312e63341e3ccd1bd535287ff4545", "merge": "8a867064d76b8f574b2586d2dd737ed75e550bef"}
+    ]
+  },
+  "successor_launch": {
+    "slug": "danse-alpha-omega-20260803-s2",
+    "branch": "work/danse-alpha-omega-20260803-s2",
+    "status": "active",
+    "predecessor": {
+      "slug": "danse-alpha-omega-20260803",
+      "branch": "work/danse-alpha-omega-20260803",
+      "receipt_sha256": "0a71bad89ea706bbeb04645b54898d2414273b90d6c77a6f3878dc1b2e9c89fd"
+    },
+    "reviewed_main_merge_head": "92f6953408e5d2ce5c0cddba376d5e64a07a375b",
+    "publication_head": "887dd5472adffc3b8768700502454c7ee887c5f5",
+    "receipt_sha256": "2b1acb5af6d01d9adacf1f29cb96f64238c3e5b7af5b390f0c755bae52d91d1a",
+    "started_at": "2026-08-03T19:22:22Z",
+    "deadline_at": "2026-08-17T19:22:22Z",
+    "runway_mode": "inherit",
+    "provider": "codex",
+    "sandbox": "workspace-write",
+    "host_launch_count": 1,
+    "bounded_fetch_count": 1,
+    "receipt_publication_commit_count": 1,
+    "provider_process_count": 1,
+    "fetch_head_error": null,
+    "self_invocation": {
+      "status": "merged",
+      "message": "This session is already admitted; continue directly without launching another provider.",
+      "head_before_and_after": "887dd5472adffc3b8768700502454c7ee887c5f5",
+      "receipt_sha256_before_and_after": "2b1acb5af6d01d9adacf1f29cb96f64238c3e5b7af5b390f0c755bae52d91d1a",
+      "fetch_head_sha256_before_and_after": "9d3b3a10de29756077324262e4eebc4ed51b6f8fdb62a4aec9d6690c050782da",
+      "lock_sha256_before_and_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "additional_provider_processes": 0
+    },
+    "provider_capacity": {
+      "status": "blocked",
+      "reason": "The selected provider reported an account usage limit before useful work could begin; this is external capacity, not a launch-contract failure."
+    },
+    "receipt": "https://github.com/organvm/the-thing-without-a-name/issues/7#issuecomment-5177358998"
+  },
+  "agent_outcomes": [
+    {"id": "limen-successor-interface", "status": "merged", "receipt": "Limen PR #1799 plus late-review follow-up PR #1804."},
+    {"id": "traversal-repair", "status": "merged", "receipt": "Danse PR #18."},
+    {"id": "control-surface", "status": "merged", "receipt": "Danse PR #19."},
+    {"id": "published-terms", "status": "merged", "receipt": "Danse PR #23."},
+    {"id": "pages-hud", "status": "merged", "receipt": "Danse PR #24 and live interaction replay on issue #17."},
+    {"id": "music-score-fixtures", "status": "merged", "receipt": "Danse PR #25."},
+    {"id": "convergence-custody-v1", "status": "merged", "receipt": "Danse PR #26."},
+    {"id": "opportunity-freeze", "status": "merged", "receipt": "Danse PR #27 and closed issue #15."},
+    {"id": "local-pose-input", "status": "merged", "receipt": "Danse PR #28 and closed issue #13."},
+    {"id": "release-manifest-project", "status": "merged", "receipt": "Danse PR #29 at reviewed head 7e689b77629e337c255639ce4ebd4b85c9845438."},
+    {"id": "spatial-room-events", "status": "merged", "receipt": "Danse PR #30; physical-room completion remains blocked in issue #11."},
+    {"id": "rights-register", "status": "merged", "receipt": "Danse PR #31; human attestations remain blocked in issue #16."},
+    {"id": "private-custody-tooling", "status": "merged", "receipt": "Danse PR #32; no copy, restore, or deletion is claimed."},
+    {"id": "installation-digital-twin", "status": "merged", "receipt": "Danse PR #33; physical gates remain blocked in issue #14."},
+    {"id": "successor-launch", "status": "active", "receipt": "Issue #7 comment 5177358998; provider capacity is blocked but the inherited runway remains active."},
+    {"id": "limen_1799-session", "status": "merged", "receipt": "Visible runtime label; only durable PR and issue receipts are attributed, never missing conversation content."},
+    {"id": "music_score-session", "status": "merged", "receipt": "Visible runtime label with terminal durable receipt Danse PR #33."},
+    {"id": "pages_hud-session", "status": "merged", "receipt": "Visible runtime label with terminal durable receipt Danse PR #32."},
+    {"id": "configured-claude-history-search", "status": "not recorded", "receipt": "No additional Danse-specific durable artifact was found in configured local history stores."},
+    {"id": "configured-agy-history-search", "status": "not recorded", "receipt": "No additional Danse-specific durable artifact was found in configured local history stores."},
+    {"id": "configured-codex-history-search", "status": "not recorded", "receipt": "Only durable commits, PRs, issues, and visible runtime outcomes are claimed; no missing transcript is inferred."},
+    {"id": "unrecorded-conversations", "status": "not recorded", "receipt": "Unrecorded conversations cannot be reconstructed and are not represented as recovered creative, legal, or technical work."}
+  ],
+  "cleanup": {
+    "execution_stage": "Only after this exact v2 receipt is merged through reviewed pull request and issue #20 records the reviewed head.",
+    "eligible_worktrees": [
+      "canonical-import",
+      "alpha-omega-control",
+      "convergence-custody",
+      "installation-digital-twin",
+      "local-pose-input",
+      "music-score-fixtures",
+      "opportunity-registry",
+      "pages-hud-allowlist",
+      "private-custody-snapshot",
+      "release-manifest-project",
+      "rights-attribution",
+      "screendance-published-terms",
+      "spatial-room-events"
+    ],
+    "eligible_local_branches": [
+      "agent/alpha-omega-control-surface",
+      "agent/screendance-published-terms",
+      "docs/convergence-custody-receipt-20260803",
+      "feat/canonical-import-20260802",
+      "feat/installation-digital-twin-20260804",
+      "feat/local-pose-input-20260803",
+      "feat/music-score-fixtures-20260803",
+      "feat/opportunity-registry-snapshot-20260804",
+      "feat/private-custody-snapshot-20260804",
+      "feat/release-manifest-project-20260804",
+      "feat/rights-attribution-register-20260804",
+      "feat/spatial-room-events-20260803",
+      "fix/pages-hud-allowlist-20260803",
+      "fix/reel-publishable-mode-closeout-20260802",
+      "fix/reel-single-segment-closeout-20260802",
+      "work/canonical-merge-closeout-20260802"
+    ],
+    "eligible_remote_branches": [
+      "agent/alpha-omega-control-surface",
+      "agent/screendance-published-terms",
+      "docs/convergence-custody-receipt-20260803",
+      "feat/canonical-import-20260802",
+      "feat/installation-digital-twin-20260804",
+      "feat/local-pose-input-20260803",
+      "feat/music-score-fixtures-20260803",
+      "feat/opportunity-registry-snapshot-20260804",
+      "feat/private-custody-snapshot-20260804",
+      "feat/release-manifest-project-20260804",
+      "feat/rights-attribution-register-20260804",
+      "feat/spatial-room-events-20260803",
+      "fix/pages-hud-allowlist-20260803",
+      "fix/reel-publishable-mode-closeout-20260802",
+      "fix/reel-single-segment-closeout-20260802",
+      "work/canonical-merge-closeout-20260802"
+    ],
+    "protected_worktrees": [
+      "canonical-default",
+      "final-convergence",
+      "canonical-closeout-material-custody",
+      "alpha-omega-first-capsule",
+      "alpha-omega-successor-capsule"
+    ],
+    "post_cleanup_receipt": "https://github.com/organvm/the-thing-without-a-name/issues/20"
+  },
+  "closeout_rule": "docs/session-closeout.md"
+}
