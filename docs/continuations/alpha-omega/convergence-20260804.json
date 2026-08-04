@@ -15,6 +15,18 @@
     "source_main": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
     "boundary": "Every ref, worktree, stash, pull request, issue, remote, and agent outcome visible in the canonical repository at recorded_at, plus the one explicitly related Limen archive branch. Other Limen repository state is not Danse state and is not claimed here."
   },
+  "snapshot_relationships": {
+    "custody": {
+      "recorded_at": "2026-08-04T01:27:26Z",
+      "relation": "precedes-convergence-census",
+      "max_age_seconds": 600
+    },
+    "archive": {
+      "recorded_at": "2026-08-04T01:27:26Z",
+      "relation": "precedes-convergence-census",
+      "max_age_seconds": 600
+    }
+  },
   "remotes": [
     {
       "id": "canonical-origin",

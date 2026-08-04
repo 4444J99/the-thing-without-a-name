@@ -898,6 +898,7 @@ def check_purity() -> None:
 # ── 3b. convergence and private custody stay fail-closed ──────────────────────
 
 CONVERGENCE_CHECK = APP / "scripts" / "check-convergence.py"
+CONVERGENCE_TEST = APP / "scripts" / "tests" / "convergence.test.py"
 PRIVATE_CUSTODY = APP / "docs" / "continuations" / "alpha-omega" / "private-custody-20260804.json"
 
 
@@ -909,11 +910,17 @@ def check_convergence_receipts() -> None:
         text=True,
         check=False,
     )
-    detail = (result.stderr or result.stdout).strip().splitlines()
+    regressions = subprocess.run(
+        [sys.executable, str(CONVERGENCE_TEST)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    detail = (result.stderr or result.stdout or regressions.stderr or regressions.stdout).strip().splitlines()
     check(
-        "the convergence, archive, and session receipts validate",
-        result.returncode == 0,
-        detail[-1] if detail else "danse.convergence.v1",
+        "the convergence, archive, and session receipts validate adversarially",
+        result.returncode == 0 and regressions.returncode == 0,
+        detail[-1] if detail else "danse.convergence.v1 plus fail-closed regression suite",
     )
 
     try:
@@ -922,14 +929,32 @@ def check_convergence_receipts() -> None:
         violations = []
         for root in custody["roots"]:
             copies = root.get("independent_verified_copies") or []
-            media = {copy.get("medium_id") for copy in copies if copy.get("verified") is True}
+            valid = [
+                copy
+                for copy in copies
+                if copy.get("verified") is True
+                and isinstance(copy.get("medium_id"), str)
+                and bool(copy["medium_id"].strip())
+                and isinstance(copy.get("manifest_sha256"), str)
+                and bool(re.fullmatch(r"[0-9a-f]{64}", copy["manifest_sha256"]))
+            ]
+            media = {copy["medium_id"] for copy in valid}
+            manifests = {copy["manifest_sha256"] for copy in valid}
+            restore = root.get("restore_rehearsal") or {}
+            acceptance = root.get("human_acceptance") or {}
             eligible = (
                 len(media) >= required
-                and (root.get("restore_rehearsal") or {}).get("ok") is True
-                and (root.get("human_acceptance") or {}).get("ok") is True
+                and len(manifests) == 1
+                and restore.get("ok") is True
+                and isinstance(restore.get("receipt"), str)
+                and bool(restore["receipt"].strip())
+                and acceptance.get("ok") is True
+                and isinstance(acceptance.get("receipt"), str)
+                and bool(acceptance["receipt"].strip())
                 and root.get("tracked_tree_clean") is True
             )
-            if root.get("cleanup_authorized") is True and not eligible:
+            cleanup_authorized = root.get("cleanup_authorized")
+            if not isinstance(cleanup_authorized, bool) or (cleanup_authorized is True and not eligible):
                 violations.append(root.get("id", "unnamed"))
         check(
             "private custody cannot be reclaimed before copy, restore, and acceptance proof",
