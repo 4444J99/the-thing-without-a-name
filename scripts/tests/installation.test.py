@@ -7,6 +7,8 @@ import copy
 import hashlib
 import io
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -62,7 +64,8 @@ def make_release(root: Path, spec: dict) -> None:
     configuration.write_text("fixture configuration\n", encoding="utf-8")
     launcher = root / "bin/danse-launcher"
     launcher.write_text(
-        "#!/bin/sh\nIFS= read -r line < config/fixture.txt\n"
+        '#!/bin/sh\nrelease_root="${0%/*}/.."\n'
+        'IFS= read -r line < "$release_root/config/fixture.txt"\n'
         '[ "$line" = "fixture configuration" ]\n',
         encoding="utf-8",
     )
@@ -296,9 +299,8 @@ class InstallationContractTest(unittest.TestCase):
                 schema["$schema"], "https://json-schema.org/draft/2020-12/schema"
             )
             self.assertFalse(schema["additionalProperties"])
-        restore = load_json(ROOT / "installation/evidence.schema.json")["properties"][
-            "restore_rehearsal"
-        ]["properties"]
+        evidence_schema = load_json(ROOT / "installation/evidence.schema.json")
+        restore = evidence_schema["properties"]["restore_rehearsal"]["properties"]
         self.assertEqual(
             restore["observed_at"]["anyOf"][0]["$ref"], "#/$defs/timestamp"
         )
@@ -308,6 +310,11 @@ class InstallationContractTest(unittest.TestCase):
             "restore_receipt_sha256",
         ):
             self.assertEqual(restore[field]["anyOf"][0]["$ref"], "#/$defs/sha256")
+        timestamp_pattern = evidence_schema["$defs"]["timestamp"]["pattern"]
+        self.assertIsNotNone(
+            re.fullmatch(timestamp_pattern, "2026-08-04T12:34:56.789Z")
+        )
+        self.assertIsNone(re.fullmatch(timestamp_pattern, "garbageZ"))
 
     def test_projector_camera_is_value_identical_to_engine_room(self) -> None:
         script = """
@@ -563,6 +570,13 @@ class InstallationContractTest(unittest.TestCase):
                 )
 
             evidence = evidence_for(self.spec, release)
+            evidence["geometry"]["surfaces"][1]["hardware_role"] = "surface-front"
+            with self.assertRaisesRegex(ContractError, "present and unique"):
+                validate_evidence(
+                    evidence, self.spec, phase="runtime", release_root=release
+                )
+
+            evidence = evidence_for(self.spec, release)
             evidence["calibration"]["output_skew_ms"] = 16.668
             with self.assertRaisesRegex(
                 ContractError, "exceeds the admitted threshold"
@@ -776,6 +790,46 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(calls, [])
             records = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(records[-1]["event"], "release-integrity-failed")
+
+    def test_replaced_fifo_cannot_block_release_admission(self) -> None:
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO replacement regression requires POSIX")
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            release = base / "release"
+            release.mkdir()
+            make_release(release, self.spec)
+            plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
+            plan_path = base / "runtime-plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            configuration = release / "config/fixture.txt"
+            configuration.unlink()
+            os.mkfifo(configuration)
+            script = """
+import io
+import json
+import sys
+from pathlib import Path
+from installation.runtime import Telemetry, supervise
+
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+output = io.StringIO()
+result = supervise(plan, Path(sys.argv[2]), Telemetry(output))
+sys.stdout.write(output.getvalue())
+print(f"RESULT={result}")
+"""
+            child = subprocess.run(
+                [sys.executable, "-c", script, str(plan_path), str(release)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertEqual(child.stdout.splitlines()[-1], "RESULT=78")
+            record = json.loads(child.stdout.splitlines()[0])
+            self.assertEqual(record["event"], "release-integrity-failed")
 
     def test_verified_snapshot_survives_a_path_replacement_race(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

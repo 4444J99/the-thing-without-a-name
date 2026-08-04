@@ -81,8 +81,9 @@ before its measurements can satisfy them.
 The runtime is one foreground process supervising one exact argument vector from
 an external venue receipt. It:
 
-- refuses developer checkouts, Git metadata, symlinks, absolute executables,
-  stale or incomplete release inventories, launchers absent from the manifest,
+- refuses developer checkouts, Git metadata, symlinks, special files, absolute
+  executables, stale or incomplete release inventories, and launchers absent from
+  the manifest,
   unverified hardware, failed calibration, non-loopback health URLs, and
   unapproved launchers; health probes use numeric loopback addresses directly
   and bypass ambient proxy settings;

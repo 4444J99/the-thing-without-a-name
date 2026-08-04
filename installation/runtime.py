@@ -112,11 +112,12 @@ def open_verified_release_file(root: Path, record: dict[str, Any]) -> int:
     relative = record.get("path")
     pure = canonical_relative_path(relative, "runtime release path")
     if os.name != "posix" or not all(
-        hasattr(os, name) for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW")
+        hasattr(os, name)
+        for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
     ):
         raise ContractError("descriptor-bound release access is unavailable or unsafe")
     directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
-    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
     directories: list[int] = []
     file_fd: int | None = None
     try:

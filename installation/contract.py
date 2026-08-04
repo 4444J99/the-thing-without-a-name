@@ -1247,9 +1247,19 @@ def validate_evidence(
     by_reference_surface = _unique(
         measured_surfaces, "reference_surface", "evidence.geometry.surfaces"
     )
+    by_surface_role = _unique(
+        measured_surfaces, "hardware_role", "evidence.geometry.surfaces"
+    )
     reference_surfaces = {surface["id"]: surface for surface in spec["surfaces"]}
     if set(by_reference_surface) != set(reference_surfaces):
         raise ContractError("venue geometry does not map every reference surface")
+    declared_surface_roles = {
+        role for role in spec["hardware_roles"] if role.startswith("surface-")
+    }
+    if set(by_surface_role) != declared_surface_roles:
+        raise ContractError(
+            "venue geometry must map every declared surface hardware role exactly once"
+        )
     meters_per_unit = spec["coordinate_system"]["meters_per_unit"]
     for surface_id, measured in by_reference_surface.items():
         _exact_keys(
