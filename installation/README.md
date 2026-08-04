@@ -88,7 +88,9 @@ an external venue receipt. It:
   and bypass ambient proxy settings;
 - passes the approved river seed, stream, epoch, output IDs, evidence ID, and
   contract digest through environment variables;
-- rechecks the manifest-bound launcher bytes before every execution, binds the
+- opens and hashes the launcher through no-follow directory descriptors before
+  every execution, copies those verified bytes into a private read/execute-only
+  snapshot so release-path replacement cannot change what is executed, binds the
   canonical evidence and launcher digests into the child environment, and emits
   append-only JSONL health/restart telemetry without local paths or credentials;
 - admits at most three restarts in a five-minute window with fixed backoff; and

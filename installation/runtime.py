@@ -10,35 +10,34 @@ external evidence receipt before `--run` is admitted.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
 
 try:
     from .contract import (
         ContractError,
-        file_sha256,
         load_json,
         load_reference_contracts,
         runtime_plan,
-        safe_file,
     )
 except ImportError:  # Direct `python3 installation/runtime.py` execution.
     from contract import (  # type: ignore[no-redef]
         ContractError,
-        file_sha256,
         load_json,
         load_reference_contracts,
         runtime_plan,
-        safe_file,
     )
 
 TELEMETRY_SCHEMA = "danse.installation.telemetry.v1"
@@ -91,6 +90,125 @@ def terminate(process: subprocess.Popen[Any]) -> None:
             process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             pass
+
+
+def open_verified_launcher(root: Path, launcher: dict[str, Any]) -> int:
+    """Open and hash the launcher through no-follow directory descriptors.
+
+    The returned descriptor, rather than its mutable pathname, is the byte source
+    from which the private executable snapshot is made.
+    """
+    relative = launcher.get("path")
+    if not isinstance(relative, str):
+        raise ContractError("runtime launcher path is invalid")
+    pure = PurePosixPath(relative)
+    if (
+        os.name != "posix"
+        or pure.is_absolute()
+        or pure.as_posix() != relative
+        or any(part in {"", ".", ".."} for part in pure.parts)
+        or not all(
+            hasattr(os, name) for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW")
+        )
+    ):
+        raise ContractError(
+            "descriptor-bound launcher execution is unavailable or unsafe"
+        )
+    directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    directories: list[int] = []
+    launcher_fd: int | None = None
+    try:
+        directories.append(os.open(root, directory_flags))
+        for part in pure.parts[:-1]:
+            directories.append(os.open(part, directory_flags, dir_fd=directories[-1]))
+        launcher_fd = os.open(pure.parts[-1], file_flags, dir_fd=directories[-1])
+        metadata = os.fstat(launcher_fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size != launcher.get("bytes")
+            or not metadata.st_mode & 0o111
+        ):
+            raise ContractError("runtime launcher identity or mode drifted")
+        digest = hashlib.sha256()
+        os.lseek(launcher_fd, 0, os.SEEK_SET)
+        for block in iter(lambda: os.read(launcher_fd, 1024 * 1024), b""):
+            digest.update(block)
+        os.lseek(launcher_fd, 0, os.SEEK_SET)
+        after = os.fstat(launcher_fd)
+        if digest.hexdigest() != launcher.get("sha256") or (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+        ) != (after.st_dev, after.st_ino, after.st_size):
+            raise ContractError("runtime launcher bytes drifted")
+        return launcher_fd
+    except (OSError, ContractError):
+        if launcher_fd is not None:
+            os.close(launcher_fd)
+        raise
+    finally:
+        for descriptor in reversed(directories):
+            os.close(descriptor)
+
+
+def snapshot_verified_launcher(
+    root: Path, launcher: dict[str, Any]
+) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    """Copy verified bytes into a private, read/execute-only launch snapshot."""
+    source_fd = open_verified_launcher(root, launcher)
+    temporary = tempfile.TemporaryDirectory(prefix="danse-launcher-")
+    snapshot = Path(temporary.name) / "launcher"
+    snapshot_fd: int | None = None
+    try:
+        snapshot_fd = os.open(
+            snapshot,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o500,
+        )
+        digest = hashlib.sha256()
+        byte_count = 0
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        for block in iter(lambda: os.read(source_fd, 1024 * 1024), b""):
+            digest.update(block)
+            byte_count += len(block)
+            remaining = memoryview(block)
+            while remaining:
+                written = os.write(snapshot_fd, remaining)
+                if written <= 0:
+                    raise OSError("launcher snapshot write made no progress")
+                remaining = remaining[written:]
+        os.fsync(snapshot_fd)
+        metadata = os.fstat(snapshot_fd)
+        if (
+            byte_count != launcher.get("bytes")
+            or metadata.st_size != launcher.get("bytes")
+            or digest.hexdigest() != launcher.get("sha256")
+        ):
+            raise ContractError("runtime launcher changed while being snapshotted")
+        os.fchmod(snapshot_fd, 0o500)
+        os.close(snapshot_fd)
+        snapshot_fd = None
+        os.chmod(temporary.name, 0o500)
+        return snapshot, temporary
+    except (OSError, ContractError):
+        if snapshot_fd is not None:
+            os.close(snapshot_fd)
+        temporary.cleanup()
+        raise
+    finally:
+        os.close(source_fd)
+
+
+def cleanup_launcher_snapshot(temporary: tempfile.TemporaryDirectory[str]) -> None:
+    try:
+        os.chmod(temporary.name, 0o700)
+    except OSError:
+        pass
+    try:
+        temporary.cleanup()
+    except OSError:
+        pass
 
 
 def supervise(
@@ -154,24 +272,25 @@ def supervise(
 
         attempt += 1
         try:
-            executable = safe_file(root, relative_argv[0], "runtime executable")
-            launcher_holds = (
-                launcher["path"] == relative_argv[0]
-                and executable.stat().st_size == launcher["bytes"]
-                and file_sha256(executable) == launcher["sha256"]
-                and bool(executable.stat().st_mode & 0o111)
-            )
+            if launcher["path"] != relative_argv[0]:
+                raise ContractError("runtime launcher path drifted")
+            snapshot, temporary = snapshot_verified_launcher(root, launcher)
         except (ContractError, OSError):
-            launcher_holds = False
-        if not launcher_holds:
             telemetry.emit("launcher-integrity-failed", attempt=attempt)
             return 78
-        argv = [str(executable), *relative_argv[1:]]
+        argv = list(relative_argv)
         telemetry.emit("launcher-start", attempt=attempt)
         try:
-            process = popen(argv, cwd=root, env=environment, shell=False)
+            process = popen(
+                argv,
+                cwd=root,
+                env=environment,
+                executable=str(snapshot),
+                shell=False,
+            )
         except OSError as exc:
             telemetry.emit("launcher-error", attempt=attempt, error=type(exc).__name__)
+            cleanup_launcher_snapshot(temporary)
             continue
 
         started = clock()
@@ -216,6 +335,7 @@ def supervise(
         except KeyboardInterrupt:
             terminate(process)
             telemetry.emit("operator-stop", attempt=attempt)
+            cleanup_launcher_snapshot(temporary)
             return 130
 
         returncode = process.poll()
@@ -226,6 +346,7 @@ def supervise(
                 terminate(process)
                 returncode = process.poll()
         duration = max(0.0, clock() - started)
+        cleanup_launcher_snapshot(temporary)
         if forced_failure is not None:
             telemetry.emit("launcher-unhealthy", attempt=attempt, reason=forced_failure)
         elif returncode == 0:

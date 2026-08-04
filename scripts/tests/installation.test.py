@@ -237,6 +237,14 @@ class FailedProcess:
         return 1
 
 
+class SuccessfulProcess:
+    def poll(self) -> int:
+        return 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
 class RunningProcess:
     def __init__(self) -> None:
         self.returncode = None
@@ -275,6 +283,18 @@ class InstallationContractTest(unittest.TestCase):
                 schema["$schema"], "https://json-schema.org/draft/2020-12/schema"
             )
             self.assertFalse(schema["additionalProperties"])
+        restore = load_json(ROOT / "installation/evidence.schema.json")["properties"][
+            "restore_rehearsal"
+        ]["properties"]
+        self.assertEqual(
+            restore["observed_at"]["anyOf"][0]["$ref"], "#/$defs/timestamp"
+        )
+        for field in (
+            "setup_receipt_sha256",
+            "strike_receipt_sha256",
+            "restore_receipt_sha256",
+        ):
+            self.assertEqual(restore[field]["anyOf"][0]["$ref"], "#/$defs/sha256")
 
     def test_projector_camera_is_value_identical_to_engine_room(self) -> None:
         script = """
@@ -624,6 +644,13 @@ class InstallationContractTest(unittest.TestCase):
             self.assertTrue(all(call[1]["shell"] is False for call in calls))
             self.assertTrue(
                 all(
+                    Path(call[1]["executable"]).name == "launcher"
+                    and str(release) not in call[1]["executable"]
+                    for call in calls
+                )
+            )
+            self.assertTrue(
+                all(
                     call[1]["env"]["DANSE_INSTALLATION_EVIDENCE_SHA256"]
                     == plan["evidence_sha256"]
                     for call in calls
@@ -666,6 +693,48 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(calls, [])
             records = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(records[-1]["event"], "launcher-integrity-failed")
+
+    def test_verified_snapshot_survives_a_path_replacement_race(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
+            launcher = release / "bin/danse-launcher"
+            expected = launcher.read_bytes()
+            observed: list[bytes] = []
+
+            def replace_during_popen(argv, **kwargs):
+                malicious = release / "bin/malicious"
+                malicious.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+                malicious.chmod(0o755)
+                launcher.unlink()
+                launcher.symlink_to(malicious)
+                observed.append(Path(kwargs["executable"]).read_bytes())
+                self.assertEqual(argv[0], "bin/danse-launcher")
+                self.assertNotEqual(Path(kwargs["executable"]), launcher)
+                return SuccessfulProcess()
+
+            result = supervise(
+                plan,
+                release,
+                Telemetry(io.StringIO()),
+                popen=replace_during_popen,
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(observed, [expected])
+            self.assertNotEqual(observed[0], (release / "bin/malicious").read_bytes())
+
+    def test_verified_snapshot_launcher_executes_on_the_supported_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
+            output = io.StringIO()
+            result = supervise(plan, release, Telemetry(output))
+            self.assertEqual(result, 0)
+            records = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(records[-1]["event"], "launcher-exit")
+            self.assertEqual(records[-1]["returncode"], 0)
 
     def test_health_failure_is_telemetried_and_cannot_restart_without_bound(
         self,
