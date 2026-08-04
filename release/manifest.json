@@ -29,6 +29,34 @@
     "technical_summary": "The visual engine is a pure function of a 32-bit seed and absolute river time. It can seek directly to any state without replaying earlier frames. Entropy and wall-clock access remain isolated in the visitor-arrival boundary; release claims about final score, room synchronization, recovery, and capture quality remain gated by their exact receipts."
   },
   "installation": {
+    "reference_contract": {
+      "schema": "danse.installation.reference-binding.v1",
+      "status": "reference-only",
+      "spec_id": "danse-reference-installation-20260804",
+      "spec_contract_sha256": "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3",
+      "digital_twin": {
+        "path": "installation/digital-twin.json",
+        "sha256": "5b550ca1b634b5ead021bbcef63fd1025b271de66217a6eb143d4d94595b49fc",
+        "bytes": 5416
+      },
+      "gate_ledger": {
+        "path": "installation/gates.json",
+        "sha256": "9a635ec4784cbbc38923041f78769115a53989fd5928c4f7927883de9ae0b8d6",
+        "bytes": 825
+      },
+      "physical_predicates_satisfied": false,
+      "issue_14_can_close": false,
+      "blocked_gates": [
+        "venue-approval",
+        "hardware-inventory",
+        "projector-calibration",
+        "speaker-calibration",
+        "visible-plane-cue",
+        "runtime-approval",
+        "wall-plug-recovery",
+        "restore-rehearsal"
+      ]
+    },
     "system_flow": [
       {
         "id": "arrival",
@@ -210,7 +238,7 @@
       "status": "verified",
       "evidence": {
         "path": "scripts/check-danse.py",
-        "sha256": "4051ab60286920e770aca96abdfcaceb54dfe58a203bbd2b8b362253920f5b4d",
+        "sha256": "9bf75e582f99b5e93b1bb9ab09439ed380bda743d39fbd846f333d9051ecc82d",
         "summary": "Executable invariant source bound by digest; the release receipt must record its passing run."
       }
     },

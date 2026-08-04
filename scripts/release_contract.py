@@ -196,6 +196,42 @@ def _load_opportunity_checker(root: Path):
     return checker
 
 
+def _load_installation_checker(root: Path):
+    checker_path = source_file(root, "installation/contract.py", "installation checker")
+    spec = importlib.util.spec_from_file_location("danse_release_installation_checker", checker_path)
+    if spec is None or spec.loader is None:
+        raise ReleaseError("cannot load the installation checker")
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    return checker
+
+
+def validate_installation_binding(root: Path, manifest: dict[str, Any]) -> None:
+    binding = manifest["installation"]["reference_contract"]
+    twin_path = verify_record(root, binding["digital_twin"], "installation digital twin")
+    gates_path = verify_record(root, binding["gate_ledger"], "installation gate ledger")
+    checker = _load_installation_checker(root)
+    try:
+        spec = checker.validate_digital_twin(checker.load_json(twin_path), root)
+        gates = checker.validate_gates(checker.load_json(gates_path), spec)
+    except Exception as exc:  # The checker owns its ContractError after dynamic import.
+        raise ReleaseError(f"installation reference contract failed: {exc}") from exc
+
+    expected_gate_ids = [gate["id"] for gate in gates["gates"]]
+    expected = {
+        "schema": "danse.installation.reference-binding.v1",
+        "status": "reference-only",
+        "spec_id": spec["identity"]["id"],
+        "spec_contract_sha256": spec["identity"]["contract_sha256"],
+        "physical_predicates_satisfied": gates["physical_predicates_satisfied"],
+        "issue_14_can_close": gates["issue_14_can_close"],
+        "blocked_gates": expected_gate_ids,
+    }
+    for key, value in expected.items():
+        if binding[key] != value:
+            raise ReleaseError(f"installation reference binding {key} drifted")
+
+
 def validate_opportunity_binding(root: Path, manifest: dict[str, Any]) -> None:
     binding = manifest["opportunity_snapshot"]
     if binding["snapshot_id"] != EXPECTED_OPPORTUNITY_ID:
@@ -498,6 +534,7 @@ def validate_release(
 
     _validate_graph(manifest, gate_ids)
     _validate_evidence_states(root, manifest)
+    validate_installation_binding(root, manifest)
     validate_opportunity_binding(root, manifest)
     blockers = phase_blockers(manifest, phase)
     if blockers:

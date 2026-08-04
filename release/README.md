@@ -10,6 +10,13 @@ frozen at `2026-08-04T02:32:44Z`, and binds its source-evidence manifest at
 The snapshot also binds the complete ScreenDance YAML consumer contract; a release
 build never fetches changing call terms.
 
+The installation section consumes the exact reference digital twin and its
+eight-gate ledger by path, byte count, raw SHA-256, and embedded installation
+contract digest. The installation checker revalidates that binding during every
+release build. The generated project page and pitch identify the twin as a
+reference simulation: it is not venue, hardware, calibration, recovery, restore,
+or public-approval evidence.
+
 The manifest has three cumulative phases:
 
 - `draft` validates all existing bytes and emits visibly marked, `noindex` local
@@ -48,8 +55,8 @@ The output contains:
 - press kit, public credits, and a non-sending posting calendar
 - release-media inventory and only media whose source digest and clearance both pass
 - `release-build.json`, which digests every delivered byte and binds the exact source
-  commit, release manifest, opportunity snapshot and receipt, source-evidence manifest,
-  phase, and version
+  commit, release manifest, installation reference and gate ledger, opportunity
+  snapshot and receipt, source-evidence manifest, phase, and version
 
 The builder accepts only an absent or empty output outside the repository, rejects
 symlinks and path traversal, sets deterministic file timestamps, and reproduces the

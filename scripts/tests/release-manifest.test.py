@@ -35,6 +35,15 @@ FIXTURE_FILES = (
     "corpus/manifest.json",
     "scripts/check-danse.py",
     "rights/evidence/mediapipe-attribution.json",
+    "installation/contract.py",
+    "installation/digital-twin.json",
+    "installation/gates.json",
+    "engine/room.js",
+    "render/program.json",
+    "music/score.json",
+    "sound/room-layout.json",
+    "interaction/adapter.js",
+    "reference/projection-probe.png",
 )
 
 
@@ -225,6 +234,23 @@ class ProductionManifestTest(unittest.TestCase):
             "d35ba2dd373271158df2138f150ec0a9cb4e4a075407b3f2da29929ed7334872",
         )
 
+    def test_installation_binding_consumes_reference_contract_without_clearing_gates(self) -> None:
+        binding = self.manifest["installation"]["reference_contract"]
+        ledger = json.loads((ROOT / binding["gate_ledger"]["path"]).read_text())
+        self.assertEqual(binding["status"], "reference-only")
+        self.assertEqual(
+            binding["spec_contract_sha256"],
+            "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3",
+        )
+        self.assertFalse(binding["physical_predicates_satisfied"])
+        self.assertFalse(binding["issue_14_can_close"])
+        self.assertEqual(binding["blocked_gates"], [gate["id"] for gate in ledger["gates"]])
+        self.assertTrue(all(gate["status"] == "blocked" and gate["receipt"] is None for gate in ledger["gates"]))
+        release_gate = next(gate for gate in self.manifest["gates"] if gate["id"] == "installation-evidence")
+        self.assertEqual(release_gate["state"], "pending")
+        self.assertIsNone(release_gate["evidence"])
+        self.assertEqual(self.receipt["release"]["installation_reference"], binding)
+
     def test_tracked_manifest_is_honest_draft_but_public_and_release_fail_closed(self) -> None:
         public = CONTRACT.phase_blockers(self.manifest, "public")
         release = CONTRACT.phase_blockers(self.manifest, "release")
@@ -260,6 +286,10 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertIn("viewport-fit=cover", project)
         self.assertNotIn("<script", project)
         self.assertNotIn("sound is not scored to the image", project.lower())
+        reference = self.manifest["installation"]["reference_contract"]
+        self.assertIn(reference["spec_id"], project)
+        self.assertIn(reference["spec_contract_sha256"], project)
+        self.assertIn("8 gates remain blocked", project)
 
     def test_project_markup_is_semantic_and_keeps_the_artwork_at_root(self) -> None:
         markup = Markup()
@@ -284,6 +314,8 @@ class ProductionManifestTest(unittest.TestCase):
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         self.assertIn("DRAFT - NOT FOR PUBLICATION", text)
         self.assertIn("System flow", text)
+        self.assertIn("Reference installation contract", text)
+        self.assertIn(self.manifest["installation"]["reference_contract"]["spec_id"], text)
         self.assertIn("Required evidence before publication", text)
 
     def test_accessibility_press_credit_and_media_outputs_come_from_manifest(self) -> None:
@@ -398,6 +430,15 @@ class AdversarialManifestTest(unittest.TestCase):
         temporary, root = self.mutate(change)
         with temporary:
             with self.assertRaisesRegex(CONTRACT.ReleaseError, "digest mismatch"):
+                CONTRACT.validate_release(root)
+
+    def test_installation_contract_digest_drift_fails(self) -> None:
+        def change(manifest):
+            manifest["installation"]["reference_contract"]["digital_twin"]["sha256"] = "f" * 64
+
+        temporary, root = self.mutate(change)
+        with temporary:
+            with self.assertRaisesRegex(CONTRACT.ReleaseError, "installation digital twin digest mismatch"):
                 CONTRACT.validate_release(root)
 
     def test_fake_satisfied_gate_without_evidence_fails(self) -> None:

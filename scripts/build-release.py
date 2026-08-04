@@ -79,6 +79,12 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
     press = manifest["press"]
     draft = phase == "draft"
     canonical = identity["canonical_url"] + identity["project_path"]
+    reference = installation["reference_contract"]
+    twin_url = _repo_evidence_url(commit, reference["digital_twin"]["path"])
+    gates_url = _repo_evidence_url(commit, reference["gate_ledger"]["path"])
+    physical_gates = "".join(
+        f"<li>{_h(gate.replace('-', ' '))}</li>" for gate in reference["blocked_gates"]
+    )
 
     flow = []
     for node in installation["system_flow"]:
@@ -230,6 +236,7 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
     .flow-label {{ margin:0; font-weight:700; }}
     .flow-node p {{ margin:.2rem 0; }}
     .flow-target {{ color:var(--muted); font-size:.85rem; }}
+    code {{ overflow-wrap:anywhere; }}
     .status {{ float:right; margin-left:.5rem; padding:.12rem .45rem; border:1px solid currentColor; border-radius:99rem; font-size:.68rem; line-height:1.3; letter-spacing:.06em; text-transform:uppercase; }}
     .status-verified,.status-cleared,.status-ready,.status-satisfied {{ color:var(--ok); }}
     .status-pending,.status-proposed {{ color:var(--pending); }}
@@ -257,6 +264,7 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
       <section aria-labelledby="system-title"><div class="grid"><div><p class="kicker">System</p><h2 id="system-title">One contract across every form</h2><p>{_h(copy['technical_summary'])}</p></div><ol class="flow" aria-label="System flow">{''.join(flow)}</ol></div></section>
       <section aria-labelledby="room-title"><div class="grid"><div><p class="kicker">Room</p><h2 id="room-title">Spatial requirements</h2><ul class="clean">{''.join(requirements)}</ul></div><div><h3>Interaction model</h3><ul>{interaction}</ul></div></div></section>
       <section aria-labelledby="rider-title"><p class="kicker">Technical rider</p><h2 id="rider-title">Designed for validation, not guesswork</h2><ul class="clean">{''.join(rider)}</ul></section>
+      <section id="installation-contract" aria-labelledby="installation-contract-title"><div class="grid"><div><p class="kicker">Reference contract</p><h2 id="installation-contract-title">A measured room is still required</h2><p>The release binds reference simulation <strong>{_h(reference['spec_id'])}</strong> at contract digest <code>{_h(reference['spec_contract_sha256'])}</code>. It is a deterministic design input, not evidence that a venue, hardware path, calibration, runtime recovery, or restore rehearsal has passed.</p><p><a href="{_h(twin_url)}">Inspect the exact digital twin</a> · <a href="{_h(gates_url)}">Inspect the exact gate ledger</a></p></div><aside class="panel"><h3>Physical predicates</h3><p>{len(reference['blocked_gates'])} gates remain blocked in the bound reference ledger; issue 14 cannot close from this simulation.</p><ul>{physical_gates}</ul></aside></div></section>
       <section id="access" aria-labelledby="access-title"><div class="grid"><div><p class="kicker">Accessibility</p><h2 id="access-title">A complete work with or without camera, motion, or sound</h2><p><strong>Visual description.</strong> {_h(accessibility['alt_text'])}</p><p><strong>Motion.</strong> {_h(accessibility['motion_note'])}</p><p><strong>Audio.</strong> {_h(accessibility['audio_note'])}</p></div><aside class="panel"><h3>Fallbacks</h3><p>{_h(accessibility['reduced_motion'])}</p><p>{_h(accessibility['silent_fallback'])}</p><p>Captions: {_h(accessibility['captions']['status'])}. Transcript: {_h(accessibility['transcript']['status'])}.</p></aside></div></section>
       <section aria-labelledby="press-title"><div class="grid"><div><p class="kicker">For presentation</p><h2 id="press-title">Synopsis</h2><p>{_h(press['synopsis_long'])}</p></div><aside class="panel"><h3>Canonical links</h3><ul>{links}</ul><h3>Seed sharing</h3><p>{_h(press['seed_sharing']['note'])}</p><p><a href="{_h(press['seed_sharing']['example_url'])}">Open archival seed {press['seed_sharing']['archival_seed']}</a></p></aside></div></section>
       <section id="evidence" aria-labelledby="evidence-title"><p class="kicker">Release truth</p><h2 id="evidence-title">Claims and evidence</h2><ul class="clean">{''.join(claims)}</ul></section>
@@ -601,6 +609,18 @@ def pitch_pdf(manifest: dict, phase: str, commit: str) -> bytes:
     for item in installation["technical_rider"]:
         pdf.bullet(item["item"], item["detail"], item["status"])
     pdf.paragraph("No persistent LaunchAgent is part of the development or venue design. Recovery remains an issue 14 evidence gate.", color="#625d57")
+    reference = installation["reference_contract"]
+    pdf.heading("Reference installation contract", 15)
+    pdf.bullet(
+        "Digital twin",
+        f"{reference['spec_id']} at contract digest {reference['spec_contract_sha256']}. This is a deterministic reference simulation, not physical evidence.",
+        reference["status"],
+    )
+    pdf.bullet(
+        "Physical gate ledger",
+        f"{len(reference['blocked_gates'])} venue, hardware, calibration, recovery, and restore predicates remain blocked; issue 14 cannot close.",
+        "blocked",
+    )
 
     pdf.new_page("Accessibility and public materials")
     pdf.heading("Accessibility")
@@ -705,6 +725,7 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         "id",
         "version",
         "manifest",
+        "installation_reference",
         "opportunity_snapshot",
         "opportunity_receipt",
         "source_evidence",
@@ -723,6 +744,44 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         raise ReleaseError("release artifact opportunity_snapshot digest is invalid")
     if release["manifest"]["path"] != MANIFEST.as_posix():
         raise ReleaseError("release artifact points at a non-canonical release manifest")
+    installation_reference = release["installation_reference"]
+    if not isinstance(installation_reference, dict) or set(installation_reference) != {
+        "schema",
+        "status",
+        "spec_id",
+        "spec_contract_sha256",
+        "digital_twin",
+        "gate_ledger",
+        "physical_predicates_satisfied",
+        "issue_14_can_close",
+        "blocked_gates",
+    }:
+        raise ReleaseError("release artifact installation reference binding is invalid")
+    if (
+        installation_reference["schema"] != "danse.installation.reference-binding.v1"
+        or installation_reference["status"] != "reference-only"
+        or not HEX64.fullmatch(str(installation_reference["spec_contract_sha256"]))
+        or installation_reference["physical_predicates_satisfied"] is not False
+        or installation_reference["issue_14_can_close"] is not False
+        or not isinstance(installation_reference["blocked_gates"], list)
+        or len(installation_reference["blocked_gates"]) != 8
+        or len(set(installation_reference["blocked_gates"])) != 8
+    ):
+        raise ReleaseError("release artifact installation reference state is invalid")
+    for key, expected_path in (
+        ("digital_twin", "installation/digital-twin.json"),
+        ("gate_ledger", "installation/gates.json"),
+    ):
+        record = installation_reference[key]
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"path", "sha256", "bytes"}
+            or record["path"] != expected_path
+            or not HEX64.fullmatch(str(record["sha256"]))
+            or type(record["bytes"]) is not int
+            or record["bytes"] < 0
+        ):
+            raise ReleaseError(f"release artifact installation {key} binding is invalid")
     if release["opportunity_snapshot"]["path"] != "opportunities/omega-20260804.json":
         raise ReleaseError("release artifact points at a non-canonical opportunity snapshot")
     if release["opportunity_receipt"]["path"] != "opportunities/omega-20260804.receipt.json":
@@ -774,6 +833,11 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         raise ReleaseError("project-page draft banner does not match artifact phase")
     if "@media (prefers-reduced-motion:reduce)" not in project:
         raise ReleaseError("project page lacks reduced-motion handling")
+    if (
+        installation_reference["spec_id"] not in project
+        or installation_reference["spec_contract_sha256"] not in project
+    ):
+        raise ReleaseError("project page does not expose its installation reference binding")
     if not (output / "accessibility/captions.en.vtt").read_text(encoding="utf-8").startswith("WEBVTT\n"):
         raise ReleaseError("caption artifact is not WebVTT")
     _verify_pdf(output / PDF_NAME, receipt["phase"], project_title(project))
@@ -852,6 +916,7 @@ def build(root: Path, output: Path, phase: str, commit: str) -> dict:
         path = output / PurePosixPath(relative)
         files.append({"path": relative, "bytes": path.stat().st_size, "sha256": sha256(path)})
     manifest_path = source_file(root, MANIFEST.as_posix(), "release manifest")
+    installation_reference = manifest["installation"]["reference_contract"]
     receipt = {
         "schema": ARTIFACT_SCHEMA,
         "phase": phase,
@@ -865,6 +930,19 @@ def build(root: Path, output: Path, phase: str, commit: str) -> dict:
             "id": manifest["release_id"],
             "version": manifest["version"],
             "manifest": {"path": MANIFEST.as_posix(), "sha256": sha256(manifest_path)},
+            "installation_reference": {
+                "schema": installation_reference["schema"],
+                "status": installation_reference["status"],
+                "spec_id": installation_reference["spec_id"],
+                "spec_contract_sha256": installation_reference["spec_contract_sha256"],
+                "digital_twin": dict(installation_reference["digital_twin"]),
+                "gate_ledger": dict(installation_reference["gate_ledger"]),
+                "physical_predicates_satisfied": installation_reference[
+                    "physical_predicates_satisfied"
+                ],
+                "issue_14_can_close": installation_reference["issue_14_can_close"],
+                "blocked_gates": list(installation_reference["blocked_gates"]),
+            },
             "opportunity_snapshot": {
                 "path": manifest["opportunity_snapshot"]["path"],
                 "sha256": manifest["opportunity_snapshot"]["sha256"],

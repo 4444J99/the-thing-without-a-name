@@ -81,6 +81,16 @@
         "destination": {"$ref": "#/$defs/path"}
       }
     },
+    "contractRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
     "opportunitySnapshot": {
       "type": "object",
       "additionalProperties": false,
@@ -159,8 +169,61 @@
     "installation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["system_flow", "spatial_requirements", "interaction_model", "technical_rider"],
+      "required": ["reference_contract", "system_flow", "spatial_requirements", "interaction_model", "technical_rider"],
       "properties": {
+        "reference_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "status",
+            "spec_id",
+            "spec_contract_sha256",
+            "digital_twin",
+            "gate_ledger",
+            "physical_predicates_satisfied",
+            "issue_14_can_close",
+            "blocked_gates"
+          ],
+          "properties": {
+            "schema": {"const": "danse.installation.reference-binding.v1"},
+            "status": {"const": "reference-only"},
+            "spec_id": {"const": "danse-reference-installation-20260804"},
+            "spec_contract_sha256": {"$ref": "#/$defs/sha256"},
+            "digital_twin": {
+              "allOf": [
+                {"$ref": "#/$defs/contractRecord"},
+                {"properties": {"path": {"const": "installation/digital-twin.json"}}}
+              ]
+            },
+            "gate_ledger": {
+              "allOf": [
+                {"$ref": "#/$defs/contractRecord"},
+                {"properties": {"path": {"const": "installation/gates.json"}}}
+              ]
+            },
+            "physical_predicates_satisfied": {"const": false},
+            "issue_14_can_close": {"const": false},
+            "blocked_gates": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "venue-approval",
+                  "hardware-inventory",
+                  "projector-calibration",
+                  "speaker-calibration",
+                  "visible-plane-cue",
+                  "runtime-approval",
+                  "wall-plug-recovery",
+                  "restore-rehearsal"
+                ]
+              }
+            }
+          }
+        },
         "system_flow": {
           "type": "array",
           "minItems": 4,
