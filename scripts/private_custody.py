@@ -597,8 +597,45 @@ def _tracked_checkout_bytes(source: Path, head: str) -> int:
     return total
 
 
+def _reachable_git_bytes(source: Path, head: str) -> int:
+    """Conservatively budget every Git object reachable from the bundled commit."""
+    raw = str(
+        _git(
+            source,
+            "rev-list",
+            "--objects",
+            "--no-object-names",
+            head,
+        ).stdout
+    )
+    object_ids = [line for line in raw.splitlines() if line]
+    if not object_ids or any(not GIT_SHA.fullmatch(value) for value in object_ids):
+        raise CustodyError("source history inventory is malformed")
+    if GIT is None:
+        raise CustodyError("required command is unavailable: git")
+    try:
+        result = subprocess.run(
+            [GIT, "-C", str(source), "cat-file", "--batch-check=%(objectsize)"],
+            input="\n".join(object_ids) + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise CustodyError("required command is unavailable: git") from exc
+    sizes = result.stdout.splitlines()
+    if (
+        result.returncode != 0
+        or len(sizes) != len(object_ids)
+        or any(not value.isdecimal() for value in sizes)
+    ):
+        raise CustodyError("source history byte inventory could not be proven")
+    return sum(int(value) for value in sizes)
+
+
 def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dict:
     remote_ref = _safe_remote_ref(remote_ref)
+    remote_tracking_ref = f"refs/remotes/{remote_ref}"
     if source.is_symlink():
         raise CustodyError("source repository root must not be a symlink")
     try:
@@ -621,7 +658,12 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
     if any(record.startswith(b"160000 ") for record in index.split(b"\0") if record):
         raise CustodyError("source contains a submodule that a single repository bundle cannot restore")
     head = str(_git(resolved, "rev-parse", "HEAD").stdout).strip()
-    remote_head = str(_git(resolved, "rev-parse", "--verify", f"{remote_ref}^{{commit}}").stdout).strip()
+    try:
+        remote_head = str(
+            _git(resolved, "rev-parse", "--verify", f"{remote_tracking_ref}^{{commit}}").stdout
+        ).strip()
+    except CustodyError as exc:
+        raise CustodyError("remote tracking reference did not resolve to a commit") from exc
     if not GIT_SHA.fullmatch(head) or not GIT_SHA.fullmatch(remote_head):
         raise CustodyError("source or remote reference did not resolve to a commit")
     if remote_mode == "equal":
@@ -629,7 +671,7 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
             raise CustodyError("source head is not equal to the admitted remote reference")
     elif remote_mode == "ancestor":
         result = subprocess.run(
-            [GIT, "-C", str(resolved), "merge-base", "--is-ancestor", head, remote_ref],
+            [GIT, "-C", str(resolved), "merge-base", "--is-ancestor", head, remote_tracking_ref],
             capture_output=True,
             check=False,
         )
@@ -737,10 +779,12 @@ def create_snapshot(
         raise CustodyError("primary snapshot target already exists")
 
     identity = _repository_identity(source, remote_ref, remote_mode)
+    source_bundle_budget = _reachable_git_bytes(source, identity["head"])
     inventory = _material_inventory(source)
     entries = inventory.entries
     total = inventory.total
-    required_free = total + max(1 << 30, total // 20)
+    snapshot_payload = total + source_bundle_budget
+    required_free = snapshot_payload + max(1 << 30, snapshot_payload // 20)
     if shutil.disk_usage(primary_root).free <= required_free:
         raise CustodyError("primary custody target has insufficient free space")
     staging.mkdir(mode=0o700)
@@ -787,6 +831,7 @@ def create_snapshot(
         "snapshot_id": snapshot_id,
         "source_head": identity["head"],
         "checkout_bytes": identity["checkout_bytes"],
+        "source_bundle_budget_bytes": source_bundle_budget,
         "remote_ref": identity["remote_ref"],
         "remote_head": identity["remote_head"],
         "remote_mode": identity["remote_mode"],
@@ -895,6 +940,7 @@ def verify_snapshot(snapshot: Path) -> dict:
         "snapshot_id",
         "source_head",
         "checkout_bytes",
+        "source_bundle_budget_bytes",
         "remote_ref",
         "remote_head",
         "remote_mode",
@@ -912,6 +958,8 @@ def verify_snapshot(snapshot: Path) -> dict:
         or not GIT_SHA.fullmatch(str(control.get("remote_head", "")))
         or type(control.get("checkout_bytes")) is not int
         or control["checkout_bytes"] < 0
+        or type(control.get("source_bundle_budget_bytes")) is not int
+        or control["source_bundle_budget_bytes"] < 0
         or control.get("remote_mode") not in {"equal", "ancestor"}
         or control.get("tracked_clean") is not True
         or type(control.get("inventory_entries")) is not int
@@ -1159,31 +1207,13 @@ def _extract_materials(snapshot: Path, target: Path, entries: list[dict], total:
 
 
 def _verify_restored_inventory(target: Path, entries: list[dict]) -> None:
-    expected_paths = {entry["path"] for entry in entries}
-    ignored_raw = _git(
-        target,
-        "ls-files",
-        "-z",
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        text=False,
-    ).stdout
-    untracked_raw = _git(
-        target,
-        "ls-files",
-        "-z",
-        "--others",
-        "--exclude-standard",
-        text=False,
-    ).stdout
-    observed = {
-        item.decode("utf-8", errors="strict")
-        for item in ignored_raw.split(b"\0") + untracked_raw.split(b"\0")
-        if item
-    }
-    if observed != expected_paths:
-        raise CustodyError("restored private inventory is incomplete or contains extra files")
+    expected_ignored = {entry["path"] for entry in entries if entry["ignored"]}
+    expected_untracked = {entry["path"] for entry in entries if not entry["ignored"]}
+    ignored, untracked = _material_paths(target)
+    if ignored != expected_ignored or untracked != expected_untracked:
+        raise CustodyError(
+            "restored private inventory classification is incomplete, changed, or contains extra files"
+        )
     progress = Progress("verifying restored inventory", sum(entry.get("bytes", 0) for entry in entries))
     for entry in entries:
         path = target / entry["path"]

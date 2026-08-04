@@ -30,7 +30,7 @@ python3 scripts/private_custody.py snapshot \
 Use `--remote-mode ancestor` only for a deliberately retained historical commit
 that is proven reachable from the named remote branch. `equal` is the default
 custody expectation for an archive branch. The tool refuses a dirty tracked
-tree, unsafe or unresolved remote reference, fetch/push remote mismatch,
+tree, unsafe or unresolved full remote-tracking reference, fetch/push remote mismatch,
 escaping symlink on POSIX or Windows, special file, hidden index flags,
 destination collision, insufficient space, or two destinations on the same
 physical device. Fetch/push parity compares the complete URL sets, so an extra
@@ -39,11 +39,13 @@ inventory pass closes with a second whole-census metadata and digest proof, and
 that complete proof runs again after the snapshot artifacts are hashed. A writer
 that changes an earlier file while a later file is being read therefore
 invalidates the snapshot. The sealed control also records the immutable byte
-count of every tracked blob in the admitted commit. On macOS, independence is
-derived from one APFS physical store and its physical whole disk; virtual,
-image-backed, ambiguous, and same-device volumes fail closed. The tracked tool
-currently refuses to claim physical independence on platforms where that proof
-cannot be derived with macOS `diskutil`.
+count of every tracked blob in the admitted commit. Before creating staging, the
+space preflight budgets both private material and the uncompressed bytes of every
+Git object reachable from that commit, plus a five-percent-or-1-GiB reserve. On
+macOS, independence is derived from one APFS physical store and its physical
+whole disk; virtual, image-backed, ambiguous, and same-device volumes fail
+closed. The tracked tool currently refuses to claim physical independence on
+platforms where that proof cannot be derived with macOS `diskutil`.
 
 An interrupted, corrupt, or failed snapshot remains under its hidden
 `.incomplete` directory for inspection. The tool never deletes or resumes it and
@@ -75,14 +77,16 @@ Before restoring, the command re-audits the retained source, including hidden
 index flags and the full private census, against the sealed snapshot. It then
 starts from the bundled Git commit, overlays only the private inventory, rejects
 archive traversal and overwrite attempts, hashes every restored file, checks the
-exact ignored/untracked census, and requires a clean tracked diff. Both custody
-copies are re-hashed before extraction. Source, snapshots, restore target, and
-receipt must be pairwise disjoint so a successful rehearsal cannot mutate the
-evidence it just certified. Before creating the restore target, the tool requires
-free space for the sealed tracked checkout, private inventory, source bundle,
-and a five-percent-or-1-GiB reserve; an unreadable capacity boundary fails closed.
-After the receipt file itself is flushed, its parent directory is `fsync`ed
-before success is reported.
+ignored and untracked censuses separately against every recorded classification,
+and requires a clean tracked diff. A path ignored only by source-local or global
+Git configuration therefore blocks the rehearsal if that classification is not
+reproduced in the clean target. Both custody copies are re-hashed before
+extraction. Source, snapshots, restore target, and receipt must be pairwise
+disjoint so a successful rehearsal cannot mutate the evidence it just certified.
+Before creating the restore target, the tool requires free space for the sealed
+tracked checkout, private inventory, source bundle, and a five-percent-or-1-GiB
+reserve; an unreadable capacity boundary fails closed. After the receipt file
+itself is flushed, its parent directory is `fsync`ed before success is reported.
 
 The generated receipt intentionally leaves `human_acceptance.ok` false and
 `cleanup_authorized` false. A successful machine restore does not authorize

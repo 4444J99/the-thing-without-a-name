@@ -193,6 +193,22 @@ class PrivateCustodyTest(unittest.TestCase):
             )
         self.assertEqual(list(self.fixture.primary.iterdir()), [])
 
+    def test_tag_cannot_impersonate_a_missing_remote_tracking_branch(self) -> None:
+        head = git(self.fixture.source, "rev-parse", "HEAD")
+        git(self.fixture.source, "tag", "--no-sign", "origin/main", head)
+        git(self.fixture.source, "update-ref", "-d", "refs/remotes/origin/main")
+        self.assertEqual(git(self.fixture.source, "rev-parse", "origin/main"), head)
+
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "remote tracking reference"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "tag-is-not-a-remote",
+                "origin/main",
+                "equal",
+            )
+        self.assertEqual(list(self.fixture.primary.iterdir()), [])
+
     def test_escaping_material_symlink_fails_before_snapshot_creation(self) -> None:
         payload = self.fixture.source / ".work/nested/payload.bin"
         payload.unlink()
@@ -462,6 +478,30 @@ class PrivateCustodyTest(unittest.TestCase):
             (self.fixture.secondary / ".corrupted-secondary.incomplete").is_dir()
         )
 
+    def test_source_bundle_is_included_in_capacity_before_staging(self) -> None:
+        inventory = CUSTODY._material_inventory(self.fixture.source)
+        head = git(self.fixture.source, "rev-parse", "HEAD")
+        source_bundle_budget = CUSTODY._reachable_git_bytes(self.fixture.source, head)
+        legacy_required = inventory.total + max(1 << 30, inventory.total // 20)
+        snapshot_payload = inventory.total + source_bundle_budget
+        required = snapshot_payload + max(1 << 30, snapshot_payload // 20)
+        self.assertGreater(required, legacy_required + 1)
+
+        with mock.patch.object(
+            CUSTODY.shutil,
+            "disk_usage",
+            return_value=mock.Mock(free=legacy_required + 1),
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "insufficient free space"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "bundle-capacity",
+                "origin/main",
+                "equal",
+            )
+        self.assertFalse((self.fixture.primary / "bundle-capacity").exists())
+        self.assertFalse((self.fixture.primary / ".bundle-capacity.incomplete").exists())
+
     def test_same_physical_device_cannot_count_twice(self) -> None:
         same = CUSTODY.MediumIdentity("a" * 64, "one-physical-device")
         with mock.patch.object(
@@ -525,6 +565,27 @@ class PrivateCustodyTest(unittest.TestCase):
         ), self.assertRaisesRegex(CUSTODY.CustodyError, "could not be determined"):
             CUSTODY.restore_snapshot(primary, unknown)
         self.assertFalse(unknown.exists())
+
+    def test_restore_rejects_ignored_to_untracked_classification_drift(self) -> None:
+        local_material = self.fixture.source / "local-only.bin"
+        local_material.write_bytes(b"excluded only by local git metadata")
+        (self.fixture.source / ".git/info/exclude").write_text(
+            "local-only.bin\n",
+            encoding="utf-8",
+        )
+        primary, secondary = self.fixture.snapshot()
+        control = CUSTODY.verify_snapshot(primary)
+        entries = CUSTODY._manifest_entries(primary, control)
+        recorded = {entry["path"]: entry["ignored"] for entry in entries}
+        self.assertTrue(recorded["local-only.bin"])
+
+        target = self.fixture.restore_parent / "classification-drift"
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "classification"):
+            CUSTODY.restore_snapshot(secondary, target)
+        self.assertTrue(target.is_dir())
+        ignored, untracked = CUSTODY._material_paths(target)
+        self.assertNotIn("local-only.bin", ignored)
+        self.assertIn("local-only.bin", untracked)
 
     def test_control_symlink_cannot_escape_the_snapshot(self) -> None:
         primary, _ = self.fixture.snapshot()
