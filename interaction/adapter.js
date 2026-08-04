@@ -88,7 +88,9 @@ export function normalizeSample(value, index = 0) {
   if (!Array.isArray(value.visitors) || value.visitors.length > MAX_VISITORS) {
     throw new RangeError(`sample ${index}.visitors must contain at most ${MAX_VISITORS} visitors`);
   }
-  const visitors = value.visitors.map(normalizeVisitor).sort((a, b) => a.slot - b.slot);
+  const visitors = value.visitors
+    .map((visitor, visitorIndex) => normalizeVisitor(visitor, visitorIndex))
+    .sort((a, b) => a.slot - b.slot);
   if (new Set(visitors.map((visitor) => visitor.slot)).size !== visitors.length) {
     throw new TypeError(`sample ${index} contains duplicate visitor slots`);
   }

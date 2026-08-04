@@ -54,6 +54,10 @@ await test("receipts validate a strict bounded privacy contract", () => {
   unbounded.samples[1].at = 611;
   unbounded.window.endedAt = 611;
   assert.throws(() => validateReceipt(unbounded), /exceeds 600 seconds/);
+
+  const indexedVisitor = structuredClone(receipt);
+  indexedVisitor.samples[0].visitors = [visitor(0), { ...visitor(1), confidence: 2 }];
+  assert.throws(() => validateReceipt(indexedVisitor), /visitor 1\.confidence/);
 });
 
 await test("replay is deterministic, seekable, and fades denial or dropout", () => {
