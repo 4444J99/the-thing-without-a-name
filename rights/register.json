@@ -248,7 +248,7 @@
       "required_for": ["public", "release"],
       "authority": "Apache-2.0 license and exact MediaPipe vendor manifest",
       "state": "satisfied",
-      "evidence": {"path": "rights/evidence/mediapipe-attribution.json", "sha256": "4b7fb1bf62f6d92e881bb5f983c661a7a13f93e425639b1b094c9d718a124609", "summary": "Typed public-safe decision receipt binds the exact attribution gate and authority."},
+      "evidence": {"path": "rights/evidence/mediapipe-attribution.json", "sha256": "498712503155e0f080df6c401e1d59fc05373cfdfa141002f02d9afc038c38be", "summary": "Typed public-safe decision receipt binds the exact attribution gate, authority, asset, and approved wording."},
       "attestation": null,
       "note": "The shipped vendor manifest and Apache-2.0 notice establish the exact retained attribution."
     },

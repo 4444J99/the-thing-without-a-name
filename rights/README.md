@@ -50,18 +50,26 @@ rules. The release checker requires the exact rights-register digest; a complete
 inventory of the active phase's `media/assets/` boundary with no extra, symlinked, or
 off-phase bytes; every media and public-copy byte at its declared destination; stable
 manifest and media identities rechecked after inventory; clearance evidence; and credit
-text identical to the approved attribution label. A `satisfied` human gate
-must cite a tracked `danse.rights.decision.v1` receipt binding that exact gate, authority,
-decision, and phase scope. Every cleared asset use likewise cites a tracked
+text identical to the approved attribution label. Every cleared release-media row cites
+a tracked `danse.rights.media-clearance.v1` receipt binding its media id, canonical
+destination, SHA-256, byte count, authority, decision, and phase scope. A `satisfied`
+human gate must cite a tracked `danse.rights.decision.v2` receipt binding that exact
+gate, authority, decision, phase scope, credited asset, and approved wording. Every
+cleared asset use likewise cites a tracked
 `danse.rights.use-decision.v1` receipt binding that asset, use, rights holder, medium,
 phase scope, territory, term, promotion, and archive grant. Every manual or choice
 assertion in the canonical submission specification must map to a phase-owning human
 gate with the same typed value contract. Package attestations may satisfy only package,
 uploaded, and submitted gates; their registered canonical values are bound into the
 redacted phase receipt, and they never replace durable public/release receipts. Public
-receipts and register prose reject absolute machine paths on POSIX and Windows as well
-as contacts, credentials, and sensitive fields. The Pages workflow runs the public phase
-before artifact upload, so an uncleared release cannot publish a new deployment.
+receipts, register prose, and release manifests reject absolute machine paths on POSIX
+and Windows as well as contacts, credentials, and sensitive fields. Release manifests
+must use either the compact closed interchange shape or the full closed release schema;
+unknown top-level or media, clearance, credit, gate, source, and evidence fields fail.
+The Pages workflow runs the public phase before artifact upload, and the artifact builder
+copies every ready, cleared public release destination into its digest allowlist while
+excluding release-only rows and the manifest itself. An uncleared release cannot publish
+a new deployment.
 Malformed graph references, regular expressions, credit dependencies, and fixed-term
 dates become explicit blockers rather than tracebacks. Receipt output is rejected before
 phase validation whenever it would overlap the register, schema, a bound source, a

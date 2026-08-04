@@ -200,12 +200,8 @@ def make_release(base: Path, document: dict, *, phase: str = "release") -> tuple
     register_path = root / "rights" / "register.json"
     register_path.parent.mkdir(parents=True, exist_ok=True)
     register_path.write_bytes(RIGHTS.REGISTER.read_bytes())
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(
-        ["git", "-C", str(root), "add", "evidence.json", "rights/register.json"],
-        check=True,
-    )
     media = []
+    clearance_paths: list[str] = []
     for rule in document["release_rules"]:
         if phase not in rule["required_for"]:
             media.append(
@@ -227,15 +223,57 @@ def make_release(base: Path, document: dict, *, phase: str = "release") -> tuple
         }
         artifact["destination"] = artifact["path"]
         artifact["bytes"] = artifact_path.stat().st_size
+        clearance_relative = f"rights/evidence/media-{rule['media_id']}.json"
+        clearance_path = root / clearance_relative
+        clearance_path.parent.mkdir(parents=True, exist_ok=True)
+        clearance_path.write_text(
+            json.dumps(
+                {
+                    "schema": "danse.rights.media-clearance.v1",
+                    "media_id": rule["media_id"],
+                    "destination": rule["destination"],
+                    "sha256": artifact["sha256"],
+                    "bytes": artifact["bytes"],
+                    "authority": "Rights test",
+                    "decision": "cleared",
+                    "required_for": rule["required_for"],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        clearance_paths.append(clearance_relative)
+        clearance_evidence = {
+            "path": clearance_relative,
+            "sha256": RIGHTS.sha256(clearance_path),
+            "summary": f"Typed exact-byte clearance for {rule['media_id']}",
+        }
         media.append(
             {
                 "id": rule["media_id"],
                 "required_for": rule["required_for"],
                 "status": "ready",
                 "source": artifact,
-                "clearance": {"status": "cleared", "owner": "Rights test", "evidence": copy.deepcopy(evidence)},
+                "clearance": {
+                    "status": "cleared",
+                    "owner": "Rights test",
+                    "evidence": clearance_evidence,
+                },
             }
         )
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "add",
+            "evidence.json",
+            "rights/register.json",
+            *clearance_paths,
+        ],
+        check=True,
+    )
     credit_rows = [
         {
             "id": rule["credit_id"],
@@ -386,29 +424,55 @@ class RightsContractTest(unittest.TestCase):
         self.assertTrue(any("private-evidence receipt" in error for error in errors), errors)
 
     def test_satisfied_gate_requires_a_typed_gate_authority_and_decision_receipt(self) -> None:
-        gate = copy.deepcopy(self.document["human_gates"][0])
-        gate["state"] = "satisfied"
+        gate = copy.deepcopy(
+            next(
+                row
+                for row in self.document["human_gates"]
+                if row["id"] == "mediapipe-attribution-retained"
+            )
+        )
+        approved_credits = RIGHTS.approved_credit_contract(self.document, gate["id"])
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "decision.json"
             path.write_text(json.dumps({"schema": "danse.corpus.v1"}))
-            decision, errors = RIGHTS.validate_gate_decision_receipt(path, gate)
+            decision, errors = RIGHTS.validate_gate_decision_receipt(
+                path,
+                gate,
+                approved_credits,
+            )
             self.assertIsNone(decision)
             self.assertTrue(any("typed decision contract" in item for item in errors), errors)
 
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "danse.rights.decision.v1",
+                        "schema": "danse.rights.decision.v2",
                         "gate_id": gate["id"],
                         "authority": gate["authority"],
                         "decision": True,
                         "required_for": gate["required_for"],
+                        "approved_credits": approved_credits,
                     }
                 )
             )
-            decision, errors = RIGHTS.validate_gate_decision_receipt(path, gate)
+            decision, errors = RIGHTS.validate_gate_decision_receipt(
+                path,
+                gate,
+                approved_credits,
+            )
             self.assertIs(decision, True)
             self.assertEqual(errors, [])
+
+            value = json.loads(path.read_text())
+            value["approved_credits"][0]["label"] = "Unapproved alternate wording"
+            path.write_text(json.dumps(value))
+            decision, errors = RIGHTS.validate_gate_decision_receipt(
+                path,
+                gate,
+                approved_credits,
+            )
+            self.assertIsNone(decision)
+            self.assertTrue(any("exact approved credit wording" in item for item in errors), errors)
 
         mediapipe = next(
             rule for rule in self.document["credit_rules"] if rule["credit_id"] == "mediapipe-credit"
@@ -862,6 +926,55 @@ class RightsContractTest(unittest.TestCase):
                 candidate, release, "release", root=root, register_path=register
             )
             self.assertTrue(any("does not bind this exact rights register" in blocker for blocker in blockers), blockers)
+
+    def test_release_clearance_receipt_binds_the_exact_staged_media_identity(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
+            manifest["media"][0]["clearance"]["evidence"] = copy.deepcopy(
+                manifest["media"][1]["clearance"]["evidence"]
+            )
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate,
+                release,
+                "release",
+                root=root,
+                register_path=register,
+            )
+            self.assertTrue(
+                any("typed clearance receipt" in item and "different media id" in item for item in blockers),
+                blockers,
+            )
+
+    def test_release_manifest_is_closed_and_public_safe_before_semantic_use(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
+            private_value = "/Users/Alice/private-release.mov"
+            contact_value = "artist@example.test"
+            manifest["private_path"] = private_value
+            manifest["contact"] = contact_value
+            manifest["media"][0]["private_path"] = private_value
+            release.write_text(json.dumps(manifest))
+            blockers, identity = RIGHTS.validate_release_manifest(
+                candidate,
+                release,
+                "release",
+                root=root,
+                register_path=register,
+            )
+            self.assertTrue(any("closed top-level schema" in item for item in blockers), blockers)
+            self.assertTrue(any("closed media schema" in item for item in blockers), blockers)
+            self.assertTrue(any("machine-local path" in item for item in blockers), blockers)
+            self.assertTrue(any("email address" in item for item in blockers), blockers)
+            rendered = RIGHTS.canonical_json({"blockers": blockers, "identity": identity})
+            self.assertNotIn(private_value, rendered)
+            self.assertNotIn(contact_value, rendered)
 
     def test_release_media_bytes_credit_labels_and_safe_identity_are_exact(self) -> None:
         candidate = copy.deepcopy(self.document)

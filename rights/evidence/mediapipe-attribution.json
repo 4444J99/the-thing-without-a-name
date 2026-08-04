@@ -1,7 +1,13 @@
 {
-  "schema": "danse.rights.decision.v1",
+  "schema": "danse.rights.decision.v2",
   "gate_id": "mediapipe-attribution-retained",
   "authority": "Apache-2.0 license and exact MediaPipe vendor manifest",
   "decision": true,
-  "required_for": ["public", "release"]
+  "required_for": ["public", "release"],
+  "approved_credits": [
+    {
+      "asset_id": "mediapipe-pose-runtime",
+      "label": "MediaPipe Tasks Vision and Pose Landmarker Lite — Apache-2.0"
+    }
+  ]
 }

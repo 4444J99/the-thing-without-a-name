@@ -302,18 +302,55 @@ def load_yaml(path: Path, label: str, *, expose_path: bool = True) -> dict[str, 
     return value
 
 
-def validate_gate_decision_receipt(path: Path, gate: dict[str, Any]) -> tuple[Any, list[str]]:
+def approved_credit_contract(
+    document: dict[str, Any],
+    gate_id: str,
+) -> list[dict[str, Any]]:
+    """Return the exact asset labels whose publication one gate approves."""
+    assets = {
+        asset.get("id"): asset
+        for asset in document.get("assets", [])
+        if isinstance(asset, dict) and isinstance(asset.get("id"), str)
+    }
+    approved: list[dict[str, Any]] = []
+    for rule in document.get("credit_rules", []):
+        if not isinstance(rule, dict) or rule.get("gate") != gate_id:
+            continue
+        asset_id = rule.get("asset")
+        asset = assets.get(asset_id)
+        credit = asset.get("public_credit") if isinstance(asset, dict) else None
+        approved.append(
+            {
+                "asset_id": asset_id,
+                "label": credit.get("label") if isinstance(credit, dict) else None,
+            }
+        )
+    return sorted(approved, key=lambda row: str(row["asset_id"]))
+
+
+def validate_gate_decision_receipt(
+    path: Path,
+    gate: dict[str, Any],
+    approved_credits: list[dict[str, Any]] | None = None,
+) -> tuple[Any, list[str]]:
     """Validate one public-safe receipt as the typed decision for exactly one gate."""
     label = f"human gate {gate['id']} decision receipt"
     try:
         receipt = load_json(path, label, expose_path=False)
     except RightsError as exc:
         return None, [str(exc)]
-    expected_keys = {"schema", "gate_id", "authority", "decision", "required_for"}
+    expected_keys = {
+        "schema",
+        "gate_id",
+        "authority",
+        "decision",
+        "required_for",
+        "approved_credits",
+    }
     errors: list[str] = []
     if set(receipt) != expected_keys:
         errors.append(f"{label} has fields outside the typed decision contract")
-    if receipt.get("schema") != "danse.rights.decision.v1":
+    if receipt.get("schema") != "danse.rights.decision.v2":
         errors.append(f"{label} has the wrong schema")
     if receipt.get("gate_id") != gate["id"]:
         errors.append(f"{label} names a different gate")
@@ -322,6 +359,17 @@ def validate_gate_decision_receipt(path: Path, gate: dict[str, Any]) -> tuple[An
     required_for = receipt.get("required_for")
     if not same_strings(required_for, gate["required_for"]):
         errors.append(f"{label} has different phase scope")
+    expected_credits = approved_credits or []
+    receipt_credits = receipt.get("approved_credits")
+    if (
+        not isinstance(receipt_credits, list)
+        or any(
+            not isinstance(row, dict) or set(row) != {"asset_id", "label"}
+            for row in receipt_credits
+        )
+        or receipt_credits != expected_credits
+    ):
+        errors.append(f"{label} does not bind the exact approved credit wording")
     decision = receipt.get("decision")
     attestation = gate["attestation"]
     if attestation is None:
@@ -380,6 +428,49 @@ def validate_use_decision_receipt(
         if receipt.get(key) != expected:
             errors.append(f"{label} has a different {key.replace('_', ' ')}")
     if not same_strings(receipt.get("required_for"), use["required_for"]):
+        errors.append(f"{label} has different phase scope")
+    return errors
+
+
+def validate_media_clearance_receipt(
+    path: Path,
+    media_id: str,
+    rule: dict[str, Any],
+    source: dict[str, Any],
+    clearance: dict[str, Any],
+) -> list[str]:
+    """Bind one clearance decision to one exact staged release artifact."""
+    label = f"release media {media_id} typed clearance receipt"
+    try:
+        receipt = load_json(path, label, expose_path=False)
+    except RightsError as exc:
+        return [str(exc)]
+    expected_keys = {
+        "schema",
+        "media_id",
+        "destination",
+        "sha256",
+        "bytes",
+        "authority",
+        "decision",
+        "required_for",
+    }
+    errors: list[str] = []
+    if set(receipt) != expected_keys:
+        errors.append(f"{label} has fields outside the typed media-clearance contract")
+    exact = {
+        "schema": "danse.rights.media-clearance.v1",
+        "media_id": media_id,
+        "destination": rule["destination"],
+        "sha256": source.get("sha256"),
+        "bytes": source.get("bytes"),
+        "authority": clearance.get("owner"),
+        "decision": "cleared",
+    }
+    for key, expected in exact.items():
+        if receipt.get(key) != expected:
+            errors.append(f"{label} has a different {key.replace('_', ' ')}")
+    if not same_strings(receipt.get("required_for"), rule["required_for"]):
         errors.append(f"{label} has different phase scope")
     return errors
 
@@ -802,7 +893,11 @@ def validate_document(
         if gate["state"] == "satisfied" and evidence is not None:
             evidence_path = verified.get(f"human_gates[{gate_index}] evidence")
             if evidence_path is not None:
-                decision, decision_errors = validate_gate_decision_receipt(evidence_path, gate)
+                decision, decision_errors = validate_gate_decision_receipt(
+                    evidence_path,
+                    gate,
+                    approved_credit_contract(document, gate["id"]),
+                )
                 errors.extend(decision_errors)
                 if not decision_errors:
                     gate_decisions[gate["id"]] = decision
@@ -1013,6 +1108,14 @@ def validate_document(
             errors.append(f"credit rule {rule['credit_id']} names unknown asset {rule['asset']}")
         if rule["gate"] not in gate_ids:
             errors.append(f"credit rule {rule['credit_id']} names unknown gate {rule['gate']}")
+        gate = gates_by_id.get(rule["gate"])
+        asset = assets.get(rule["asset"])
+        if gate is not None and gate["state"] == "satisfied" and asset is not None:
+            credit = asset["public_credit"]
+            if credit["state"] != "approved" or not credit["label"]:
+                errors.append(
+                    f"satisfied gate {gate['id']} has no approved wording for asset {asset['id']}"
+                )
 
     if document["status"] == "cleared":
         pending_gates = [gate["id"] for gate in gate_rows if gate["state"] != "satisfied"]
@@ -1191,6 +1294,7 @@ def gate_satisfied(gate: dict[str, Any], attestation: dict[str, Any], *, allow_a
 
 
 def gate_decision(
+    document: dict[str, Any],
     gate: dict[str, Any],
     attestation: dict[str, Any],
     *,
@@ -1203,7 +1307,11 @@ def gate_decision(
             path = regular_file(root, gate["evidence"]["path"], f"human gate {gate['id']} evidence")
         except RightsError:
             return None
-        decision, errors = validate_gate_decision_receipt(path, gate)
+        decision, errors = validate_gate_decision_receipt(
+            path,
+            gate,
+            approved_credit_contract(document, gate["id"]),
+        )
         return None if errors else decision
     record = gate["attestation"]
     if not allow_attestation or record is None:
@@ -1213,6 +1321,7 @@ def gate_decision(
 
 
 def use_is_conditionally_excluded(
+    document: dict[str, Any],
     use: dict[str, Any],
     gates: dict[str, dict[str, Any]],
     attestation: dict[str, Any],
@@ -1227,6 +1336,7 @@ def use_is_conditionally_excluded(
     if gate is None:
         return False
     return gate_decision(
+        document,
         gate,
         attestation,
         allow_attestation=allow_attestation,
@@ -1732,6 +1842,144 @@ def _release_boundary_inventory(root: Path) -> tuple[set[str], list[str]]:
     return paths, blockers
 
 
+def _release_manifest_shape_errors(
+    manifest: dict[str, Any],
+    root: Path,
+) -> list[str]:
+    """Enforce either the compact interchange shape or the full closed release schema."""
+    blockers: list[str] = []
+    compact_top = {"schema", "release_id", "status", "media", "credits", "gates"}
+    full_top = {
+        "schema",
+        "release_id",
+        "version",
+        "status",
+        "opportunity_snapshot",
+        "identity",
+        "copy",
+        "installation",
+        "accessibility",
+        "press",
+        "claims",
+        "credits",
+        "media",
+        "gates",
+    }
+    top_keys = set(manifest)
+    if top_keys == compact_top:
+        full = False
+    elif top_keys == full_top:
+        full = True
+        try:
+            schema_path = regular_file(
+                root,
+                "release/manifest.schema.json",
+                "full release manifest schema",
+                expose_value=False,
+            )
+            schema = load_json(schema_path, "full release manifest schema", expose_path=False)
+            jsonschema.Draft202012Validator.check_schema(schema)
+            schema_errors = sorted(
+                jsonschema.Draft202012Validator(
+                    schema,
+                    format_checker=jsonschema.FormatChecker(),
+                ).iter_errors(manifest),
+                key=lambda error: [str(part) for part in error.absolute_path],
+            )
+            for error in schema_errors:
+                location = ".".join(str(part) for part in error.absolute_path) or "manifest"
+                blockers.append(
+                    f"full release manifest violates its closed schema at {location}"
+                )
+        except (RightsError, jsonschema.SchemaError):
+            blockers.append("full release manifest closed schema is missing or invalid")
+    else:
+        full = False
+        blockers.append("release manifest has fields outside a closed top-level schema")
+
+    evidence_keys = {"path", "sha256", "summary"}
+
+    def evidence_shape(value: Any, label: str, *, nullable: bool = False) -> None:
+        if nullable and value is None:
+            return
+        if not isinstance(value, dict) or set(value) != evidence_keys:
+            blockers.append(f"{label} has fields outside the closed evidence schema")
+
+    media_keys = (
+        {"id", "kind", "label", "required_for", "status", "source", "clearance", "alt_text"}
+        if full
+        else {"id", "required_for", "status", "source", "clearance"}
+    )
+    media = manifest.get("media")
+    if isinstance(media, list):
+        for index, row in enumerate(media):
+            label = f"release media[{index}]"
+            if not isinstance(row, dict) or set(row) != media_keys:
+                blockers.append(f"{label} has fields outside the closed media schema")
+                continue
+            source = row.get("source")
+            if source is not None and (
+                not isinstance(source, dict)
+                or set(source) != {"path", "destination", "sha256", "bytes"}
+            ):
+                blockers.append(f"{label} source has fields outside the closed source schema")
+            clearance = row.get("clearance")
+            if not isinstance(clearance, dict) or set(clearance) not in (
+                {"status"},
+                {"status", "owner", "evidence"},
+            ):
+                blockers.append(
+                    f"{label} clearance has fields outside the closed clearance schema"
+                )
+            elif set(clearance) == {"status", "owner", "evidence"}:
+                evidence_shape(clearance.get("evidence"), f"{label} clearance", nullable=True)
+
+    credit_keys = (
+        {"id", "role", "name", "status", "note", "evidence"}
+        if full
+        else {"id", "name", "status", "evidence"}
+    )
+    credits = manifest.get("credits")
+    if isinstance(credits, list):
+        for index, row in enumerate(credits):
+            label = f"release credit[{index}]"
+            if not isinstance(row, dict) or set(row) != credit_keys:
+                blockers.append(f"{label} has fields outside the closed credit schema")
+                continue
+            evidence_shape(row.get("evidence"), label, nullable=True)
+
+    gate_keys = (
+        {"id", "owner", "issue", "required_for", "state", "action", "evidence"}
+        if full
+        else {"id", "required_for", "state", "evidence"}
+    )
+    gates = manifest.get("gates")
+    if isinstance(gates, list):
+        for index, row in enumerate(gates):
+            label = f"release gate[{index}]"
+            if not isinstance(row, dict) or set(row) != gate_keys:
+                blockers.append(f"{label} has fields outside the closed gate schema")
+                continue
+            evidence_shape(row.get("evidence"), label, nullable=True)
+    return blockers
+
+
+def _release_manifest_redaction_errors(manifest: dict[str, Any]) -> list[str]:
+    """Apply the tracked register's public-safe redaction boundary to a release."""
+    blockers: list[str] = []
+    for location, value in _strings(manifest):
+        if PRIVATE_PATH.search(value) or ABSOLUTE_PATH.search(value):
+            blockers.append(f"release manifest {location}: contains a machine-local path")
+        if EMAIL.search(value):
+            blockers.append(f"release manifest {location}: contains an email address")
+        if PHONE.search(value):
+            blockers.append(f"release manifest {location}: contains a phone number")
+    for location, key in _keys(manifest):
+        if key.lower() in SENSITIVE_KEYS:
+            blockers.append(f"release manifest {location}: contains a sensitive field")
+    return blockers
+
+
 def validate_release_manifest(
     document: dict[str, Any],
     release_manifest: Path,
@@ -1758,6 +2006,8 @@ def validate_release_manifest(
         manifest = _parse_json_bytes(manifest_payload, "release manifest")
     except RightsError as exc:
         return [str(exc)], None
+    blockers.extend(_release_manifest_shape_errors(manifest, root))
+    blockers.extend(_release_manifest_redaction_errors(manifest))
     release_schema = manifest.get("schema")
     if release_schema != "danse.release.v1":
         blockers.append("release manifest schema is not danse.release.v1")
@@ -1834,15 +2084,39 @@ def validate_release_manifest(
         clearance = row.get("clearance") if isinstance(row.get("clearance"), dict) else {}
         if clearance.get("status") != "cleared":
             blockers.append(f"release media {media_id} clearance is not cleared")
-        blockers.extend(
-            _verify_release_source(
-                root,
-                clearance.get("evidence"),
-                f"release media {media_id} clearance",
-                tracked=tracked,
-                require_tracked=True,
-            )
+        clearance_evidence = clearance.get("evidence")
+        clearance_blockers = _verify_release_source(
+            root,
+            clearance_evidence,
+            f"release media {media_id} clearance",
+            tracked=tracked,
+            require_tracked=True,
         )
+        blockers.extend(clearance_blockers)
+        if (
+            not clearance_blockers
+            and clearance.get("status") == "cleared"
+            and isinstance(source, dict)
+            and isinstance(clearance_evidence, dict)
+        ):
+            try:
+                clearance_path = regular_file(
+                    root,
+                    clearance_evidence.get("path"),
+                    f"release media {media_id} clearance",
+                    expose_value=False,
+                )
+                blockers.extend(
+                    validate_media_clearance_receipt(
+                        clearance_path,
+                        media_id,
+                        rule,
+                        source,
+                        clearance,
+                    )
+                )
+            except RightsError as exc:
+                blockers.append(str(exc))
     missing_media = sorted(set(release_rules) - media_ids)
     if missing_media:
         blockers.append(f"release manifest is missing rights-ruled media: {', '.join(missing_media)}")
@@ -2028,6 +2302,7 @@ def phase_blockers(
             if not scopes.intersection(use["required_for"]):
                 continue
             if use_is_conditionally_excluded(
+                document,
                 use,
                 gates,
                 attestation,
