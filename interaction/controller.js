@@ -74,10 +74,13 @@ export class InteractionController {
   }
 
   tick(at, river, { motion = true } = {}) {
+    const rewound = at < this.lastAt;
     this.lastAt = at;
-    const before = this.session.river;
-    this.session.sync(river, at);
-    if (before !== this.session.river) this.lastFallbackTick = -1;
+    const reset = this.session.sync(river, at);
+    if (reset || rewound) {
+      this.lastFallbackTick = -1;
+      this.camera.resetPollingCursor(at);
+    }
     if (this.session.replay || !motion) return;
     if (this.mode === "camera") this.camera.poll(at);
     if (this.mode === "fallback") {
@@ -90,7 +93,7 @@ export class InteractionController {
   }
 
   async startCamera(at = this.lastAt) {
-    this.session.resumeLive();
+    this.resumeSessionAt(at);
     if (this.mode === "fallback") this.record({ at, status: "stopped", source: "keyboard-touch", visitors: [] });
     this.mode = "camera";
     this.message = "Camera permission is requested only by this explicit action.";
@@ -100,7 +103,7 @@ export class InteractionController {
 
   startFallback(at = this.lastAt) {
     if (this.mode === "camera") this.camera.stop(at, "Camera stopped before keyboard and touch interaction began.");
-    this.session.resumeLive();
+    this.resumeSessionAt(at);
     this.mode = "fallback";
     this.message = "Keyboard and touch controls are influencing the same bounded room channels as pose input.";
     this.lastFallbackTick = -1;
@@ -123,13 +126,14 @@ export class InteractionController {
   stop(at = this.lastAt) {
     if (this.mode === "camera") this.camera.stop(at);
     else if (this.mode === "fallback") this.record({ at, status: "stopped", source: "keyboard-touch", visitors: [] });
-    else if (this.mode === "replay") this.session.resumeLive();
+    else if (this.mode === "replay") this.resumeSessionAt(at);
     this.mode = "off";
     this.message = "Interaction stopped. The river continues without modulation.";
     this.notify();
   }
 
   retryCamera(at = this.lastAt) {
+    this.resumeSessionAt(at);
     this.mode = "camera";
     return this.camera.retry(at);
   }
@@ -143,7 +147,7 @@ export class InteractionController {
   }
 
   resumeLive() {
-    this.session.resumeLive();
+    this.resumeSessionAt(this.lastAt);
     this.mode = "off";
     this.message = "Receipt replay ended. Interaction is off.";
     this.notify();
@@ -157,5 +161,12 @@ export class InteractionController {
 
   receipt() {
     return this.session.receipt();
+  }
+
+  resumeSessionAt(at) {
+    if (this.session.resumeLive(at)) {
+      this.lastFallbackTick = -1;
+      this.camera.resetPollingCursor(at);
+    }
   }
 }

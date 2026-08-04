@@ -78,6 +78,20 @@ await test("replay is deterministic, seekable, and fades denial or dropout", () 
   assert.equal(first.center[0], 0.8);
 });
 
+await test("repeated no-person polls cannot extend a departed visitor's fade", () => {
+  const receipt = createReceipt(river);
+  receipt.samples = [
+    sample(2),
+    sample(2.1, "no-person", []),
+    sample(2.4, "no-person", []),
+    sample(2.7, "no-person", []),
+  ];
+  receipt.window = { startedAt: 2, endedAt: 2.7 };
+  const valid = validateReceipt(receipt);
+  assert(inputAt(valid, 2.5).strength > 0);
+  assert.equal(inputAt(valid, 2.81).strength, 0);
+});
+
 await test("multiple visitors aggregate independently of detector order", () => {
   const left = visitor(0, 0.2);
   const right = { ...visitor(1, 0.8), confidence: 0.5, openness: 0.2 };
@@ -165,12 +179,14 @@ await test("sessions reset on river or backwards time and replay only matching r
   const receipt = session.receipt();
   session.sync(river, 7);
   assert.equal(session.receipt().samples.length, 0);
+  session.record(sample(9));
   session.load(receipt);
   assert.equal(session.at(8).count, 1);
   session.sync(river, 7);
   assert.equal(session.at(8).count, 1);
-  session.resumeLive();
+  assert.equal(session.resumeLive(7), true);
   assert.equal(session.at(8).count, 0);
+  assert.doesNotThrow(() => session.record(sample(7)));
   session.sync({ seed: 99, stream: 0 }, 0);
   assert.deepEqual(session.snapshot().river, { seed: 99, stream: 0 });
   assert.throws(() => session.load(receipt), /different river/);
@@ -245,6 +261,29 @@ await test("no-person, re-entry, device loss, and local reconnect are explicit",
   assert.equal(streams[1].track.stopped, true);
 });
 
+await test("camera polling resumes immediately after river time rewinds", async () => {
+  let detections = 0;
+  const controller = new InteractionController({
+    river,
+    video: fakeVideo(),
+    camera: {
+      hz: 10,
+      mediaDevices: { getUserMedia: async () => fakeStream() },
+      detectorFactory: async () => ({
+        detectForVideo() { detections++; return { landmarks: [] }; },
+        close() {},
+      }),
+    },
+  });
+  assert.equal(await controller.startCamera(10), true);
+  controller.tick(10.1, river);
+  assert.equal(detections, 1);
+  controller.tick(2, river);
+  assert.equal(detections, 2);
+  assert.equal(controller.receipt().samples[0].at, 2);
+  controller.stop(2.1);
+});
+
 await test("an explicit stop wins races with pending permission or model work", async () => {
   const source = fakeStream();
   let finishDetector;
@@ -281,6 +320,20 @@ await test("keyboard/touch fallback records and replays the same derived control
   assert.deepEqual(replay.inputAt(20.5), expected);
   replay.stop(20.5);
   assert.equal(replay.inputAt(20.5).strength, 0);
+});
+
+await test("camera retry exits replay and discards future live history after a seek", async () => {
+  const controller = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
+  controller.startFallback(20);
+  const receipt = controller.receipt();
+  controller.loadReceipt(receipt);
+  controller.tick(5, river);
+  assert.equal(controller.session.snapshot().mode, "replay");
+  assert.equal(await controller.retryCamera(5), false);
+  assert.equal(controller.session.snapshot().mode, "live");
+  assert.deepEqual(controller.receipt().samples.map(({ at, status }) => ({ at, status })), [
+    { at: 5, status: "unavailable" },
+  ]);
 });
 
 await test("the receipt duration bound stops influence without recursive shutdown", () => {

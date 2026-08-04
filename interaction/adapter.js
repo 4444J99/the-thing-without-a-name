@@ -292,7 +292,11 @@ export function inputAt(receipt, t) {
     freshness = age <= 0.25 ? 1 : 1 - (age - 0.25) / 0.75;
   } else {
     const fadeSeconds = latest.status === "dropout" ? 1.25 : 0.7;
-    freshness = 1 - Math.max(0, t - latest.at) / fadeSeconds;
+    // Camera polling may emit the same absence status repeatedly. Carry the
+    // last active pose from the first absence transition, never from the most
+    // recent duplicate, so an empty room always reaches neutral on schedule.
+    const absenceAt = samples[activeIndex + 1]?.at ?? latest.at;
+    freshness = 1 - Math.max(0, t - absenceAt) / fadeSeconds;
   }
   freshness = clamp(freshness);
   if (freshness <= 0) return { ...NEUTRAL_INPUT, status: latest.status, source: latest.source };

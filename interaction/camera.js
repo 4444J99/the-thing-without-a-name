@@ -191,6 +191,11 @@ export class LocalPoseCamera {
     }
   }
 
+  resetPollingCursor(at = this.lastAt) {
+    this.lastAt = at;
+    this.lastTick = -1;
+  }
+
   scheduleReconnect(at) {
     const delays = [1, 2, 4];
     if (this.reconnects >= delays.length) {

@@ -25,6 +25,7 @@ export class InteractionSession {
     this.replay = null;
     this.full = false;
     this.notify();
+    return true;
   }
 
   sync(river, at) {
@@ -32,7 +33,10 @@ export class InteractionSession {
     const last = this.live.samples.at(-1);
     // A loaded receipt is deliberately O(1)-seekable in either direction. Only
     // a live recorder must reset before accepting backwards river time.
-    if (!sameRiver(this.river, next) || (!this.replay && last && at < last.at)) this.reset(next);
+    if (!sameRiver(this.river, next) || (!this.replay && last && at < last.at)) {
+      return this.reset(next);
+    }
+    return false;
   }
 
   subscribe(listener) {
@@ -72,9 +76,16 @@ export class InteractionSession {
     return this.replay;
   }
 
-  resumeLive() {
+  resumeLive(at = null) {
     this.replay = null;
+    const last = this.live.samples.at(-1);
+    const rewound = Number.isFinite(at) && last && at < last.at;
+    if (rewound) {
+      this.live = createReceipt(this.river);
+      this.full = false;
+    }
     this.notify();
+    return Boolean(rewound);
   }
 
   at(t) {
