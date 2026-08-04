@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -79,7 +80,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 40
+FLOOR = 42
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -793,6 +794,79 @@ ENTROPY = (
 # The one file allowed to know what time it is.
 IMPURE = "arrival.js"
 
+# The workstream launcher nests complete Git worktrees below the canonical
+# checkout, and private delivery caches may also retain source-shaped files.
+# Neither is part of this tree's shipped application. Scanning those ignored
+# custody roots would count byte-identical copies of arrival.js as additional
+# entropy owners merely because a continuation capsule exists.
+NON_SOURCE_ROOTS = frozenset({".git", ".work", ".worktrees", "node_modules"})
+SOURCE_SUFFIXES = frozenset({".html", ".js", ".mjs"})
+
+
+def shipped_source_paths(root: Path = APP, walk=os.walk):
+    """Yield entropy-bearing shipped sources without entering custody roots."""
+    root = root.resolve()
+    for current, directories, filenames in walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        directories[:] = sorted(
+            name
+            for name in directories
+            if name not in NON_SOURCE_ROOTS and not (current_path == root and name == ENGINE.name)
+        )
+        for name in sorted(filenames):
+            path = current_path / name
+            if path.suffix in SOURCE_SUFFIXES:
+                yield path
+
+
+def entropy_hits(root: Path = APP, walk=os.walk) -> dict[str, list[str]]:
+    """Return entropy uses keyed by their stable, repository-relative path."""
+    found: dict[str, list[str]] = {}
+    for path in shipped_source_paths(root, walk):
+        text = path.read_text(errors="ignore")
+        for rx, label in ENTROPY:
+            if rx.search(text):
+                found.setdefault(str(path.relative_to(root)), []).append(label)
+    return found
+
+
+def check_entropy_walk_regression() -> None:
+    """Lock pruning order and relative diagnostics with a guarded fake walk."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        (root / "src").mkdir()
+        (root / "arrival.js").write_text("Date.now();\n")
+        (root / "src" / "clock.mjs").write_text("performance.now();\n")
+        visited: list[str] = []
+
+        def guarded_walk(path: Path, *, topdown: bool, followlinks: bool):
+            check_root = Path(path).resolve()
+            assert check_root == root
+            assert topdown and not followlinks
+            directories = ["src", ".worktrees", "node_modules", "engine", ".work", ".git"]
+            visited.append(".")
+            yield str(check_root), directories, ["arrival.js"]
+            # A top-down walker observes the caller's in-place pruning before it
+            # decides which children to enter. Reaching an excluded child here
+            # would mean the production traversal still paid its custody cost.
+            for directory in directories:
+                if directory != "src":
+                    raise AssertionError(f"excluded directory remained traversable: {directory}")
+                visited.append(directory)
+                yield str(check_root / directory), [], ["clock.mjs"]
+
+        found = entropy_hits(root, guarded_walk)
+        check(
+            "entropy scan prunes custody roots before descent",
+            visited == [".", "src"],
+            f"visited: {', '.join(visited)}",
+        )
+        check(
+            "entropy diagnostics retain repository-relative paths",
+            set(found) == {"arrival.js", "src/clock.mjs"},
+            ", ".join(sorted(found)),
+        )
+
 
 def check_purity() -> None:
     hits = []
@@ -807,14 +881,8 @@ def check_purity() -> None:
     # pure BECAUSE the impurity has exactly one home. A visitor's river is a clock
     # reading and a coin toss, and if either leaks into a second file there are two
     # answers to "what time is it" and the piece can drift against itself.
-    found: dict[str, list[str]] = {}
-    for path in sorted([*APP.rglob("*.js"), *APP.rglob("*.mjs"), *APP.rglob("*.html")]):
-        if ENGINE in path.parents or "node_modules" in path.parts:
-            continue
-        text = path.read_text(errors="ignore")
-        for rx, label in ENTROPY:
-            if rx.search(text):
-                found.setdefault(str(path.relative_to(APP)), []).append(label)
+    check_entropy_walk_regression()
+    found = entropy_hits()
     strays = {name: labels for name, labels in found.items() if name != IMPURE}
     check(
         "entropy lives in exactly one file",
