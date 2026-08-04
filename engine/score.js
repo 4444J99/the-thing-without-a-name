@@ -18,22 +18,62 @@ export async function load(url = "music/score.json") {
   return validate(score);
 }
 
+/** Best-effort loader for the live artwork; deterministic capture uses load(). */
+export async function loadOptional(url, onError = () => {}) {
+  try {
+    return await load(url);
+  } catch (error) {
+    onError(error);
+    return null;
+  }
+}
+
 export function validate(score) {
   const bad = (message) => {
     throw new Error(`music score: ${message}`);
   };
-  if (score?.schema !== SCHEMA) bad(`unknown schema ${score?.schema}`);
+  if (!score || typeof score !== "object" || Array.isArray(score)) bad("root must be an object");
+  if (score.schema !== SCHEMA) bad(`unknown schema ${score.schema}`);
   const duration = score.time?.duration_seconds;
-  if (!(duration > 0)) bad("time.duration_seconds must be positive");
-  const buckets = score.lookup?.buckets;
-  if (score.lookup?.quantum_seconds !== 1 || !Array.isArray(buckets) || buckets.length !== Math.ceil(duration)) {
-    bad("lookup must contain one immutable bucket per source second");
-  }
+  if (!Number.isFinite(duration) || !(duration > 0)) bad("time.duration_seconds must be finite and positive");
   for (const name of ["tempo", "meter", "beats", "phrases", "dynamics", "movements"]) {
     if (!Array.isArray(score[name]) || !score[name].length) bad(`${name} must be non-empty`);
   }
   if (!Array.isArray(score.cues) || !Array.isArray(score.notes) || !Array.isArray(score.orchestration)) {
     bad("cues, notes, and orchestration must be arrays");
+  }
+  const lookup = score.lookup;
+  const buckets = lookup?.buckets;
+  if (!lookup || typeof lookup !== "object" || Array.isArray(lookup)
+      || lookup.quantum_seconds !== 1 || !Array.isArray(buckets)
+      || buckets.length !== Math.ceil(duration)) {
+    bad("lookup must contain one immutable bucket per source second");
+  }
+  const stateRows = {
+    tempo: score.tempo,
+    meter: score.meter,
+    beat: score.beats,
+    phrase: score.phrases,
+    dynamic: score.dynamics,
+    movement: score.movements,
+  };
+  const validIndex = (value, rows) => Number.isInteger(value) && value >= 0 && value < rows.length;
+  for (const [bucketIndex, bucket] of buckets.entries()) {
+    if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) bad(`lookup bucket ${bucketIndex} must be an object`);
+    for (const [name, rows] of Object.entries(stateRows)) {
+      if (!validIndex(bucket[name], rows)) bad(`lookup bucket ${bucketIndex}.${name} is out of range`);
+    }
+    if (!Array.isArray(bucket.active_cues)
+        || bucket.active_cues.some((index) => !validIndex(index, score.cues))) {
+      bad(`lookup bucket ${bucketIndex}.active_cues is malformed`);
+    }
+    const noteStart = bucket.note_start;
+    if (!Array.isArray(noteStart) || noteStart.length !== 2
+        || !noteStart.every(Number.isInteger)
+        || noteStart[0] < 0 || noteStart[0] > noteStart[1] || noteStart[1] > score.notes.length) {
+      bad(`lookup bucket ${bucketIndex}.note_start is malformed`);
+    }
+    if (!Number.isInteger(bucket.recast) || bucket.recast < 0) bad(`lookup bucket ${bucketIndex}.recast is malformed`);
   }
   if (score.movements[0].start_second !== 0 || score.movements.at(-1).end_second !== duration) {
     bad("movement bindings must tile the nominal score");
@@ -116,7 +156,7 @@ export function scoreAt(score, absoluteSecond, window = null) {
   };
 }
 
-function mapEvent(event, cycleStart, sourceDuration, scale) {
+function mapEvent(event, cycleStart, scale) {
   const sourceStart = event.start_second ?? event.second;
   const sourceEnd = event.end_second ?? sourceStart;
   return {
@@ -126,30 +166,60 @@ function mapEvent(event, cycleStart, sourceDuration, scale) {
   };
 }
 
+/**
+ * Candidate authored starts for a clipped source interval.
+ *
+ * One adjacent bucket on each side makes the lookup conservative under affine
+ * floating-point roundoff. The final absolute [start, end) test remains the
+ * authority. A cue can be active in several buckets, hence the per-window sets.
+ */
+function indexedEvents(score, sourceStart, sourceEnd) {
+  const buckets = score.lookup.buckets;
+  const first = Math.max(0, Math.floor(sourceStart) - 1);
+  const lastExclusive = Math.min(buckets.length, Math.ceil(sourceEnd) + 1);
+  const cueIndices = new Set();
+  const noteIndices = new Set();
+  for (let bucketIndex = first; bucketIndex < lastExclusive; bucketIndex++) {
+    const bucket = buckets[bucketIndex];
+    for (const index of bucket.active_cues) cueIndices.add(index);
+    for (let index = bucket.note_start[0]; index < bucket.note_start[1]; index++) noteIndices.add(index);
+  }
+  return { cueIndices, noteIndices };
+}
+
 /** Authored note/cue starts in [start, end), mapped to absolute playback time. */
 export function eventsBetween(score, start, end, window = null) {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new RangeError("invalid score event interval");
+  if (end === start) return [];
   const duration = score.time.duration_seconds;
   const windows = [];
   if (window) {
-    if (!(window.seconds > 0)) throw new RangeError("score window seconds must be positive");
+    if (!Number.isFinite(window.t0) || !Number.isFinite(window.seconds) || !(window.seconds > 0)) {
+      throw new RangeError("score window must have finite t0 and positive seconds");
+    }
     windows.push({ t0: window.t0, seconds: window.seconds, scale: window.seconds / duration });
   } else {
     const first = Math.floor(Math.max(0, start) / duration);
-    const last = Math.floor(Math.max(0, Math.max(start, end - Number.EPSILON)) / duration);
-    if (last - first > 10_000) throw new RangeError("score event interval exceeds 10,000 cycles");
+    const last = Math.ceil(Math.max(0, end) / duration) - 1;
+    if (last - first + 1 > 10_000) throw new RangeError("score event interval exceeds 10,000 cycles");
     for (let cycle = first; cycle <= last; cycle++) windows.push({ t0: cycle * duration, seconds: duration, scale: 1 });
   }
   const events = [];
   for (const mapped of windows) {
     const windowEnd = mapped.t0 + mapped.seconds;
     if (windowEnd <= start || mapped.t0 >= end) continue;
-    for (const cue of score.cues) {
-      const event = mapEvent(cue, mapped.t0, duration, mapped.scale);
+    const clippedStart = Math.max(start, mapped.t0);
+    const clippedEnd = Math.min(end, windowEnd);
+    if (!(clippedEnd > clippedStart)) continue;
+    const sourceStart = (clippedStart - mapped.t0) / mapped.scale;
+    const sourceEnd = (clippedEnd - mapped.t0) / mapped.scale;
+    const { cueIndices, noteIndices } = indexedEvents(score, sourceStart, sourceEnd);
+    for (const index of cueIndices) {
+      const event = mapEvent(score.cues[index], mapped.t0, mapped.scale);
       if (event.at >= start && event.at < end) events.push({ type: "cue", ...event });
     }
-    for (const note of score.notes) {
-      const event = mapEvent(note, mapped.t0, duration, mapped.scale);
+    for (const index of noteIndices) {
+      const event = mapEvent(score.notes[index], mapped.t0, mapped.scale);
       if (event.at >= start && event.at < end) events.push({ type: "note", ...event });
     }
   }

@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "render"))
 sys.path.insert(0, str(ROOT / "pipeline"))
 
 from compile_score import canonical_sha256, compile_contract, output_bytes  # noqa: E402
-from music_score import events_between, load_score, score_at  # noqa: E402
+from music_score import events_between, load_score, score_at, validate as validate_score  # noqa: E402
 from validate_repertoire import load_register, sha256, validate_document  # noqa: E402
 
 
@@ -53,6 +53,19 @@ def compact(state: dict) -> dict:
         "cues": [cue["id"] for cue in state["cues"]],
         "visual": state["visual"],
     }
+
+
+def compact_events(events: list[dict]) -> list[dict]:
+    return [
+        {
+            "type": event["type"],
+            "index": event["index"],
+            "name": event.get("id", event.get("stem")),
+            "at": round(event["at"], 8),
+            "end": round(event["end"], 8),
+        }
+        for event in events
+    ]
 
 
 class MusicScoreContractTest(unittest.TestCase):
@@ -91,6 +104,24 @@ class MusicScoreContractTest(unittest.TestCase):
         second = output_bytes(compile_contract(copy.deepcopy(self.register), self.program, "generated-contract-study"))
         self.assertEqual(first, second)
         self.assertEqual(first, (ROOT / "music/score.json").read_bytes())
+
+    def test_python_validator_reports_missing_and_malformed_lookup_as_value_errors(self) -> None:
+        malformed = []
+        for value in (None, [], {}, {"quantum_seconds": 1}, {"quantum_seconds": 1, "buckets": None}):
+            candidate = copy.deepcopy(self.score)
+            if value is None:
+                candidate.pop("lookup")
+            else:
+                candidate["lookup"] = value
+            malformed.append(candidate)
+        bad_bucket = copy.deepcopy(self.score)
+        bad_bucket["lookup"]["buckets"][128]["note_start"] = [3, "4"]
+        malformed.append(bad_bucket)
+
+        for candidate in malformed:
+            with self.subTest(lookup=candidate.get("lookup")):
+                with self.assertRaisesRegex(ValueError, r"^music score: lookup"):
+                    validate_score(candidate)
 
     def test_public_domain_composition_does_not_clear_a_nonfree_recording(self) -> None:
         false_equivalence = copy.deepcopy(self.register)
@@ -138,6 +169,121 @@ class MusicScoreContractTest(unittest.TestCase):
         result = run("node", "--input-type=module", "--eval", script)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_bucket_event_queries_are_scaled_half_open_deduplicated_and_value_identical(self) -> None:
+        window = {"t0": 51.25, "seconds": 312.54}
+        scale = window["seconds"] / self.score["time"]["duration_seconds"]
+        at = lambda source: window["t0"] + source * scale
+        queries = [
+            [at(120.0), at(136.0)],
+            [at(128.0), at(132.0)],
+            [at(225.0), at(228.0)],
+            [at(226.0), at(226.5)],
+            [at(128.0), at(128.0)],
+        ]
+        expected = [compact_events(events_between(self.score, start, end, window)) for start, end in queries]
+
+        self.assertIn(6, self.score["lookup"]["buckets"][225]["active_cues"])
+        self.assertIn(6, self.score["lookup"]["buckets"][226]["active_cues"])
+        self.assertEqual([(row["type"], row["index"]) for row in expected[0]], [
+            ("cue", 2), ("note", 2),
+            ("cue", 3), ("note", 3),
+            ("cue", 4), ("note", 4),
+        ])
+        self.assertEqual([(row["type"], row["index"]) for row in expected[1]], [("cue", 3), ("note", 3)])
+        self.assertEqual([(row["type"], row["index"]) for row in expected[2]], [("cue", 6), ("note", 6)])
+        self.assertEqual(expected[3], [], "an already-active cue is not a new authored start")
+        self.assertEqual(expected[4], [])
+
+        script = f"""
+          import fs from 'node:fs';
+          import {{ eventsBetween }} from './engine/score.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const window = {json.dumps(window)};
+          const compact = (events) => events.map((event) => ({{
+            type: event.type,
+            index: event.index,
+            name: event.id ?? event.stem,
+            at: Number(event.at.toFixed(8)),
+            end: Number(event.end.toFixed(8)),
+          }}));
+          const queries = {json.dumps(queries)};
+          console.log(JSON.stringify(queries.map(([start, end]) => compact(eventsBetween(score, start, end, window)))));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_event_queries_use_lookup_indices_without_scanning_event_arrays(self) -> None:
+        class IndexedOnly(list):
+            def __init__(self, rows: list[dict]) -> None:
+                super().__init__(rows)
+                self.reads = 0
+
+            def __iter__(self):
+                raise AssertionError("event query attempted a full-array scan")
+
+            def __getitem__(self, index):
+                if isinstance(index, int):
+                    self.reads += 1
+                return super().__getitem__(index)
+
+        guarded = copy.deepcopy(self.score)
+        guarded["cues"] = IndexedOnly(guarded["cues"])
+        guarded["notes"] = IndexedOnly(guarded["notes"])
+        events = events_between(guarded, 128.0, 128.1)
+        self.assertEqual([(event["type"], event["index"]) for event in events], [("cue", 3), ("note", 3)])
+        self.assertEqual((guarded["cues"].reads, guarded["notes"].reads), (1, 1))
+
+        script = """
+          import fs from 'node:fs';
+          import { eventsBetween } from './engine/score.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const guard = (rows) => {
+            let reads = 0;
+            const proxy = new Proxy(rows, {
+              get(target, property, receiver) {
+                if (property === Symbol.iterator) throw new Error('event query attempted a full-array scan');
+                if (typeof property === 'string' && /^\\d+$/.test(property)) reads += 1;
+                return Reflect.get(target, property, receiver);
+              },
+            });
+            return { proxy, reads: () => reads };
+          };
+          const cues = guard(score.cues);
+          const notes = guard(score.notes);
+          score.cues = cues.proxy;
+          score.notes = notes.proxy;
+          const events = eventsBetween(score, 128, 128.1);
+          console.log(JSON.stringify({
+            events: events.map((event) => [event.type, event.index]),
+            reads: [cues.reads(), notes.reads()],
+          }));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"events": [["cue", 3], ["note", 3]], "reads": [1, 1]})
+
+    def test_optional_live_loader_recovers_while_strict_loader_still_fails_closed(self) -> None:
+        script = """
+          import { load, loadOptional } from './engine/score.js';
+          globalThis.fetch = async () => ({ ok: false, status: 404 });
+          let reported = null;
+          const optional = await loadOptional('missing-score.json', (error) => { reported = error.message; });
+          let strict = null;
+          try { await load('missing-score.json'); } catch (error) { strict = error.message; }
+          console.log(JSON.stringify({ optional, reported, strict }));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "optional": None,
+                "reported": "music score 404 at missing-score.json",
+                "strict": "music score 404 at missing-score.json",
+            },
+        )
 
     def test_score_boundaries_beats_accents_and_visual_transitions_land_exactly(self) -> None:
         movements = [(row["id"], row["start_second"], row["end_second"]) for row in self.score["movements"]]

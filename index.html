@@ -140,7 +140,13 @@ let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
 let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
 const scoreUrl = new URLSearchParams(location.search).get("score");
-const musicalScore = scoreUrl ? await MusicalScore.load(scoreUrl) : null;
+let scoreLoadFailure = null;
+const musicalScore = scoreUrl
+  ? await MusicalScore.loadOptional(scoreUrl, (error) => {
+      scoreLoadFailure = error;
+      console.warn("optional musical score unavailable; continuing with the default artwork", error);
+    })
+  : null;
 let navigationGeneration = 0;
 
 const canvas = document.getElementById("stage");
@@ -262,7 +268,7 @@ function jump(to) {
 
 /** Announce temporary feedback without replacing the controls or live state. */
 let toastTimer = null;
-function flash(msg) {
+function flash(msg, duration = 2200) {
   const toast = el("toast");
   clearTimeout(toastTimer);
   toast.textContent = msg;
@@ -270,8 +276,10 @@ function flash(msg) {
   toastTimer = setTimeout(() => {
     toast.hidden = true;
     toast.textContent = "";
-  }, 2200);
+  }, duration);
 }
+
+if (scoreLoadFailure) flash("Musical score unavailable · continuing with the default artwork", 8000);
 
 addEventListener("keydown", async (e) => {
   const key = e.key.toLowerCase();

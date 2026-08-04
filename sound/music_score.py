@@ -21,18 +21,80 @@ def load_score(path: Path = DEFAULT_SCORE) -> dict[str, Any]:
     return validate(json.loads(path.read_text()))
 
 
-def validate(score: dict[str, Any]) -> dict[str, Any]:
+def validate(score: Any) -> dict[str, Any]:
+    if not isinstance(score, dict):
+        raise ValueError("music score: root must be a mapping")
     if score.get("schema") != "danse.music.score.v1":
         raise ValueError(f"music score: unknown schema {score.get('schema')}")
-    duration = (score.get("time") or {}).get("duration_seconds")
-    if not isinstance(duration, (int, float)) or duration <= 0:
-        raise ValueError("music score: duration must be positive")
-    buckets = (score.get("lookup") or {}).get("buckets")
-    if score["lookup"].get("quantum_seconds") != 1 or not isinstance(buckets, list) or len(buckets) != math.ceil(duration):
-        raise ValueError("music score: lookup must contain one bucket per source second")
+    time = score.get("time")
+    duration = time.get("duration_seconds") if isinstance(time, dict) else None
+    if type(duration) not in (int, float) or not math.isfinite(float(duration)) or duration <= 0:
+        raise ValueError("music score: duration must be finite and positive")
     for name in ("tempo", "meter", "beats", "phrases", "dynamics", "movements"):
         if not isinstance(score.get(name), list) or not score[name]:
             raise ValueError(f"music score: {name} must be non-empty")
+    for name in ("cues", "notes", "orchestration"):
+        if not isinstance(score.get(name), list):
+            raise ValueError("music score: cues, notes, and orchestration must be arrays")
+
+    lookup = score.get("lookup")
+    buckets = lookup.get("buckets") if isinstance(lookup, dict) else None
+    if (
+        not isinstance(lookup, dict)
+        or lookup.get("quantum_seconds") != 1
+        or not isinstance(buckets, list)
+        or len(buckets) != math.ceil(duration)
+    ):
+        raise ValueError("music score: lookup must contain one bucket per source second")
+
+    state_rows = {
+        "tempo": score["tempo"],
+        "meter": score["meter"],
+        "beat": score["beats"],
+        "phrase": score["phrases"],
+        "dynamic": score["dynamics"],
+        "movement": score["movements"],
+    }
+
+    def valid_index(value: Any, rows: list[dict[str, Any]]) -> bool:
+        return type(value) is int and 0 <= value < len(rows)
+
+    for bucket_index, bucket in enumerate(buckets):
+        if not isinstance(bucket, dict):
+            raise ValueError(f"music score: lookup bucket {bucket_index} must be a mapping")
+        for name, rows in state_rows.items():
+            if not valid_index(bucket.get(name), rows):
+                raise ValueError(f"music score: lookup bucket {bucket_index}.{name} is out of range")
+        active_cues = bucket.get("active_cues")
+        if not isinstance(active_cues, list) or any(not valid_index(index, score["cues"]) for index in active_cues):
+            raise ValueError(f"music score: lookup bucket {bucket_index}.active_cues is malformed")
+        note_start = bucket.get("note_start")
+        if (
+            not isinstance(note_start, list)
+            or len(note_start) != 2
+            or any(type(value) is not int for value in note_start)
+            or note_start[0] < 0
+            or note_start[0] > note_start[1]
+            or note_start[1] > len(score["notes"])
+        ):
+            raise ValueError(f"music score: lookup bucket {bucket_index}.note_start is malformed")
+        if type(bucket.get("recast")) is not int or bucket["recast"] < 0:
+            raise ValueError(f"music score: lookup bucket {bucket_index}.recast is malformed")
+
+    if score["movements"][0].get("start_second") != 0 or score["movements"][-1].get("end_second") != duration:
+        raise ValueError("music score: movement bindings must tile the nominal score")
+    cursor = 0.0
+    for movement in score["movements"]:
+        start_second = movement.get("start_second")
+        end_second = movement.get("end_second")
+        if (
+            type(start_second) not in (int, float)
+            or type(end_second) not in (int, float)
+            or abs(float(start_second) - cursor) > 1e-6
+            or not end_second > start_second
+        ):
+            raise ValueError(f"music score: movement {movement.get('id')} breaks the score partition")
+        cursor = float(end_second)
     return score
 
 
@@ -115,34 +177,64 @@ def _mapped_event(event: dict[str, Any], t0: float, scale: float) -> dict[str, A
     return {**event, "at": t0 + source_start * scale, "end": t0 + source_end * scale}
 
 
+def _indexed_events(
+    score: dict[str, Any], source_start: float, source_end: float
+) -> tuple[set[int], set[int]]:
+    """Return lookup-referenced starts, conservatively padded for affine rounding."""
+    buckets = score["lookup"]["buckets"]
+    first = max(0, math.floor(source_start) - 1)
+    last_exclusive = min(len(buckets), math.ceil(source_end) + 1)
+    cue_indices: set[int] = set()
+    note_indices: set[int] = set()
+    for bucket_index in range(first, last_exclusive):
+        bucket = buckets[bucket_index]
+        cue_indices.update(bucket["active_cues"])
+        note_indices.update(range(bucket["note_start"][0], bucket["note_start"][1]))
+    return cue_indices, note_indices
+
+
 def events_between(
     score: dict[str, Any],
     start: float,
     end: float,
     window: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
+    """Return authored note/cue starts in the half-open absolute interval."""
     if not math.isfinite(start) or not math.isfinite(end) or end < start:
         raise ValueError("invalid score event interval")
+    if end == start:
+        return []
     duration = float(score["time"]["duration_seconds"])
     windows: list[tuple[float, float, float]] = []
     if window is not None:
-        seconds = float(window["seconds"])
-        if seconds <= 0:
-            raise ValueError("score window seconds must be positive")
-        windows.append((float(window["t0"]), seconds, seconds / duration))
+        t0, seconds = float(window["t0"]), float(window["seconds"])
+        if not math.isfinite(t0) or not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("score window must have finite t0 and positive seconds")
+        windows.append((t0, seconds, seconds / duration))
     else:
         first = math.floor(max(0.0, start) / duration)
-        last = math.floor(max(0.0, max(start, math.nextafter(end, -math.inf))) / duration)
-        if last - first > 10_000:
+        last = math.ceil(max(0.0, end) / duration) - 1
+        if last - first + 1 > 10_000:
             raise ValueError("score event interval exceeds 10,000 cycles")
         windows.extend((cycle * duration, duration, 1.0) for cycle in range(first, last + 1))
     result = []
     for t0, seconds, scale in windows:
-        if t0 + seconds <= start or t0 >= end:
+        window_end = t0 + seconds
+        if window_end <= start or t0 >= end:
             continue
-        for event_type, rows in (("cue", score["cues"]), ("note", score["notes"])):
-            for row in rows:
-                event = _mapped_event(row, t0, scale)
+        clipped_start = max(start, t0)
+        clipped_end = min(end, window_end)
+        if not clipped_end > clipped_start:
+            continue
+        source_start = (clipped_start - t0) / scale
+        source_end = (clipped_end - t0) / scale
+        cue_indices, note_indices = _indexed_events(score, source_start, source_end)
+        for event_type, rows, indices in (
+            ("cue", score["cues"], cue_indices),
+            ("note", score["notes"], note_indices),
+        ):
+            for index in indices:
+                event = _mapped_event(rows[index], t0, scale)
                 if start <= event["at"] < end:
                     result.append({"type": event_type, **event})
     return sorted(result, key=lambda event: (event["at"], event["type"], event["index"]))
