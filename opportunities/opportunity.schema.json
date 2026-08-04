@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://organvm.github.io/the-thing-without-a-name/schemas/danse-opportunities-v1.json",
+  "title": "Danse frozen opportunity registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "snapshot_id",
+    "frozen_at",
+    "owner_issue",
+    "successor_issue",
+    "policy",
+    "source_evidence",
+    "operational_queue",
+    "release_consumers",
+    "ranked_actions",
+    "opportunities"
+  ],
+  "properties": {
+    "schema": { "const": "danse.opportunities.v1" },
+    "snapshot_id": { "type": "string", "pattern": "^omega-[0-9]{8}$" },
+    "frozen_at": { "type": "string", "format": "date-time" },
+    "owner_issue": { "const": 15 },
+    "successor_issue": { "const": 22 },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["immutable", "fact_statuses", "dispositions", "external_actions"],
+      "properties": {
+        "immutable": { "const": true },
+        "fact_statuses": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "verified" },
+            { "const": "unstated" },
+            { "const": "not-applicable" },
+            { "const": "conflicted" }
+          ],
+          "items": false
+        },
+        "dispositions": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "active" },
+            { "const": "closed" },
+            { "const": "watch" },
+            { "const": "conflicted" },
+            { "const": "blocked" },
+            { "const": "historical" }
+          ],
+          "items": false
+        },
+        "external_actions": { "const": "human-gated" }
+      }
+    },
+    "source_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": { "const": "opportunities/source-evidence-20260804.json" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "operational_queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "expires_at", "successor_issue"],
+      "properties": {
+        "basis": { "const": "frozen_at" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "successor_issue": { "const": 22 }
+      }
+    },
+    "release_consumers": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/consumer" }
+    },
+    "ranked_actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "opportunities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/opportunity" }
+    }
+  },
+  "$defs": {
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "role", "status"],
+      "properties": {
+        "issue": { "type": "integer" },
+        "role": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["bound", "pending"] }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "opportunity_id", "action"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "opportunity_id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "action": { "type": "string", "minLength": 1 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "kind", "checked_at"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "kind": { "enum": ["official", "portal", "terms", "published-partner"] },
+        "checked_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "value"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "status": { "enum": ["verified", "unstated", "not-applicable", "conflicted"] },
+        "value": { "type": ["string", "null"] },
+        "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "resolve": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "status", "detail"],
+      "properties": {
+        "issue": { "type": "integer" },
+        "status": { "enum": ["ready", "pending", "blocked"] },
+        "detail": { "type": "string", "minLength": 1 }
+      }
+    },
+    "human_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner", "status", "action"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "owner": { "enum": ["Anthony", "external"] },
+        "status": { "const": "required" },
+        "action": { "type": "string", "minLength": 1 }
+      }
+    },
+    "consumer_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "excluded_fields", "schema", "canonical_sha256"],
+      "properties": {
+        "path": { "const": "submission/screendance-2027.yaml" },
+        "excluded_fields": {
+          "type": "array",
+          "prefixItems": [{ "const": "opportunity_snapshot" }],
+          "items": false
+        },
+        "schema": { "const": "danse.submission.v2" },
+        "canonical_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "opportunity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "organization",
+        "disposition",
+        "fit",
+        "owner_issue",
+        "deadline_at",
+        "sources",
+        "facts",
+        "dependencies",
+        "human_gates",
+        "next_action"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "name": { "type": "string", "minLength": 1 },
+        "organization": { "type": "string", "minLength": 1 },
+        "disposition": { "enum": ["active", "closed", "watch", "conflicted", "blocked", "historical"] },
+        "fit": { "enum": ["film", "installation", "public-screen", "grant", "residency", "relationship"] },
+        "owner_issue": { "type": "integer" },
+        "deadline_at": { "type": ["string", "null"], "format": "date-time" },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source" } },
+        "facts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/fact" } },
+        "dependencies": { "type": "array", "items": { "$ref": "#/$defs/dependency" } },
+        "human_gates": { "type": "array", "items": { "$ref": "#/$defs/human_gate" } },
+        "consumer_contract": { "$ref": "#/$defs/consumer_contract" },
+        "next_action": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

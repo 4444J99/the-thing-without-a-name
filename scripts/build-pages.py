@@ -35,6 +35,7 @@ ENGINE_MODULES = (
     "engine/renderer.js",
     "engine/rng.js",
     "engine/room.js",
+    "engine/score.js",
 )
 INTERACTION_MODULES = (
     "interaction/adapter.js",

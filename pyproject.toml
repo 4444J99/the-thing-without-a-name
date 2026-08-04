@@ -7,7 +7,7 @@ name = "the-thing-without-a-name"
 version = "1.0.0"
 description = "Deterministic generative screendance from the 2017 Danse photographic corpus"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6"]
+dependencies = ["PyYAML>=6", "jsonschema>=4.23"]
 
 [project.optional-dependencies]
 media = ["numpy>=2", "scipy>=1.13", "Pillow>=10", "playwright>=1.45"]
