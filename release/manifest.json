@@ -534,7 +534,7 @@
       "issue": 17,
       "required_for": ["public", "release"],
       "state": "satisfied",
-      "action": "Record the outstanding live H, Escape, and touch disclosure replay against the deployed SHA.",
+      "action": "Replay the live H, Escape, and touch disclosure paths against the deployed SHA with synchronized hidden and ARIA state.",
       "evidence": {
         "path": "release/evidence/live-interaction-replay-20260804.json",
         "sha256": "86a6fd406030dae27ce8c8a3a59e599592b8c29c7f3eb10005974ab974f89699",
