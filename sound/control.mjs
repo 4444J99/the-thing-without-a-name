@@ -128,6 +128,9 @@ const solved = manifest.score ? readJSON(path.join(corpusDir, manifest.score)) :
 const corpus = fromData(`${corpusDir}/`, manifest, solved);
 
 const seed = opt.seed === null ? (program.seed ?? 0) : Number(opt.seed);
+if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
+  throw new Error("--seed/program seed must be a 32-bit unsigned integer");
+}
 
 // The same span resolution film.html uses: a `seconds` capture starts exactly
 // where it is told, a `passages` capture snaps to a passage boundary so the

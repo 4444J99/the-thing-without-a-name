@@ -66,7 +66,7 @@ DANSE_REAL = DANSE.resolve()
 sys.path.insert(0, str(HERE))
 from bank_contract import audit_bank  # noqa: E402
 from room_events import load_room_layouts  # noqa: E402
-from room_render import plan_control  # noqa: E402
+from room_render import plan_control, validate_control_room  # noqa: E402
 
 BANK = HERE / "bank"
 CONTROL = HERE / "control.mjs"
@@ -311,11 +311,24 @@ def _control_room_layouts(control: dict) -> Path:
     return resolved
 
 
-def room_event_plan(control: dict, layout: str = "stereo", output: str = "stereo") -> dict | None:
-    """Validate and route the control track's immutable room buses."""
+def _control_room_registry(control: dict) -> dict | None:
     if not control.get("room"):
         return None
-    return plan_control(control, load_room_layouts(_control_room_layouts(control)), layout, output)
+    return load_room_layouts(_control_room_layouts(control))
+
+
+def validate_room_event_control(control: dict) -> list[dict] | None:
+    """Validate receipt/layout/bus identities without computing discarded taps."""
+    registry = _control_room_registry(control)
+    return None if registry is None else validate_control_room(control, registry)
+
+
+def room_event_plan(control: dict, layout: str | None = None, output: str = "stereo") -> dict | None:
+    """Validate and route immutable room buses into explicit render instructions."""
+    registry = _control_room_registry(control)
+    if registry is None:
+        return None
+    return plan_control(control, registry, layout, output)
 
 
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
@@ -324,7 +337,7 @@ def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
     frames = control["frames"]
     total = int(round(control["duration"] * SR))
     buf = np.zeros((2, total), dtype=np.float64)
-    room_event_plan(control)
+    validate_room_event_control(control)
     if control.get("music"):
         stems = control["music"].get("stems") or []
         missing = [stem["id"] for stem in stems if not stem.get("audio_source_sha256")]

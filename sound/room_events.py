@@ -516,7 +516,7 @@ def _route_event(event: dict[str, Any], registry: dict[str, Any], layout: dict[s
 def plan_room_render(
     bus: dict[str, Any],
     registry: dict[str, Any],
-    layout_id: str,
+    layout_id: str | None,
     start: float,
     end: float,
 ) -> dict[str, Any]:

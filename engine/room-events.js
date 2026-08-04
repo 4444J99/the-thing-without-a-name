@@ -460,14 +460,6 @@ export function validateRoomLayouts(registry) {
   return registry;
 }
 
-export async function loadRoomLayouts(url = "sound/room-layout.json") {
-  const registry = await fetch(url).then((response) => {
-    if (!response.ok) throw new Error(`room layouts ${response.status} at ${url}`);
-    return response.json();
-  });
-  return validateRoomLayouts(registry);
-}
-
 export function roomLayout(registry, id = registry.default_layout) {
   const layout = registry.layouts.find((candidate) => candidate.id === id);
   if (!layout) throw new RangeError(`unknown room layout ${id}`);

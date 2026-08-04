@@ -55,7 +55,11 @@ def validate_control_room(control: Any, registry: dict[str, Any]) -> list[dict[s
         raise ValueError("control track has no danse.room.control.v1 payload")
     if room.get("semantics") != "authored-start-events":
         raise ValueError("control room semantics are not authored-start-events")
-    if (room.get("layout_identity") or {}).get("contract_sha256") != registry["identity"]["contract_sha256"]:
+    layout_identity = room.get("layout_identity")
+    if (
+        not isinstance(layout_identity, dict)
+        or layout_identity.get("contract_sha256") != registry["identity"]["contract_sha256"]
+    ):
         raise ValueError("control layout identity does not match the supplied registry")
     buses = room.get("buses")
     if not isinstance(buses, list) or not buses:
@@ -101,7 +105,7 @@ def validate_control_room(control: Any, registry: dict[str, Any]) -> list[dict[s
 def plan_control(
     control: dict[str, Any],
     registry: dict[str, Any],
-    layout_id: str,
+    layout_id: str | None,
     output: str,
     *,
     require_cleared: bool = False,
@@ -172,7 +176,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("control", help="control JSON path, or - for stdin")
     parser.add_argument("--layouts", type=Path, default=HERE / "room-layout.json")
-    parser.add_argument("--layout", default="stereo")
+    parser.add_argument("--layout", default=None, help="layout id; defaults to the registry default_layout")
     parser.add_argument("--output", choices=("stereo", "multichannel"), default="stereo")
     parser.add_argument("--require-cleared", action="store_true")
     parser.add_argument("--out", type=Path)

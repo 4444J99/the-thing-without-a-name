@@ -41,16 +41,22 @@ an exceeded latency budget fails before scheduling.
   multichannel WebAudio nodes. It revalidates both contract digests at this
   byte-owning boundary and routes the merger through the declared hard sample
   ceiling. Zero-delay taps bypass `DelayNode` creation; multichannel output
-  requires and configures the exact discrete destination channel count (including
-  a fixed-channel offline destination). With `enabled: false` it returns that
-  exact plan without touching an `AudioContext`.
+  configures the exact discrete destination channel count only after a source is
+  admitted (including a fixed-channel offline destination). Every admitted graph
+  returns an idempotent `stop()` handle and disconnects automatically after its
+  final source ends. With `enabled: false` it returns that exact plan without
+  touching an `AudioContext`.
+- `loadRoomLayouts()` lives in the WebAudio adapter rather than pure `engine/`.
+  It has a five-second default and a hard 30-second maximum, races even a
+  non-cooperative fetch, and accepts caller cancellation.
 - `sound/room_render.py` emits offline stereo or multichannel render
   instructions from the buses in `sound/control.mjs` output. It binds every bus
   to the control seed, stream, score/MIDI identity, and a contiguous passage
   sequence that covers the complete capture interval.
 - `sound/score.py` securely loads the registry named by the control receipt,
-  then validates and routes the same stereo plan before its byte-owning renderer
-  proceeds.
+  then uses `validate_room_event_control()` when its legacy byte renderer only
+  needs identity validation. `room_event_plan()` is the explicit path that also
+  computes and returns speaker taps.
 
 Every byte-owning path fails closed. A role without `source_sha256` is blocked;
 a supplied buffer must carry the same digest. The committed fixture therefore

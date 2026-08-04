@@ -26,7 +26,7 @@ from room_events import (  # noqa: E402
 )
 from music_score import canonical_sha256  # noqa: E402
 from room_render import plan_control, validate_control_room  # noqa: E402
-from score import room_event_plan  # noqa: E402
+from score import room_event_plan, validate_room_event_control  # noqa: E402
 
 PASSAGE = {
     "river_seed": 0x12345678,
@@ -378,6 +378,7 @@ class RoomEventContractTest(unittest.TestCase):
           catch (error) {{ staleLayoutsRejected = /contract_sha256 is stale/.test(error.message); }}
 
           let nodeCalls = 0;
+          let disconnectCalls = 0;
           const destination = {{kind:'destination'}};
           let directDestination = false;
           let limiterNode = null;
@@ -388,6 +389,7 @@ class RoomEventContractTest(unittest.TestCase):
               nodeCalls += 1;
               if (kind === 'merger' && target === destination) directDestination = true;
             }},
+            disconnect() {{ disconnectCalls += 1; }},
           }});
           const context = {{
             currentTime: 0,
@@ -423,6 +425,8 @@ class RoomEventContractTest(unittest.TestCase):
             admittedEvent.at,
             admittedEvent.at + 0.0001,
           );
+          const admittedStop = admitted.stop(0);
+          const admittedSecondStop = admitted.stop(0);
           console.log(JSON.stringify({{
             disabledPlanMatches: JSON.stringify(disabled.plan) === JSON.stringify(direct),
             disabledEvents: disabled.disabled.length,
@@ -440,6 +444,12 @@ class RoomEventContractTest(unittest.TestCase):
             limiterOversample: limiterNode.oversample,
             directDestination,
             limiterReceipt: admitted.limiter,
+            disabledStop: disabled.stop(),
+            blockedStop: blocked.stop(),
+            admittedStop,
+            admittedSecondStop,
+            admittedDisposed: admitted.disposed,
+            disconnectCalls,
           }}));
         """
         observed = node_json(script)
@@ -457,6 +467,46 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertEqual(observed["limiterOversample"], "4x")
         self.assertFalse(observed["directDestination"])
         self.assertEqual(observed["limiterReceipt"]["ceiling_dbfs"], self.layouts["safety"]["limiter_ceiling_dbfs"])
+        self.assertFalse(observed["disabledStop"])
+        self.assertFalse(observed["blockedStop"])
+        self.assertTrue(observed["admittedStop"])
+        self.assertFalse(observed["admittedSecondStop"])
+        self.assertTrue(observed["admittedDisposed"])
+        self.assertGreater(observed["disconnectCalls"], 0)
+
+    def test_room_layout_loading_is_bounded_outside_the_pure_engine(self) -> None:
+        script = f"""
+          import {{ loadRoomLayouts }} from './sound/web_audio.mjs';
+          const registry = {json.dumps(self.layouts)};
+          const loaded = await loadRoomLayouts('memory:room-layouts', {{
+            timeoutMs: 50,
+            fetchImpl: async () => ({{ok: true, status: 200, json: async () => registry}}),
+          }});
+          let timedOut = false;
+          try {{
+            await loadRoomLayouts('memory:never', {{
+              timeoutMs: 5,
+              fetchImpl: () => new Promise(() => {{}}),
+            }});
+          }} catch (error) {{
+            timedOut = /did not load within 5ms/.test(error.message);
+          }}
+          let unboundedRejected = false;
+          try {{ await loadRoomLayouts('memory:invalid', {{timeoutMs: 30001}}); }}
+          catch (error) {{ unboundedRejected = /timeout must be/.test(error.message); }}
+          console.log(JSON.stringify({{
+            identity: loaded.identity.contract_sha256,
+            timedOut,
+            unboundedRejected,
+          }}));
+        """
+        observed = node_json(script)
+        self.assertEqual(observed["identity"], self.layouts["identity"]["contract_sha256"])
+        self.assertTrue(observed["timedOut"])
+        self.assertTrue(observed["unboundedRejected"])
+        engine_source = (ROOT / "engine/room-events.js").read_text()
+        self.assertNotIn("setTimeout", engine_source)
+        self.assertNotIn("fetch(", engine_source)
 
     def test_zero_latency_and_discrete_multichannel_webaudio_are_admitted_safely(self) -> None:
         script = f"""
@@ -480,7 +530,15 @@ class RoomEventContractTest(unittest.TestCase):
           bus.identity.contract_sha256 = roomContractSha256(bus);
 
           function harness(maxChannelCount, channelCount = 2) {{
-            const state = {{nodeCalls: 0, delayCalls: 0, mergerChannels: null, limiterReachedDestination: false}};
+            const state = {{
+              nodeCalls: 0,
+              delayCalls: 0,
+              mergerChannels: null,
+              limiterReachedDestination: false,
+              createdKinds: [],
+              disconnectedKinds: [],
+              sources: [],
+            }};
             const destination = {{
               kind: 'destination',
               maxChannelCount,
@@ -488,13 +546,17 @@ class RoomEventContractTest(unittest.TestCase):
               channelCountMode: 'max',
               channelInterpretation: 'speakers',
             }};
-            const node = (kind) => ({{
-              kind,
-              connect(target) {{
-                state.nodeCalls += 1;
-                if (kind === 'limiter' && target === destination) state.limiterReachedDestination = true;
-              }},
-            }});
+            const node = (kind) => {{
+              state.createdKinds.push(kind);
+              return {{
+                kind,
+                connect(target) {{
+                  state.nodeCalls += 1;
+                  if (kind === 'limiter' && target === destination) state.limiterReachedDestination = true;
+                }},
+                disconnect() {{ state.disconnectedKinds.push(kind); }},
+              }};
+            }};
             const context = {{
               currentTime: 0,
               destination,
@@ -509,7 +571,9 @@ class RoomEventContractTest(unittest.TestCase):
               }},
               createBufferSource() {{
                 state.nodeCalls += 1;
-                return {{...node('source'), buffer: null, playbackRate: {{value: 1}}, start() {{}}, stop() {{}}}};
+                const source = {{...node('source'), buffer: null, playbackRate: {{value: 1}}, start() {{}}, stop() {{}}}};
+                state.sources.push(source);
+                return source;
               }},
               createDelay(maxDelayTime) {{
                 state.nodeCalls += 1;
@@ -536,8 +600,22 @@ class RoomEventContractTest(unittest.TestCase):
             event.at + 0.0001,
             {{output: 'multichannel'}},
           );
+          const admittedStop = admitted.stop(0);
+          const admittedSecondStop = admitted.stop(0);
 
           const limitedHarness = harness(2);
+          const blockedOnly = scheduleRoomWebAudio(
+            limitedHarness.context,
+            bus,
+            layouts,
+            'reference-quad',
+            {{}},
+            event.at,
+            event.at + 0.0001,
+            {{output: 'multichannel'}},
+          );
+          const blockedDestination = {{...limitedHarness.destination}};
+          const callsAfterBlocked = limitedHarness.state.nodeCalls;
           let insufficientRejected = false;
           try {{
             scheduleRoomWebAudio(
@@ -565,6 +643,7 @@ class RoomEventContractTest(unittest.TestCase):
             event.at + 0.0001,
             {{output: 'multichannel'}},
           );
+          fixedOfflineHarness.state.sources[0].onended();
 
           console.log(JSON.stringify({{
             scheduled: admitted.scheduled.length,
@@ -572,10 +651,21 @@ class RoomEventContractTest(unittest.TestCase):
             mergerChannels: admittedHarness.state.mergerChannels,
             destination: admittedHarness.destination,
             limiterReachedDestination: admittedHarness.state.limiterReachedDestination,
+            admittedStop,
+            admittedSecondStop,
+            admittedDisposed: admitted.disposed,
+            admittedCreated: admittedHarness.state.createdKinds,
+            admittedDisconnected: admittedHarness.state.disconnectedKinds,
             insufficientRejected,
             limitedNodeCalls: limitedHarness.state.nodeCalls,
+            blockedMissing: blockedOnly.missing.length,
+            blockedDisposed: blockedOnly.disposed,
+            blockedDestination,
+            callsAfterBlocked,
             fixedOfflineScheduled: fixedOffline.scheduled.length,
             fixedOfflineDestination: fixedOfflineHarness.destination,
+            fixedOfflineDisposed: fixedOffline.disposed,
+            fixedOfflineDisconnected: fixedOfflineHarness.state.disconnectedKinds,
           }}));
         """
         observed = node_json(script)
@@ -586,17 +676,45 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertEqual(observed["destination"]["channelCountMode"], "explicit")
         self.assertEqual(observed["destination"]["channelInterpretation"], "discrete")
         self.assertTrue(observed["limiterReachedDestination"])
+        self.assertTrue(observed["admittedStop"])
+        self.assertFalse(observed["admittedSecondStop"])
+        self.assertTrue(observed["admittedDisposed"])
+        self.assertEqual(sorted(observed["admittedCreated"]), sorted(observed["admittedDisconnected"]))
+        self.assertIn("merger", observed["admittedDisconnected"])
+        self.assertIn("limiter", observed["admittedDisconnected"])
         self.assertTrue(observed["insufficientRejected"])
+        self.assertGreater(observed["blockedMissing"], 0)
+        self.assertTrue(observed["blockedDisposed"])
+        self.assertEqual(observed["blockedDestination"]["channelCount"], 2)
+        self.assertEqual(observed["blockedDestination"]["channelCountMode"], "max")
+        self.assertEqual(observed["blockedDestination"]["channelInterpretation"], "speakers")
+        self.assertEqual(observed["callsAfterBlocked"], 0)
         self.assertEqual(observed["limitedNodeCalls"], 0)
         self.assertEqual(observed["fixedOfflineScheduled"], 1)
         self.assertEqual(observed["fixedOfflineDestination"]["channelCount"], 4)
         self.assertEqual(observed["fixedOfflineDestination"]["channelCountMode"], "explicit")
         self.assertEqual(observed["fixedOfflineDestination"]["channelInterpretation"], "discrete")
+        self.assertTrue(observed["fixedOfflineDisposed"])
+        self.assertIn("merger", observed["fixedOfflineDisconnected"])
+        self.assertIn("limiter", observed["fixedOfflineDisconnected"])
 
     def test_control_live_stereo_offline_and_multichannel_share_exact_bus_events(self) -> None:
         result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
         self.assertEqual(result.returncode, 0, result.stderr)
         control = json.loads(result.stdout)
+        for invalid_seed in ("1.5", "0x100000000", "-1"):
+            invalid = run(
+                "node",
+                "sound/control.mjs",
+                "--rate",
+                "0",
+                "--score",
+                "music/score.json",
+                "--seed",
+                invalid_seed,
+            )
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("32-bit unsigned integer", invalid.stderr)
         buses = validate_control_room(control, self.layouts)
         self.assertEqual(control["room"]["semantics"], "authored-start-events")
         self.assertEqual(control["room"]["layout_registry_path"], "sound/room-layout.json")
@@ -648,6 +766,50 @@ class RoomEventContractTest(unittest.TestCase):
             alternate_plan = room_event_plan(alternate_control, "reference-quad", "multichannel")
             self.assertEqual(alternate_plan["layout_contract_sha256"], alternate["identity"]["contract_sha256"])
             self.assertEqual(alternate_plan["safety"]["max_event_gain"], 0.5)
+            self.assertEqual(
+                [bus["identity"]["contract_sha256"] for bus in validate_room_event_control(alternate_control)],
+                alternate_plan["bus_contract_sha256"],
+            )
+
+            custom_default_path = Path(temporary) / "custom-default-room-layout.json"
+            custom_default = copy.deepcopy(self.layouts)
+            portable = next(row for row in custom_default["layouts"] if row["id"] == "stereo")
+            portable["id"] = "portable-default"
+            custom_default["default_layout"] = portable["id"]
+            custom_default["identity"]["id"] = "custom-default-test-layouts"
+            custom_default["identity"]["contract_sha256"] = layout_contract_sha256(custom_default)
+            custom_default_path.write_text(json.dumps(custom_default))
+            custom_control = copy.deepcopy(control)
+            custom_control["room"]["layout_registry_path"] = custom_default_path.relative_to(ROOT).as_posix()
+            custom_control["room"]["layout_identity"] = custom_default["identity"]
+            self.assertEqual(room_event_plan(custom_control)["layout"], "portable-default")
+
+            custom_control_path = Path(temporary) / "custom-default-control.json"
+            custom_control_path.write_text(json.dumps(custom_control))
+            cli_default = run(
+                "python3",
+                "sound/room_render.py",
+                str(custom_control_path),
+                "--layouts",
+                str(custom_default_path),
+                "--output",
+                "stereo",
+            )
+            self.assertEqual(cli_default.returncode, 0, cli_default.stderr)
+            self.assertEqual(json.loads(cli_default.stdout)["layout"], "portable-default")
+
+            validation_path = Path(temporary) / "validation-only-room-layout.json"
+            validation_only = copy.deepcopy(self.layouts)
+            validation_only["coordinate_system"]["meters_per_unit"] = 100
+            validation_only["identity"]["id"] = "validation-only-test-layouts"
+            validation_only["identity"]["contract_sha256"] = layout_contract_sha256(validation_only)
+            validation_path.write_text(json.dumps(validation_only))
+            validation_control = copy.deepcopy(control)
+            validation_control["room"]["layout_registry_path"] = validation_path.relative_to(ROOT).as_posix()
+            validation_control["room"]["layout_identity"] = validation_only["identity"]
+            self.assertEqual(len(validate_room_event_control(validation_control)), len(buses))
+            with self.assertRaisesRegex(ValueError, "exceeds latency budget"):
+                room_event_plan(validation_control, "reference-quad", "stereo")
 
             link = Path(temporary) / "linked-room-layout.json"
             link.symlink_to(ROOT / "sound/room-layout.json")
@@ -781,6 +943,10 @@ class RoomEventContractTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "layout identity"):
             validate_control_room(control, self.layouts)
+        malformed_identity = copy.deepcopy(control)
+        malformed_identity["room"]["layout_identity"] = "not-an-identity-object"
+        with self.assertRaisesRegex(ValueError, "layout identity"):
+            validate_control_room(malformed_identity, self.layouts)
 
 
 def round_js(value: float, places: int) -> float:
