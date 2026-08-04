@@ -73,6 +73,7 @@ export class LocalPoseCamera {
     this.reconnects = 0;
     this.retryAt = null;
     this.pending = null;
+    this.pendingGeneration = null;
     this.stream = null;
     this.detector = null;
     this.generation = 0;
@@ -87,10 +88,17 @@ export class LocalPoseCamera {
   async start(at, { reconnect = false } = {}) {
     this.lastAt = at;
     this.desired = true;
-    if (this.pending) return this.pending;
+    if (this.pending && this.pendingGeneration === this.generation) return this.pending;
     const generation = ++this.generation;
-    this.pending = this.startOnce(at, reconnect, generation).finally(() => { this.pending = null; });
-    return this.pending;
+    const pending = this.startOnce(at, reconnect, generation).finally(() => {
+      if (this.pending === pending) {
+        this.pending = null;
+        this.pendingGeneration = null;
+      }
+    });
+    this.pending = pending;
+    this.pendingGeneration = generation;
+    return pending;
   }
 
   async startOnce(at, reconnect, generation) {

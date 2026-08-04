@@ -304,6 +304,41 @@ await test("an explicit stop wins races with pending permission or model work", 
   assert.equal(detectorClosed, true);
 });
 
+await test("an explicit restart supersedes a stopped permission request", async () => {
+  const streams = [fakeStream(), fakeStream()];
+  const resolvePermission = [];
+  let mediaCalls = 0;
+  const camera = new LocalPoseCamera({
+    video: fakeVideo(),
+    onSample: () => {},
+    mediaDevices: {
+      getUserMedia: () => {
+        const index = mediaCalls++;
+        return new Promise((resolve) => { resolvePermission[index] = () => resolve(streams[index]); });
+      },
+    },
+    detectorFactory: async () => ({ detectForVideo() { return { landmarks: [] }; }, close() {} }),
+  });
+
+  const first = camera.start(40);
+  assert.equal(mediaCalls, 1);
+  camera.stop(40.1);
+  const second = camera.start(40.2);
+  const secondPending = camera.pending;
+  assert.equal(mediaCalls, 2);
+
+  resolvePermission[0]();
+  assert.equal(await first, false);
+  assert.strictEqual(camera.pending, secondPending);
+  assert.equal(streams[0].track.stopped, true);
+
+  resolvePermission[1]();
+  assert.equal(await second, true);
+  assert.equal(camera.phase, "no-person");
+  assert.strictEqual(camera.stream, streams[1]);
+  camera.stop(40.3);
+});
+
 await test("keyboard/touch fallback records and replays the same derived controls", () => {
   const controller = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
   controller.startFallback(20);
