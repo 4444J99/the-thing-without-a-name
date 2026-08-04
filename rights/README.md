@@ -76,10 +76,10 @@ must use either the compact closed interchange shape or the full closed release 
 unknown top-level or media, clearance, credit, gate, source, and evidence fields fail.
 Generated public documents are not staged media inputs and need no fabricated source
 copies; their deterministic bytes are inventoried by the exact release build receipt.
-The Pages workflow runs public rights and release phases before artifact upload, verifies
-that receipt, and copies only declared public products plus ready, cleared external media
-while excluding release-only rows and source manifests. An uncleared release cannot
-publish a new deployment.
+The Pages workflow runs the public rights phase and the public release phase before
+artifact upload, verifies that receipt, and copies only declared public products plus
+ready, cleared external media while excluding release-only rows and source manifests.
+An uncleared release cannot publish a new deployment.
 Malformed graph references, regular expressions, credit dependencies, and fixed-term
 dates become explicit blockers rather than tracebacks. Receipt output is rejected before
 phase validation whenever it would overlap the register, schema, a bound source, a

@@ -307,7 +307,7 @@
       "properties": {
         "status": {"enum": ["pending", "approved"]},
         "label": {"type": "string", "minLength": 1},
-        "url": {"type": ["string", "null"], "format": "uri"}
+        "url": {"type": ["string", "null"], "format": "uri", "pattern": "^https://[^\\s]+$"}
       }
     },
     "link": {
@@ -316,7 +316,7 @@
       "required": ["label", "url"],
       "properties": {
         "label": {"type": "string", "minLength": 1},
-        "url": {"type": "string", "format": "uri"}
+        "url": {"type": "string", "format": "uri", "pattern": "^https://[^\\s]+$"}
       }
     },
     "calendarItem": {
@@ -353,7 +353,7 @@
           "required": ["archival_seed", "example_url", "note"],
           "properties": {
             "archival_seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-            "example_url": {"type": "string", "format": "uri"},
+            "example_url": {"type": "string", "format": "uri", "pattern": "^https://[^\\s]+$"},
             "note": {"type": "string", "minLength": 1}
           }
         },

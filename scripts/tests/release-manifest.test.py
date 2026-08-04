@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import re
@@ -264,6 +265,32 @@ class ProductionManifestTest(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.temporary.cleanup()
 
+    def test_public_urls_have_https_backstops_without_optional_format_plugins(self) -> None:
+        schema = json.loads(
+            (ROOT / "release/manifest.schema.json").read_text(encoding="utf-8")
+        )
+        mutations = (
+            lambda manifest: manifest["press"]["contact"].update(
+                {"url": "http://example.invalid/contact"}
+            ),
+            lambda manifest: manifest["press"]["canonical_links"][0].update(
+                {"url": "http://example.invalid/"}
+            ),
+            lambda manifest: manifest["press"]["seed_sharing"].update(
+                {"example_url": "http://example.invalid/#s=1"}
+            ),
+        )
+        validator = CONTRACT.jsonschema.Draft202012Validator(schema)
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                manifest = copy.deepcopy(self.manifest)
+                mutate(manifest)
+                errors = list(validator.iter_errors(manifest))
+                self.assertTrue(
+                    any(error.validator == "pattern" for error in errors),
+                    [error.message for error in errors],
+                )
+
     def test_snapshot_binding_uses_final_merged_freeze_and_source_evidence(self) -> None:
         binding = self.manifest["opportunity_snapshot"]
         self.assertEqual(binding["sha256"], CONTRACT.EXPECTED_OPPORTUNITY_SHA256)
@@ -434,6 +461,29 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertIn("Reference installation contract", text)
         self.assertIn(self.manifest["installation"]["reference_contract"]["spec_id"], text)
         self.assertIn("Required evidence before publication", text)
+
+    def test_pdf_paginates_tall_paragraphs_and_diagrams_without_losing_tail_text(self) -> None:
+        pdf = BUILD.PitchPDF(self.manifest, "draft", TEST_COMMIT)
+        pdf.new_page("Pagination stress")
+        paragraph = " ".join(
+            [*(f"word{index:04d}" for index in range(900)), "paragraph-tail"]
+        )
+        pdf.paragraph(paragraph)
+        nodes = [
+            {
+                "label": f"Stress node {index:02d}",
+                "detail": "Short deterministic diagram detail.",
+            }
+            for index in range(24)
+        ]
+        pdf.diagram(nodes)
+        reader = PdfReader(io.BytesIO(pdf.finish()))
+        extracted = " ".join(
+            "\n".join(page.extract_text() or "" for page in reader.pages).split()
+        )
+        self.assertGreaterEqual(len(reader.pages), 5)
+        self.assertIn("paragraph-tail", extracted)
+        self.assertIn("Stress node 23", extracted)
 
     def test_accessibility_press_credit_and_media_outputs_come_from_manifest(self) -> None:
         access = (self.output / "accessibility/accessibility.md").read_text()
@@ -818,6 +868,43 @@ class AdversarialArtifactTest(unittest.TestCase):
         (self.output / "private.txt").write_text("not allowlisted\n")
         with self.assertRaisesRegex(CONTRACT.ReleaseError, "inventory mismatch"):
             BUILD.verify_artifact(self.output, TEST_COMMIT)
+
+    def test_receipt_omitting_required_output_fails_before_post_inventory_reads(self) -> None:
+        for relative in (
+            "project/index.html",
+            "accessibility/captions.en.vtt",
+            BUILD.PDF_NAME,
+        ):
+            with self.subTest(relative=relative):
+                case = self.base / relative.replace("/", "-")
+                shutil.copytree(self.output, case)
+                (case / relative).unlink()
+                receipt_path = case / BUILD.ARTIFACT_MANIFEST
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                receipt["files"] = [
+                    record for record in receipt["files"] if record["path"] != relative
+                ]
+                receipt_path.write_bytes(CONTRACT.canonical_json(receipt))
+                with self.assertRaisesRegex(CONTRACT.ReleaseError, "omits required outputs"):
+                    BUILD.verify_artifact(case, TEST_COMMIT)
+
+    def test_self_rehashed_invalid_utf8_output_fails_as_release_error(self) -> None:
+        for relative in ("project/index.html", "accessibility/captions.en.vtt"):
+            with self.subTest(relative=relative):
+                case = self.base / f"invalid-utf8-{relative.replace('/', '-')}"
+                shutil.copytree(self.output, case)
+                path = case / relative
+                path.write_bytes(b"\xff\xfe\n")
+                receipt_path = case / BUILD.ARTIFACT_MANIFEST
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                record = next(
+                    record for record in receipt["files"] if record["path"] == relative
+                )
+                record["bytes"] = path.stat().st_size
+                record["sha256"] = CONTRACT.sha256(path)
+                receipt_path.write_bytes(CONTRACT.canonical_json(receipt))
+                with self.assertRaisesRegex(CONTRACT.ReleaseError, "not readable UTF-8"):
+                    BUILD.verify_artifact(case, TEST_COMMIT)
 
     def test_receipted_project_link_to_source_manifest_fails(self) -> None:
         project = self.output / "project/index.html"

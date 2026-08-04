@@ -156,10 +156,10 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
             "</li>"
         )
 
-    credits = []
+    credit_items = []
     for credit in manifest["credits"]:
         name = credit["name"] or "Name withheld pending clearance"
-        credits.append(
+        credit_items.append(
             "<li>"
             f'<div><strong>{_h(credit["role"])}</strong>{_status(credit["status"])}</div>'
             f'<p>{_h(name)}. {_h(credit["note"])}</p>'
@@ -314,7 +314,7 @@ def project_html(manifest: dict, phase: str, commit: str) -> bytes:
       <section id="resources" aria-labelledby="resources-title"><div class="grid"><div><p class="kicker">Resources</p><h2 id="resources-title">Access and presentation downloads</h2><p>These files are generated from the same approved release manifest and authenticated by the release receipt.</p></div><nav class="panel" aria-label="Project resources"><ul class="clean">{''.join(resources)}</ul></nav></div></section>
       <section aria-labelledby="press-title"><div class="grid"><div><p class="kicker">For presentation</p><h2 id="press-title">Synopsis</h2><p>{_h(press['synopsis_long'])}</p></div><aside class="panel"><h3>Canonical links</h3><ul>{links}</ul><h3>Seed sharing</h3><p>{_h(press['seed_sharing']['note'])}</p><p><a href="{_h(press['seed_sharing']['example_url'])}">Open archival seed {press['seed_sharing']['archival_seed']}</a></p></aside></div></section>
       <section id="evidence" aria-labelledby="evidence-title"><p class="kicker">Release truth</p><h2 id="evidence-title">Claims and evidence</h2><ul class="clean">{''.join(claims)}</ul></section>
-      <section aria-labelledby="credits-title"><div class="grid"><div><h2 id="credits-title">Credits</h2><ul class="clean">{''.join(credits)}</ul></div><div><h2>External release media</h2><ul class="clean">{''.join(media)}</ul><h3>Generated release products</h3><ul class="clean">{''.join(generated_products)}</ul></div></div></section>
+      <section aria-labelledby="credits-title"><div class="grid"><div><h2 id="credits-title">Credits</h2><ul class="clean">{''.join(credit_items)}</ul></div><div><h2>External release media</h2><ul class="clean">{''.join(media)}</ul><h3>Generated release products</h3><ul class="clean">{''.join(generated_products)}</ul></div></div></section>
       {f'<section aria-labelledby="gates-title"><p class="kicker">Draft gate ledger</p><h2 id="gates-title">What must happen before publication</h2><ul class="clean">{"".join(open_gates)}</ul></section>' if draft else ''}
     </main>
     <footer><p>{_h(identity['canonical_title'])} by {_h(identity['artist'])}. Built from release manifest {_h(manifest['version'])}, source {_h(commit)}. No account action, public send, or deployment is performed by this build.</p></footer>
@@ -548,6 +548,12 @@ class PitchPDF:
         self.y = 0.0
         self.margin = 54.0
         self.body_width = self.width - 2 * self.margin
+        self.page_capacity = (
+            self.height
+            - 2 * self.margin
+            - 24
+            - (42 if self.phase == "draft" else 0)
+        )
 
     def _footer(self) -> None:
         self.canvas.setStrokeColor(colors.HexColor("#c9c2b8"))
@@ -577,6 +583,10 @@ class PitchPDF:
             self.y -= 42
 
     def ensure(self, height: float, label: str = "Pitch continued") -> None:
+        if height > self.page_capacity:
+            raise ReleaseError(
+                f"pitch PDF block height {height:g} exceeds page capacity {self.page_capacity:g}"
+            )
         if self.y - height < 54:
             self.new_page(label)
 
@@ -613,10 +623,13 @@ class PitchPDF:
 
     def paragraph(self, text: str, *, size: float = 9.5, leading: float = 13, color: str = "#373b3f") -> None:
         lines = self.wrapped_lines(text, size=size, width=self.body_width)
-        self.ensure(len(lines) * leading + 10)
-        self.canvas.setFillColor(colors.HexColor(color))
-        self.canvas.setFont("Helvetica", size)
+        block_height = len(lines) * leading + 10
+        if block_height <= self.page_capacity:
+            self.ensure(block_height)
         for line in lines:
+            self.ensure(leading)
+            self.canvas.setFillColor(colors.HexColor(color))
+            self.canvas.setFont("Helvetica", size)
             self.canvas.drawString(self.margin, self.y, line)
             self.y -= leading
         self.y -= 7
@@ -637,10 +650,12 @@ class PitchPDF:
         ]
         box_heights = [38 + 10 * len(lines) for lines in details]
         total = sum(box_heights) + (len(nodes) - 1) * gap
-        self.ensure(total + 12)
+        if total + 12 <= self.page_capacity:
+            self.ensure(total + 12)
         for index, (node, lines, box_height) in enumerate(
             zip(nodes, details, box_heights, strict=True)
         ):
+            self.ensure(box_height + gap)
             x = self.margin
             y = self.y - box_height
             self.canvas.setFillColor(colors.HexColor("#f4f0e7"))
@@ -912,6 +927,13 @@ def _verify_pdf(path: Path, phase: str, title: str) -> None:
         raise ReleaseError("pitch PDF draft watermark does not match its phase")
 
 
+def _read_utf8_artifact(output: Path, relative: str, label: str) -> str:
+    try:
+        return (output / PurePosixPath(relative)).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ReleaseError(f"{label} is not readable UTF-8: {exc}") from exc
+
+
 def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
     output = output.absolute()
     if output.is_symlink() or not output.is_dir():
@@ -1041,7 +1063,12 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
             f"release artifact inventory mismatch; extra={sorted(inventory - expected)}, missing={sorted(expected - inventory)}"
         )
 
-    project = (output / "project/index.html").read_text(encoding="utf-8")
+    required_outputs = {"project/index.html", "accessibility/captions.en.vtt", PDF_NAME}
+    missing_outputs = sorted(required_outputs - set(paths))
+    if missing_outputs:
+        raise ReleaseError(f"release artifact receipt omits required outputs: {missing_outputs}")
+
+    project = _read_utf8_artifact(output, "project/index.html", "project page")
     verify_project_links(output, set(paths))
     draft = receipt["phase"] == "draft"
     if ('name="robots" content="noindex,nofollow"' in project) != draft:
@@ -1055,7 +1082,12 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
         or installation_reference["spec_contract_sha256"] not in project
     ):
         raise ReleaseError("project page does not expose its installation reference binding")
-    if not (output / "accessibility/captions.en.vtt").read_text(encoding="utf-8").startswith("WEBVTT\n"):
+    captions = _read_utf8_artifact(
+        output,
+        "accessibility/captions.en.vtt",
+        "caption artifact",
+    )
+    if not captions.startswith("WEBVTT\n"):
         raise ReleaseError("caption artifact is not WebVTT")
     _verify_pdf(output / PDF_NAME, receipt["phase"], project_title(project))
     return receipt
