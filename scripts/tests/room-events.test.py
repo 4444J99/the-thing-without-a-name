@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sound"))
 
+from music_score import canonical_sha256  # noqa: E402
 from room_events import (  # noqa: E402
     calibration_bus,
     layout_contract_sha256,
@@ -24,7 +25,6 @@ from room_events import (  # noqa: E402
     validate_room_bus,
     validate_room_layouts,
 )
-from music_score import canonical_sha256  # noqa: E402
 from room_render import plan_control, validate_control_room  # noqa: E402
 from score import room_event_plan, validate_room_event_control  # noqa: E402
 

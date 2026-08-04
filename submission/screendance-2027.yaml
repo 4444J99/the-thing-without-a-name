@@ -25,6 +25,7 @@ opportunity_snapshot:
   receipt: opportunities/omega-20260804.receipt.json
   frozen_at: "2026-08-04T02:32:44Z"
   opportunity_id: screendance-miami-2027
+  timezone: America/New_York
 call: ScreenDance Miami Festival 2027
 presenter: Miami Light Project
 portal: https://miamilightproject.submittable.com/submit

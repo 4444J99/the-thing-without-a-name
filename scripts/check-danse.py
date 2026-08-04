@@ -47,8 +47,8 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 48
+FLOOR = 49
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -122,6 +122,17 @@ def check_music_contract() -> None:
         lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
         detail = lines[-1] if lines else f"exit {done.returncode}"
     check("the musical score is one immutable absolute-time contract", done.returncode == 0, detail)
+
+
+def check_rights_contract() -> None:
+    """Run the redacted rights inventory and fail-closed phase regressions."""
+    test = ROOT / "scripts/tests/rights.test.py"
+    done = subprocess.run([sys.executable, str(test)], cwd=ROOT, capture_output=True, text=True, check=False)
+    detail = "redacted exact-source inventory, human gates, package/release binding, and private-custody boundary"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("rights and attribution fail closed on every uncleared use", done.returncode == 0, detail)
 
 
 def check_room_event_contract() -> None:
@@ -1140,6 +1151,8 @@ def main() -> int:
     check_sound()
     print("\n the score clock is shared by sound and image")
     check_music_contract()
+    print("\n rights and attribution bind the exact work")
+    check_rights_contract()
     print("\n sound and image occupy one deterministic room")
     check_room_event_contract()
 
