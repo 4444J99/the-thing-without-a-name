@@ -13,7 +13,6 @@ import posixpath
 import re
 import stat
 import subprocess
-import textwrap
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
@@ -588,20 +587,32 @@ class PitchPDF:
         self.canvas.drawString(self.margin, self.y, _pdf_ascii(text))
         self.y -= size + 10
 
-    def paragraph(self, text: str, *, size: float = 9.5, leading: float = 13, color: str = "#373b3f") -> None:
-        text = _pdf_ascii(text)
-        words = text.split()
+    def wrapped_lines(
+        self,
+        text: str,
+        *,
+        size: float,
+        width: float,
+        font: str = "Helvetica",
+    ) -> list[str]:
+        words = _pdf_ascii(text).split()
         lines: list[str] = []
         line = ""
         for word in words:
+            if stringWidth(word, font, size) > width:
+                raise ReleaseError(f"pitch PDF contains an unbreakable overlong word: {word!r}")
             candidate = f"{line} {word}".strip()
-            if line and stringWidth(candidate, "Helvetica", size) > self.body_width:
+            if line and stringWidth(candidate, font, size) > width:
                 lines.append(line)
                 line = word
             else:
                 line = candidate
         if line:
             lines.append(line)
+        return lines
+
+    def paragraph(self, text: str, *, size: float = 9.5, leading: float = 13, color: str = "#373b3f") -> None:
+        lines = self.wrapped_lines(text, size=size, width=self.body_width)
         self.ensure(len(lines) * leading + 10)
         self.canvas.setFillColor(colors.HexColor(color))
         self.canvas.setFont("Helvetica", size)
@@ -615,11 +626,21 @@ class PitchPDF:
         self.paragraph(f"{label}{status_text}: {text}", size=9, leading=12)
 
     def diagram(self, nodes: list[dict]) -> None:
-        box_height = 48
         gap = 12
-        total = len(nodes) * box_height + (len(nodes) - 1) * gap
+        details = [
+            self.wrapped_lines(
+                node["detail"],
+                size=7.8,
+                width=self.body_width - 24,
+            )
+            for node in nodes
+        ]
+        box_heights = [38 + 10 * len(lines) for lines in details]
+        total = sum(box_heights) + (len(nodes) - 1) * gap
         self.ensure(total + 12)
-        for index, node in enumerate(nodes):
+        for index, (node, lines, box_height) in enumerate(
+            zip(nodes, details, box_heights, strict=True)
+        ):
             x = self.margin
             y = self.y - box_height
             self.canvas.setFillColor(colors.HexColor("#f4f0e7"))
@@ -627,10 +648,12 @@ class PitchPDF:
             self.canvas.roundRect(x, y, self.body_width, box_height, 6, fill=1, stroke=1)
             self.canvas.setFillColor(colors.HexColor("#12171c"))
             self.canvas.setFont("Helvetica-Bold", 10)
-            self.canvas.drawString(x + 12, y + 29, _pdf_ascii(node["label"]))
-            detail = textwrap.shorten(_pdf_ascii(node["detail"]), width=96, placeholder="...")
+            self.canvas.drawString(x + 12, y + box_height - 19, _pdf_ascii(node["label"]))
             self.canvas.setFont("Helvetica", 7.8)
-            self.canvas.drawString(x + 12, y + 14, detail)
+            detail_y = y + box_height - 34
+            for line in lines:
+                self.canvas.drawString(x + 12, detail_y, line)
+                detail_y -= 10
             self.y = y - gap
             if index < len(nodes) - 1:
                 self.canvas.setStrokeColor(colors.HexColor("#ed7745"))

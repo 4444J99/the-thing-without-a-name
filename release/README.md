@@ -34,6 +34,9 @@ The manifest has three cumulative phases:
 
 Current tracked state is intentionally `draft`. `public` and `release` fail before
 creating an output directory. A passing draft is not permission to publish.
+The completed HUD keyboard/touch replay is bound by a public-safe
+[`live-interaction-replay-20260804.json`](evidence/live-interaction-replay-20260804.json)
+receipt; it closes only that machine gate and does not satisfy publication approval.
 
 ## Validate and build
 

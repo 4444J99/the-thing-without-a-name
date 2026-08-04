@@ -28,6 +28,7 @@ TEST_COMMIT = "a" * 40
 FIXTURE_FILES = (
     "release/manifest.json",
     "release/manifest.schema.json",
+    "release/evidence/live-interaction-replay-20260804.json",
     "opportunities/omega-20260804.json",
     "opportunities/omega-20260804.receipt.json",
     "opportunities/source-evidence-20260804.json",
@@ -218,7 +219,8 @@ def complete_manifest(root: Path) -> dict:
         product["status"] = "ready"
     for gate in manifest["gates"]:
         gate["state"] = "satisfied"
-        gate["evidence"] = copy.deepcopy(evidence)
+        if gate["id"] != "live-interaction-replay":
+            gate["evidence"] = copy.deepcopy(evidence)
     for section in ("spatial_requirements", "technical_rider"):
         for requirement in manifest["installation"][section]:
             requirement["status"] = "verified"
@@ -314,6 +316,35 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(gate["state"], "pending")
         self.assertIsNone(gate["evidence"])
 
+    def test_live_interaction_replay_is_bound_without_clearing_publication(self) -> None:
+        gate = next(
+            gate
+            for gate in self.manifest["gates"]
+            if gate["id"] == "live-interaction-replay"
+        )
+        self.assertEqual(gate["state"], "satisfied")
+        self.assertEqual(
+            gate["evidence"]["path"],
+            CONTRACT.LIVE_INTERACTION_EVIDENCE_PATH,
+        )
+        receipt = CONTRACT.load_json(
+            ROOT / gate["evidence"]["path"],
+            "live interaction replay receipt",
+        )
+        CONTRACT.validate_live_interaction_receipt(ROOT / gate["evidence"]["path"])
+        self.assertEqual(
+            receipt["deployment"]["source_commit"],
+            CONTRACT.LIVE_INTERACTION_DEPLOYED_COMMIT,
+        )
+        self.assertTrue(all(check["result"] == "passed" for check in receipt["checks"]))
+        publication = next(
+            gate
+            for gate in self.manifest["gates"]
+            if gate["id"] == "publication-approval"
+        )
+        self.assertEqual(publication["state"], "pending")
+        self.assertIsNone(publication["evidence"])
+
     def test_tracked_manifest_is_honest_draft_but_public_and_release_fail_closed(self) -> None:
         public = CONTRACT.phase_blockers(self.manifest, "public")
         release = CONTRACT.phase_blockers(self.manifest, "release")
@@ -397,6 +428,9 @@ class ProductionManifestTest(unittest.TestCase):
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         self.assertIn("DRAFT - NOT FOR PUBLICATION", text)
         self.assertIn("System flow", text)
+        normalized = " ".join(text.split())
+        for node in self.manifest["installation"]["system_flow"]:
+            self.assertIn(" ".join(node["detail"].split()), normalized)
         self.assertIn("Reference installation contract", text)
         self.assertIn(self.manifest["installation"]["reference_contract"]["spec_id"], text)
         self.assertIn("Required evidence before publication", text)
@@ -640,6 +674,57 @@ class AdversarialManifestTest(unittest.TestCase):
         temporary, root = self.mutate(change)
         with temporary:
             with self.assertRaisesRegex(CONTRACT.ReleaseError, "satisfied gate .* has no evidence"):
+                CONTRACT.validate_release(root)
+
+    def test_completed_live_interaction_gate_cannot_regress(self) -> None:
+        def change(manifest):
+            gate = next(
+                gate
+                for gate in manifest["gates"]
+                if gate["id"] == "live-interaction-replay"
+            )
+            gate["state"] = "pending"
+            gate["evidence"] = None
+
+        temporary, root = self.mutate(change)
+        with temporary:
+            with self.assertRaisesRegex(CONTRACT.ReleaseError, "cannot regress"):
+                CONTRACT.validate_release(root)
+
+    def test_rehashed_live_interaction_deployment_substitution_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            receipt_path = root / CONTRACT.LIVE_INTERACTION_EVIDENCE_PATH
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["deployment"]["source_commit"] = "b" * 40
+            receipt_path.write_bytes(CONTRACT.canonical_json(receipt))
+            manifest = read_manifest(root)
+            gate = next(
+                gate
+                for gate in manifest["gates"]
+                if gate["id"] == "live-interaction-replay"
+            )
+            gate["evidence"]["sha256"] = CONTRACT.sha256(receipt_path)
+            write_manifest(root, manifest)
+            with self.assertRaisesRegex(CONTRACT.ReleaseError, "deployed source identity drifted"):
+                CONTRACT.validate_release(root)
+
+    def test_rehashed_live_interaction_check_without_id_fails_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            receipt_path = root / CONTRACT.LIVE_INTERACTION_EVIDENCE_PATH
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["checks"][0].pop("id")
+            receipt_path.write_bytes(CONTRACT.canonical_json(receipt))
+            manifest = read_manifest(root)
+            gate = next(
+                gate
+                for gate in manifest["gates"]
+                if gate["id"] == "live-interaction-replay"
+            )
+            gate["evidence"]["sha256"] = CONTRACT.sha256(receipt_path)
+            write_manifest(root, manifest)
+            with self.assertRaisesRegex(CONTRACT.ReleaseError, "check inventory drifted"):
                 CONTRACT.validate_release(root)
 
     def test_duplicate_ids_fail(self) -> None:

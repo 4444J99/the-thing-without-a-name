@@ -23,6 +23,9 @@ EXPECTED_OPPORTUNITY_FROZEN_AT = "2026-08-04T02:32:44Z"
 EXPECTED_OPPORTUNITY_SHA256 = "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e"
 EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "3a2d3b9eaed6f14f869fc08fa2e0baf02b868116ec0e1b206f23c1ec3e2a94ee"
 EXPECTED_SOURCE_EVIDENCE_SHA256 = "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37"
+LIVE_INTERACTION_EVIDENCE_PATH = "release/evidence/live-interaction-replay-20260804.json"
+LIVE_INTERACTION_COMMENT_BODY_SHA256 = "4cc41f9ed353c92c27b172907800b123c7b4e85ef4ba7165ed210133f40952bf"
+LIVE_INTERACTION_DEPLOYED_COMMIT = "f19244afbce94015e78b7f746b07d267ed9e67ae"
 PHASES = ("draft", "public", "release")
 GENERATED_PRODUCT_PATHS = {
     "project-page-copy": "project/index.html",
@@ -367,6 +370,90 @@ def _validate_graph(manifest: dict[str, Any], gate_ids: set[str]) -> None:
                 )
 
 
+def validate_live_interaction_receipt(path: Path) -> None:
+    receipt = load_json(path, "live interaction replay receipt")
+    if set(receipt) != {
+        "schema",
+        "gate_id",
+        "result",
+        "observed_at",
+        "source",
+        "deployment",
+        "checks",
+        "non_actions",
+    }:
+        raise ReleaseError("live interaction replay receipt has an unknown shape")
+    expected_identity = {
+        "schema": "danse.live-interaction-replay.v1",
+        "gate_id": "live-interaction-replay",
+        "result": "satisfied",
+        "observed_at": "2026-08-04T08:58:18Z",
+    }
+    for key, expected in expected_identity.items():
+        if receipt[key] != expected:
+            raise ReleaseError(f"live interaction replay receipt {key} drifted")
+
+    if receipt["source"] != {
+        "repository": "organvm/the-thing-without-a-name",
+        "issue": 17,
+        "comment_id": 5176789674,
+        "comment_url": "https://github.com/organvm/the-thing-without-a-name/issues/17#issuecomment-5176789674",
+        "comment_author": "4444J99",
+        "comment_created_at": "2026-08-04T08:58:19Z",
+        "comment_updated_at": "2026-08-04T08:58:19Z",
+        "comment_body_sha256": LIVE_INTERACTION_COMMENT_BODY_SHA256,
+    }:
+        raise ReleaseError("live interaction replay source identity drifted")
+    if receipt["deployment"] != {
+        "url": "https://organvm.github.io/the-thing-without-a-name/",
+        "pages_manifest_schema": "danse.pages.v1",
+        "source_commit": LIVE_INTERACTION_DEPLOYED_COMMIT,
+        "pages_file_count": 680,
+    }:
+        raise ReleaseError("live interaction replay deployed source identity drifted")
+
+    checks = receipt["checks"]
+    expected_checks = [
+        "initial-hidden-state",
+        "touch-disclosure",
+        "escape-close",
+        "keyboard-h-toggle",
+        "feedback-separation",
+        "console-clean",
+    ]
+    if (
+        not isinstance(checks, list)
+        or not all(isinstance(check, dict) for check in checks)
+        or [check.get("id") for check in checks] != expected_checks
+    ):
+        raise ReleaseError("live interaction replay check inventory drifted")
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or set(check) != {"id", "observation", "result"}
+            or check["result"] != "passed"
+            or not isinstance(check["observation"], str)
+            or not check["observation"].strip()
+        ):
+            raise ReleaseError("live interaction replay contains an invalid check")
+    if receipt["non_actions"] != [
+        "No camera permission was requested.",
+        "No interaction receipt was saved.",
+        "No public or account action was performed by this evidence record.",
+    ]:
+        raise ReleaseError("live interaction replay non-action boundary drifted")
+    leaked = next(
+        (
+            marker.group(0).strip()
+            for value in strings(receipt)
+            if (marker := PRIVATE_PATH_MARKER.search(value))
+        ),
+        None,
+    )
+    if leaked:
+        raise ReleaseError(f"live interaction replay exposes a private/local path marker: {leaked}")
+
+
 def _validate_evidence_states(root: Path, manifest: dict[str, Any]) -> None:
     for claim in manifest["claims"]:
         evidence = claim["evidence"]
@@ -424,9 +511,20 @@ def _validate_evidence_states(root: Path, manifest: dict[str, Any]) -> None:
         if gate["state"] == "satisfied":
             if evidence is None:
                 raise ReleaseError(f"satisfied gate {gate['id']} has no evidence")
-            verify_record(root, evidence, f"gate {gate['id']} evidence")
+            evidence_path = verify_record(root, evidence, f"gate {gate['id']} evidence")
+            if gate["id"] == "live-interaction-replay":
+                if evidence["path"] != LIVE_INTERACTION_EVIDENCE_PATH:
+                    raise ReleaseError("live interaction replay names the wrong evidence receipt")
+                validate_live_interaction_receipt(evidence_path)
         elif evidence is not None:
             raise ReleaseError(f"pending gate {gate['id']} may not carry completion evidence")
+
+    live_gate = next(
+        (gate for gate in manifest["gates"] if gate["id"] == "live-interaction-replay"),
+        None,
+    )
+    if live_gate is None or live_gate["state"] != "satisfied":
+        raise ReleaseError("completed live interaction replay gate cannot regress")
 
     captions = manifest["accessibility"]["captions"]
     previous_end = -1

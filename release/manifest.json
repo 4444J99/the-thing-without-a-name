@@ -533,9 +533,13 @@
       "owner": "Issue 17 and Anthony",
       "issue": 17,
       "required_for": ["public", "release"],
-      "state": "pending",
+      "state": "satisfied",
       "action": "Record the outstanding live H, Escape, and touch disclosure replay against the deployed SHA.",
-      "evidence": null
+      "evidence": {
+        "path": "release/evidence/live-interaction-replay-20260804.json",
+        "sha256": "86a6fd406030dae27ce8c8a3a59e599592b8c29c7f3eb10005974ab974f89699",
+        "summary": "Issue 17 records touch, Escape, and H disclosure with synchronized hidden and ARIA state and zero console errors against deployed Pages source f19244afbce94015e78b7f746b07d267ed9e67ae."
+      }
     },
     {
       "id": "publication-approval",
