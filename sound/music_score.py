@@ -28,6 +28,8 @@ def _canonical_tree(value: Any) -> list[Any]:
         number = float(value)
         if not math.isfinite(number) or (type(value) is int and int(number) != value):
             raise ValueError(f"music score: number is not finite IEEE-754: {value!r}")
+        if number == 0:
+            number = 0.0
         return ["number", struct.pack(">d", number).hex()]
     if isinstance(value, str):
         return ["string", value]
@@ -40,13 +42,18 @@ def _canonical_tree(value: Any) -> list[Any]:
     raise ValueError(f"music score: unsupported canonical value {type(value).__name__}")
 
 
+def canonical_sha256(value: Any) -> str:
+    """Type-stable canonical SHA-256 shared by immutable Danse contracts."""
+    encoded = json.dumps(_canonical_tree(value), separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def contract_sha256(score: dict[str, Any]) -> str:
     identity = score.get("identity")
     if not isinstance(identity, dict):
         raise ValueError("music score: identity must be a mapping")
     source = {**score, "identity": {key: value for key, value in identity.items() if key != "contract_sha256"}}
-    encoded = json.dumps(_canonical_tree(source), separators=(",", ":"), ensure_ascii=False).encode()
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_sha256(source)
 
 
 def load_score(path: Path = DEFAULT_SCORE) -> dict[str, Any]:
