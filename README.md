@@ -264,6 +264,7 @@ animating it toward `0` is literally its undoing.
   engine/      gl · mat4 · rng · room · room-events · grammar · renderer · corpus · clock · program
   music/       layered repertoire provenance · MIDI compiler · immutable fixture score
   sound/       shared room-event bus · stereo/WebAudio/offline/multichannel plans
+  installation/ reference twin · calibration/evidence contracts · foreground recovery runtime
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
@@ -326,6 +327,11 @@ for the opt-in query/render paths and the explicit remaining artistic gate.
 The deterministic spatial bus and its reference-only speaker maps are documented
 in [`sound/ROOM_EVENTS.md`](sound/ROOM_EVENTS.md); they do not claim cleared audio
 bytes, venue approval, or a completed physical room test.
+The installation reference twin, projector/speaker calibration contract, bounded
+foreground recovery runtime, and setup/strike/restore protocol are documented in
+[`installation/README.md`](installation/README.md). Its tracked gate ledger keeps
+venue, hardware, measurement, three wall-plug, and restore predicates explicitly
+blocked; a green simulator does not claim a physical installation.
 
 ## Provenance
 
@@ -347,6 +353,7 @@ model instantiates without any external request:
 
 ```bash
 node scripts/tests/interaction.test.mjs
+python3 scripts/check-installation.py
 python3 render/browser.py --interaction
 ```
 

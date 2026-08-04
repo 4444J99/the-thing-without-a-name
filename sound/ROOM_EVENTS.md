@@ -102,7 +102,7 @@ merging it wholesale.
 | Mutable voice timers, `setTimeout` bed loops, previous-frame maps, and per-second counters | Rejected; immutable passage buses and lookup buckets supersede accumulated playback state. |
 | Oscillator unlock/test tones | Rejected for artwork paths; diagnostic impulses are separately typed and never presented as source material. |
 | Public-bank URLs and implicit local recording availability | Rejected; exact declared digests are required before any buffer node is created. |
-| Fixed room dimensions, projector/speaker hardware, and successful installation behavior | Deferred to issue #14 and venue evidence; the tracked layouts are simulations only. |
+| Fixed room dimensions, projector/speaker hardware, and successful installation behavior | Dispositioned claim by claim in `installation/archive-disposition.json`. Issue #14 now has a deterministic reference twin and evidence schema, but the tracked geometry/layouts remain simulations and every physical claim still requires venue-owned proof. |
 
 ## Remaining external gates
 

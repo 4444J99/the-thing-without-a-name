@@ -1,0 +1,68 @@
+{
+  "schema": "danse.installation.archive-disposition.v1",
+  "source": {
+    "repository": "organvm/limen",
+    "branch": "archive/danse-predecessor-experiments-20260802",
+    "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+    "authority": "non-authoritative-evidence-only",
+    "merge_wholesale": false,
+    "files": [
+      {
+        "path": "docs/plans/danse-installation-spec.md",
+        "sha256": "aedb6bc67861fa71a29e154f8b060d508f84e281d632b98fddc90607a5034497"
+      },
+      {
+        "path": "organs/artist/chambers/danse.yaml",
+        "sha256": "4d68e423773c7c222399ab5260a9d9b702f4aed539a9958020a996f06f07b6b6"
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "pitch-black-20ft-room",
+      "status": "rejected",
+      "disposition": "No minimum room dimension or blackout claim is authoritative until a venue measures and approves it."
+    },
+    {
+      "id": "central-scrim",
+      "status": "deferred",
+      "disposition": "Scrim remains one candidate surface material; the canonical twin uses unassigned reference planes and requires venue surface receipts."
+    },
+    {
+      "id": "two-projectors",
+      "status": "ported",
+      "disposition": "Two logical outputs exercise the synchronization contract, but make no equipment, lens, brightness, throw, mounting, or routing claim."
+    },
+    {
+      "id": "no-edge-blending",
+      "status": "ported",
+      "disposition": "Hard boundaries and zero overlap are retained as the reference artistic policy; a physical assignment still requires venue approval and measurement."
+    },
+    {
+      "id": "dead-center-low-light-camera",
+      "status": "superseded",
+      "disposition": "The local opt-in interaction adapter, permission-denied path, dropout behavior, accessibility fallback, and no-camera mode supersede a mandatory camera."
+    },
+    {
+      "id": "cdn-mediapipe-landmarks",
+      "status": "superseded",
+      "disposition": "The vendored local model and anonymous bounded feature receipt supersede CDN loading and raw landmark transport."
+    },
+    {
+      "id": "visitor-depth-spread",
+      "status": "ported",
+      "disposition": "Bounded visitor openness and crowd features modulate divergence and spread outside the pure engine; no raw skeletal geometry enters the engine."
+    },
+    {
+      "id": "visitor-audio-panning",
+      "status": "rejected",
+      "disposition": "The deterministic typed room-event bus and venue-gated speaker plan replace direct mutable panning from a visitor coordinate."
+    }
+  ],
+  "result": {
+    "status": "ported",
+    "canonical_contract": "installation/digital-twin.json",
+    "physical_evidence_present": false,
+    "issue_14_complete": false
+  }
+}

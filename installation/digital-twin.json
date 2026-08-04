@@ -1,0 +1,181 @@
+{
+  "schema": "danse.installation.digital-twin.v1",
+  "identity": {
+    "id": "danse-reference-installation-20260804",
+    "status": "reference-simulation",
+    "contract_sha256": "56228ad36b4c31b1b033bc6324b6eafde92772f008216c49a665a2ea10cef457"
+  },
+  "source_contracts": [
+    {
+      "id": "projector-camera",
+      "path": "engine/room.js",
+      "sha256": "87eb1dc954c1cc672e0122355d2050ec3fe2bb2cdedc8089d55971263c0bce75"
+    },
+    {
+      "id": "program",
+      "path": "render/program.json",
+      "sha256": "db8cc1a7e4768e2d472e766737e32c3f2ea0ee19a1b1ff0e7d503595f2bf397e",
+      "embedded_schema": "danse.program.v2"
+    },
+    {
+      "id": "score",
+      "path": "music/score.json",
+      "sha256": "da30bb8c167916d1de9de50629e88feaa0ebc65fb833656787f8e8e678225e48",
+      "embedded_contract_sha256": "0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d"
+    },
+    {
+      "id": "room-layout",
+      "path": "sound/room-layout.json",
+      "sha256": "fb36a409482d8171634f241139c17ee5443e7470034c89515433e5b2ffff0acd",
+      "embedded_contract_sha256": "c3374ef888accf526985488d280ccfbeeeffa57b1403fecb6bac9f1b07e5679d"
+    },
+    {
+      "id": "interaction",
+      "path": "interaction/adapter.js",
+      "sha256": "980b37d516d6d98a642fce6487d68a2f8c9dd5771598b83c28be89adbe8aae0f"
+    },
+    {
+      "id": "projection-probe",
+      "path": "reference/projection-probe.png",
+      "sha256": "92ad9b67264fff31839ee20439774962717d5a267b50e0fe5d16223ee2f02b2e"
+    }
+  ],
+  "coordinate_system": {
+    "units": "normalized-room",
+    "meters_per_unit": 2.0,
+    "origin": "2017-picture-plane-center",
+    "axes": {
+      "x": "left-to-right",
+      "y": "floor-to-ceiling",
+      "z": "far-to-near"
+    },
+    "reference_volume_m": {
+      "width": 4.0,
+      "height": 3.0,
+      "depth": 4.4
+    },
+    "venue_dimensions_status": "requires-venue-measurement"
+  },
+  "projector_camera": {
+    "source_contract": "projector-camera",
+    "eye": [0.0, 0.0, 2.4],
+    "picture_plane_half_extents": [1.0, 0.75],
+    "fovy_radians": 0.6057697367499428,
+    "aspect": 1.3333333333333333,
+    "near": 0.1,
+    "far": 50.0
+  },
+  "surfaces": [
+    {
+      "id": "reference-front-plane",
+      "status": "reference-simulation",
+      "center": [0.0, 0.0, 0.5],
+      "rotation_radians": [0.0, 0.0, 0.0],
+      "half_extents": [1.0, 0.75],
+      "material": "venue-unassigned"
+    },
+    {
+      "id": "reference-rear-plane",
+      "status": "reference-simulation",
+      "center": [0.0, 0.0, -0.5],
+      "rotation_radians": [0.0, 0.0, 0.0],
+      "half_extents": [1.0, 0.75],
+      "material": "venue-unassigned"
+    }
+  ],
+  "projection_outputs": [
+    {
+      "id": "projection-a",
+      "channel": 0,
+      "surface": "reference-front-plane",
+      "viewport": [0.0, 0.0, 1.0, 1.0],
+      "edge_policy": "hard-boundary-no-blend",
+      "overlap_px": 0,
+      "physical_assignment": "requires-venue-approval"
+    },
+    {
+      "id": "projection-b",
+      "channel": 1,
+      "surface": "reference-rear-plane",
+      "viewport": [0.0, 0.0, 1.0, 1.0],
+      "edge_policy": "hard-boundary-no-blend",
+      "overlap_px": 0,
+      "physical_assignment": "requires-venue-approval"
+    }
+  ],
+  "synchronization": {
+    "mode": "shared-river-frame-ticket",
+    "fps": 60,
+    "max_output_skew_ms": 16.667,
+    "measurement_status": "requires-venue-proof"
+  },
+  "audio": {
+    "source_contract": "room-layout",
+    "layout_id": "reference-quad",
+    "speaker_ids": ["front-left", "front-right", "rear-left", "rear-right"],
+    "latency_budget_ms": 25.0,
+    "limiter_ceiling_dbfs": -1.0,
+    "physical_assignment": "requires-venue-approval"
+  },
+  "calibration": {
+    "sequence": [
+      "release-integrity",
+      "room-safety",
+      "surface-geometry",
+      "projector-registration",
+      "output-synchronization",
+      "speaker-routing",
+      "audio-visual-synchronization",
+      "visible-plane-cue",
+      "runtime-recovery"
+    ],
+    "projection_probe_contract": "projection-probe",
+    "thresholds": {
+      "max_registration_error_px": 2.0,
+      "max_output_skew_ms": 16.667,
+      "max_audio_visual_skew_ms": 25.0,
+      "max_speaker_route_errors": 0,
+      "limiter_ceiling_dbfs": -1.0
+    },
+    "measurement_status": "requires-venue-proof"
+  },
+  "hardware_roles": [
+    "audio-interface",
+    "display-host",
+    "power-distribution",
+    "projection-a",
+    "projection-b",
+    "speaker-front-left",
+    "speaker-front-right",
+    "speaker-rear-left",
+    "speaker-rear-right",
+    "surface-front",
+    "surface-rear",
+    "ventilation-path"
+  ],
+  "runtime": {
+    "mode": "foreground-supervisor",
+    "persistent_host_service": false,
+    "single_approved_launcher": true,
+    "forbidden_host_mutations": ["LaunchAgent", "LaunchDaemon", "cron", "systemd-user"],
+    "health": {
+      "probe_interval_seconds": 2.0,
+      "startup_timeout_seconds": 30.0,
+      "probe_timeout_seconds": 1.0,
+      "max_consecutive_failures": 3
+    },
+    "recovery": {
+      "max_restarts": 3,
+      "window_seconds": 300.0,
+      "stable_seconds": 60.0,
+      "backoff_seconds": [1.0, 2.0, 5.0],
+      "wall_plug_return_timeout_seconds": 180.0,
+      "wall_plug_proofs_required": 3
+    }
+  },
+  "release": {
+    "canonical_release_required": true,
+    "developer_checkout_allowed": false,
+    "manifest_name": "release-manifest.json"
+  }
+}

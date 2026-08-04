@@ -1,0 +1,17 @@
+{
+  "schema": "danse.installation.gates.v1",
+  "spec_contract_sha256": "56228ad36b4c31b1b033bc6324b6eafde92772f008216c49a665a2ea10cef457",
+  "status": "blocked",
+  "physical_predicates_satisfied": false,
+  "issue_14_can_close": false,
+  "gates": [
+    {"id": "venue-approval", "status": "blocked", "receipt": null},
+    {"id": "hardware-inventory", "status": "blocked", "receipt": null},
+    {"id": "projector-calibration", "status": "blocked", "receipt": null},
+    {"id": "speaker-calibration", "status": "blocked", "receipt": null},
+    {"id": "visible-plane-cue", "status": "blocked", "receipt": null},
+    {"id": "runtime-approval", "status": "blocked", "receipt": null},
+    {"id": "wall-plug-recovery", "status": "blocked", "receipt": null},
+    {"id": "restore-rehearsal", "status": "blocked", "receipt": null}
+  ]
+}

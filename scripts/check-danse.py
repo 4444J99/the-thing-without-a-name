@@ -81,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 48
+FLOOR = 50
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -144,6 +144,46 @@ def check_room_event_contract() -> None:
         lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
         detail = lines[-1] if lines else f"exit {done.returncode}"
     check("one room-event bus serves every sound renderer", done.returncode == 0, detail)
+
+
+def check_installation_contract() -> None:
+    """Prove the reference twin and the fail-closed physical boundary together."""
+    test = ROOT / "scripts/tests/installation.test.py"
+    checker = ROOT / "scripts/check-installation.py"
+    try:
+        done = subprocess.run(
+            [sys.executable, str(test)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        check("one deterministic twin binds every installation subsystem", False, "installation regressions exceeded 120s")
+        check("physical installation claims require venue-owned evidence", False, "installation regressions unavailable")
+        return
+    detail = "reference geometry, frame tickets, calibration, runtime, recovery, restore, and archive disposition"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("one deterministic twin binds every installation subsystem", done.returncode == 0, detail)
+
+    blocked = subprocess.run(
+        [sys.executable, str(checker), "--phase", "complete"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    fail_closed = blocked.returncode != 0 and "BLOCKED: physical phase complete requires" in blocked.stderr
+    check(
+        "physical installation claims require venue-owned evidence",
+        fail_closed,
+        "8 gates blocked · venue/hardware/calibration/3 wall-plug/restore receipts absent"
+        if fail_closed
+        else "the terminal installation phase did not fail closed",
+    )
 
 
 # ── 1. the score partitions the frame exactly ──────────────────────────────────
@@ -1142,6 +1182,8 @@ def main() -> int:
     check_music_contract()
     print("\n sound and image occupy one deterministic room")
     check_room_event_contract()
+    print("\n the reference room can become an evidence-bound installation")
+    check_installation_contract()
 
     # Counted BEFORE these checks run, so the floor never counts itself and the
     # numbers below stay the number of real invariants.
