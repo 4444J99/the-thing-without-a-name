@@ -34,13 +34,18 @@ python3 scripts/check-rights.py --phase release \
   --receipt <redacted-receipt.json>
 ```
 
-The package checker verifies every manifested byte and byte count, the declared corpus
-tier against the package builder's current source-tree identity, the copied score-source
+Every non-draft receipt records the canonical `America/New_York` validation date and
+rechecks fixed-term permissions against that shipping date, including permissions
+reached through an active artifact rule. The package checker verifies every manifested
+byte and byte count, the declared corpus tier against the package builder's current
+source-tree identity, the copied score-source
 WAV and hydrated grain-bank identity, registered origin still, every copied text file's
 manifest row, rights-bearing unmanifested files, symlink boundaries, and package rights
-rules. The release checker requires the exact rights-register digest; every media and
-public-copy byte staged at its declared `media/assets/` destination; clearance evidence;
-and credit text identical to the approved attribution label. A `satisfied` human gate
+rules. The release checker requires the exact rights-register digest; a complete
+inventory of the active phase's `media/assets/` boundary with no extra, symlinked, or
+off-phase bytes; every media and public-copy byte at its declared destination; stable
+manifest and media identities rechecked after inventory; clearance evidence; and credit
+text identical to the approved attribution label. A `satisfied` human gate
 must cite a tracked `danse.rights.decision.v1` receipt binding that exact gate, authority,
 decision, and phase scope. Package attestations may satisfy only package, uploaded, and
 submitted gates; their registered canonical values are bound into the redacted phase
@@ -49,7 +54,7 @@ the public phase before artifact upload, so an uncleared release cannot publish 
 deployment.
 
 Current state is deliberately `draft`. Anthony must still approve the final cut,
-biography, submission copy, and rights declaration; settle dancer permission and credit; disposition the
-poster wall; select and clear repertoire and press stills; make the archive choice; and
-personally accept filing terms. Do not change a status alone—add the exact public-safe
-evidence receipt and rerun the intended phase.
+biography, submission copy, and rights declaration; settle dancer permission and credit;
+disposition the poster wall; select and clear repertoire and press stills; make the
+archive choice; and personally accept filing terms. Do not change a status alone—add the
+exact public-safe evidence receipt and rerun the intended phase.

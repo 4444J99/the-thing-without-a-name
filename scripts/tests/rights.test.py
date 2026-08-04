@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -158,7 +159,7 @@ def fixture_phase_blockers(
         return RIGHTS.phase_blockers(document, phase, package=package)
 
 
-def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
+def make_release(base: Path, document: dict, *, phase: str = "release") -> tuple[Path, Path, Path]:
     root = base / "repository"
     root.mkdir(parents=True, exist_ok=True)
     evidence_path = root / "evidence.json"
@@ -178,6 +179,17 @@ def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
     )
     media = []
     for rule in document["release_rules"]:
+        if phase not in rule["required_for"]:
+            media.append(
+                {
+                    "id": rule["media_id"],
+                    "required_for": rule["required_for"],
+                    "status": "pending",
+                    "source": None,
+                    "clearance": {"status": "pending"},
+                }
+            )
+            continue
         artifact_path = root / rule["destination"]
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.write_bytes(f"exact fixture bytes for {rule['media_id']}\n".encode())
@@ -279,13 +291,26 @@ class RightsContractTest(unittest.TestCase):
             with self.subTest(expected=expected):
                 candidate = copy.deepcopy(self.document)
                 candidate["assets"][0]["uses"][0][mutation[0]] = mutation[1]
-                errors = RIGHTS.validate_document(candidate)
-                self.assertTrue(any(expected in error for error in errors), errors)
+            errors = RIGHTS.validate_document(candidate)
+            self.assertTrue(any(expected in error for error in errors), errors)
         candidate = copy.deepcopy(self.document)
         candidate["assets"][0]["private_evidence"]["signature"] = "redacted"
         errors = RIGHTS.validate_document(candidate)
         self.assertTrue(any("sensitive field" in error for error in errors), errors)
 
+    def test_noncanonical_relative_path_spellings_are_rejected(self) -> None:
+        for spelling in (
+            "media/assets//press-still.webp",
+            "media/assets/./press-still.webp",
+            "media/assets/press-still.webp/",
+        ):
+            with self.subTest(spelling=spelling):
+                with self.assertRaisesRegex(RIGHTS.RightsError, "safe portable relative path"):
+                    RIGHTS.safe_relative(spelling, "test path")
+                candidate = copy.deepcopy(self.document)
+                candidate["release_rules"][0]["destination"] = spelling
+                errors = RIGHTS.validate_document(candidate)
+                self.assertTrue(any("safe portable relative path" in error for error in errors), errors)
     def test_stale_conflicting_untracked_and_symlink_evidence_are_rejected(self) -> None:
         stale = copy.deepcopy(self.document)
         stale["assets"][0]["provenance"][0]["sha256"] = "0" * 64
@@ -376,6 +401,88 @@ class RightsContractTest(unittest.TestCase):
         use["expires"] = "2026-08-03"
         errors = RIGHTS.validate_document(candidate)
         self.assertTrue(any("expired before the assessment date" in error for error in errors), errors)
+
+    def test_fixed_permissions_are_revalidated_on_the_shipping_date(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        use = candidate["assets"][0]["uses"][0]
+        use["term"] = "fixed"
+        use["expires"] = "2026-08-05"
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
+            on_expiry, _ = RIGHTS.phase_blockers(
+                candidate,
+                "public",
+                release_manifest=release,
+                root=root,
+                register_path=register,
+                as_of=RIGHTS.date(2026, 8, 5),
+            )
+            self.assertEqual(on_expiry, [])
+            expired, inputs = RIGHTS.phase_blockers(
+                candidate,
+                "public",
+                release_manifest=release,
+                root=root,
+                register_path=register,
+                as_of=RIGHTS.date(2026, 8, 6),
+            )
+            self.assertTrue(any("fixed permission expired" in item for item in expired), expired)
+            self.assertEqual(inputs["validation_date"], "2026-08-06")
+            self.assertEqual(inputs["validation_timezone"], "America/New_York")
+
+    def test_active_release_rules_recheck_fixed_requirements_outside_their_broad_phase_scope(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        asset = next(row for row in candidate["assets"] if row["id"] == "final-cut-derived-media")
+        use = next(row for row in asset["uses"] if row["id"] == "delivery")
+        self.assertNotIn("public", use["required_for"])
+        use["term"] = "fixed"
+        use["expires"] = "2026-08-05"
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
+            on_expiry, _ = RIGHTS.validate_release_manifest(
+                candidate,
+                release,
+                "public",
+                root=root,
+                register_path=register,
+                as_of=RIGHTS.date(2026, 8, 5),
+            )
+            self.assertEqual(on_expiry, [])
+            expired, _ = RIGHTS.validate_release_manifest(
+                candidate,
+                release,
+                "public",
+                root=root,
+                register_path=register,
+                as_of=RIGHTS.date(2026, 8, 6),
+            )
+            self.assertTrue(
+                any("accessible-trailer" in item and "fixed permission expired" in item for item in expired),
+                expired,
+            )
+
+    def test_shipping_date_is_independent_of_the_ambient_host_timezone(self) -> None:
+        identities = []
+        for timezone in ("Pacific/Honolulu", "America/New_York", "UTC"):
+            environment = os.environ.copy()
+            environment["TZ"] = timezone
+            result = subprocess.run(
+                [sys.executable, "scripts/check-rights.py", "--phase", "public", "--json"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            receipt = json.loads(result.stdout)
+            identities.append(
+                (receipt["inputs"]["validation_date"], receipt["inputs"]["validation_timezone"])
+            )
+        self.assertEqual(len(set(identities)), 1, identities)
+        self.assertEqual(identities[0][1], "America/New_York")
 
     def test_exact_package_manifest_bytes_sources_text_and_rules_validate(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -575,11 +682,130 @@ class RightsContractTest(unittest.TestCase):
             self.assertIsNone(identity["schema"])
             self.assertNotIn("/Users/", RIGHTS.canonical_json(identity))
 
-    def test_release_manifest_cannot_hide_rights_rows_or_repeat_gate_identities(self) -> None:
+    def test_release_boundary_rejects_every_unmanifested_or_symlinked_artifact(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
         with tempfile.TemporaryDirectory() as temporary:
             release, root, register = make_release(Path(temporary), candidate)
+            (root / "media/assets/unlisted.mp4").write_bytes(b"unlisted")
+            nested = root / "media/assets/nested"
+            nested.mkdir()
+            (nested / "unlisted.bin").write_bytes(b"ordinary unlisted bytes")
+            outside = Path(temporary) / "outside.txt"
+            outside.write_text("outside")
+            (root / "media/assets/unlisted.txt").symlink_to(outside)
+            outside_directory = Path(temporary) / "outside-directory"
+            outside_directory.mkdir()
+            (root / "media/assets/linked-directory").symlink_to(
+                outside_directory,
+                target_is_directory=True,
+            )
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
+            self.assertTrue(any("not listed in the release manifest" in item for item in blockers), blockers)
+            self.assertTrue(any("symlink file" in item for item in blockers), blockers)
+            self.assertTrue(any("symlink directory" in item for item in blockers), blockers)
+
+            boundary = root / "media/assets"
+            real_boundary = root / "media/assets-real"
+            boundary.rename(real_boundary)
+            boundary.symlink_to(real_boundary, target_is_directory=True)
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
+            self.assertTrue(any("boundary must not be a symlink" in item for item in blockers), blockers)
+
+    def test_release_validation_rejects_media_or_manifest_mutation_during_inventory(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        inventory = RIGHTS._release_boundary_inventory
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            media_path = root / candidate["release_rules"][0]["destination"]
+
+            def mutate_media(repository: Path) -> tuple[set[str], list[str]]:
+                media_path.write_bytes(b"changed after initial verification")
+                return inventory(repository)
+
+            with mock.patch.object(RIGHTS, "_release_boundary_inventory", side_effect=mutate_media):
+                blockers, _ = RIGHTS.validate_release_manifest(
+                    candidate, release, "release", root=root, register_path=register
+                )
+            self.assertTrue(any("changed during release validation" in item for item in blockers), blockers)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            original_digest = RIGHTS.sha256(release)
+            replacement = b'{"schema":"attacker.invalid","release_id":"evil"}\n'
+
+            def mutate_manifest(repository: Path) -> tuple[set[str], list[str]]:
+                release.write_bytes(replacement)
+                return inventory(repository)
+
+            with mock.patch.object(RIGHTS, "_release_boundary_inventory", side_effect=mutate_manifest):
+                blockers, identity = RIGHTS.validate_release_manifest(
+                    candidate, release, "release", root=root, register_path=register
+                )
+            self.assertTrue(any("manifest changed during validation" in item for item in blockers), blockers)
+            self.assertEqual(identity["schema"], "danse.release.v1")
+            self.assertEqual(identity["release_id"], "rights-test")
+            self.assertEqual(identity["sha256"], original_digest)
+            self.assertNotEqual(identity["sha256"], digest_bytes(replacement))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            inventory_calls = 0
+
+            def add_after_inventory(repository: Path) -> tuple[set[str], list[str]]:
+                nonlocal inventory_calls
+                inventory_calls += 1
+                if inventory_calls == 2:
+                    (root / "media/assets/late-extra.bin").write_bytes(b"late extra")
+                return inventory(repository)
+
+            with mock.patch.object(
+                RIGHTS,
+                "_release_boundary_inventory",
+                side_effect=add_after_inventory,
+            ):
+                blockers, _ = RIGHTS.validate_release_manifest(
+                    candidate, release, "release", root=root, register_path=register
+                )
+            self.assertTrue(any("boundary changed during validation" in item for item in blockers), blockers)
+
+    def test_public_boundary_excludes_release_only_media_until_release_phase(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
+            manifest = json.loads(release.read_text())
+            master = next(row for row in manifest["media"] if row["id"] == "score-driven-master")
+            master_path = root / "media/assets/score-driven-master.mov"
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "public", root=root, register_path=register
+            )
+            self.assertEqual(blockers, [])
+
+            payload = b"uncleared release-only master"
+            master_path.write_bytes(payload)
+            master["source"] = {
+                "path": "media/assets/score-driven-master.mov",
+                "destination": "media/assets/score-driven-master.mov",
+                "sha256": digest_bytes(payload),
+                "bytes": len(payload),
+            }
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "public", root=root, register_path=register
+            )
+            self.assertTrue(any("not listed in the release manifest" in item for item in blockers), blockers)
+
+    def test_release_manifest_cannot_hide_rights_rows_or_repeat_gate_identities(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())
             manifest["media"][0]["required_for"] = ["release"]
             release.write_text(json.dumps(manifest))
@@ -588,7 +814,7 @@ class RightsContractTest(unittest.TestCase):
             )
             self.assertTrue(any("phase scope disagrees" in blocker for blocker in blockers), blockers)
 
-            release, root, register = make_release(Path(temporary), candidate)
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())
             manifest["status"] = []
             manifest["media"] = [
@@ -601,7 +827,7 @@ class RightsContractTest(unittest.TestCase):
             self.assertTrue(any("status is not valid" in blocker for blocker in blockers), blockers)
             self.assertTrue(any("project-page-copy" in blocker for blocker in blockers), blockers)
 
-            release, root, register = make_release(Path(temporary), candidate)
+            release, root, register = make_release(Path(temporary), candidate, phase="public")
             manifest = json.loads(release.read_text())
             manifest["gates"][0]["required_for"] = ["release"]
             release.write_text(json.dumps(manifest))

@@ -16,12 +16,14 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import jsonschema
 import yaml
@@ -38,6 +40,9 @@ PHASE_SCOPES = {
     "submitted": ("package", "uploaded", "submitted"),
     "release": ("public", "package", "release"),
 }
+PROJECT_TIMEZONE = "America/New_York"
+PROJECT_ZONE = ZoneInfo(PROJECT_TIMEZONE)
+MAX_JSON_BYTES = 8 << 20
 EXPECTED_CATEGORIES = {
     "performer",
     "photograph",
@@ -149,6 +154,67 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def project_today() -> date:
+    """Return the project shipping date independently of the host timezone."""
+    return datetime.now(PROJECT_ZONE).date()
+
+
+def _stable_file_measure(
+    path: Path,
+    label: str,
+    *,
+    capture: bool = False,
+) -> tuple[str, int, bytes | None]:
+    """Hash one regular-file generation and optionally retain those exact bytes."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RightsError(f"{label} cannot be read as one stable regular file") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RightsError(f"{label} is not a regular file")
+        digest = hashlib.sha256()
+        chunks: list[bytes] | None = [] if capture else None
+        total = 0
+        while True:
+            block = os.read(descriptor, 1 << 20)
+            if not block:
+                break
+            total += len(block)
+            if capture and total > MAX_JSON_BYTES:
+                raise RightsError(f"{label} exceeds the bounded JSON size")
+            digest.update(block)
+            if chunks is not None:
+                chunks.append(block)
+        after = os.fstat(descriptor)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if before_identity != after_identity or total != after.st_size:
+            raise RightsError(f"{label} changed while it was being read")
+        payload = b"".join(chunks) if chunks is not None else None
+        return digest.hexdigest(), total, payload
+    except OSError as exc:
+        raise RightsError(f"{label} changed while it was being read") from exc
+    finally:
+        os.close(descriptor)
+
+
 def value_sha256(value: Any) -> str:
     """Hash a canonical public-safe value without depending on source formatting."""
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -173,15 +239,23 @@ def _no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
-def load_json(path: Path, label: str, *, expose_path: bool = True) -> dict[str, Any]:
+def _parse_json_bytes(payload: bytes, label: str) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_object)
-    except (OSError, json.JSONDecodeError) as exc:
-        detail = f" at {path}: {exc}" if expose_path else ": invalid or unreadable JSON"
-        raise RightsError(f"cannot read {label}{detail}") from exc
+        value = json.loads(payload.decode("utf-8"), object_pairs_hook=_no_duplicate_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RightsError(f"cannot read {label}: invalid or unreadable JSON") from exc
     if not isinstance(value, dict):
         raise RightsError(f"{label} must be a JSON object")
     return value
+
+
+def load_json(path: Path, label: str, *, expose_path: bool = True) -> dict[str, Any]:
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        detail = f" at {path}: {exc}" if expose_path else ": invalid or unreadable JSON"
+        raise RightsError(f"cannot read {label}{detail}") from exc
+    return _parse_json_bytes(payload, label)
 
 
 def load_yaml(path: Path, label: str, *, expose_path: bool = True) -> dict[str, Any]:
@@ -232,7 +306,12 @@ def safe_relative(value: object, label: str, *, expose_value: bool = True) -> st
     if not isinstance(value, str) or not value:
         raise RightsError(f"{label} must be a non-empty relative path")
     pure = PurePosixPath(value)
-    if pure.is_absolute() or "\\" in value or any(part in {"", ".", ".."} for part in pure.parts):
+    if (
+        pure.is_absolute()
+        or "\\" in value
+        or value != pure.as_posix()
+        or any(part in {"", ".", ".."} for part in pure.parts)
+    ):
         detail = f": {value!r}" if expose_value else ""
         raise RightsError(f"{label} is not a safe portable relative path{detail}")
     relative = pure.as_posix()
@@ -714,8 +793,16 @@ def validate_document(
         if rule["media_id"] in release_media_ids:
             errors.append(f"release media rule is duplicated: {rule['media_id']}")
         release_media_ids.add(rule["media_id"])
-        destination = rule["destination"]
-        if not destination.startswith("media/assets/"):
+        try:
+            destination = safe_relative(
+                rule["destination"],
+                f"release rule {rule['media_id']} destination",
+                expose_value=False,
+            )
+        except RightsError as exc:
+            errors.append(str(exc))
+            destination = rule["destination"]
+        if isinstance(destination, str) and not destination.startswith("media/assets/"):
             errors.append(f"release rule {rule['media_id']} destination is outside media/assets")
         if destination in release_destinations:
             errors.append(f"release destination is duplicated: {destination}")
@@ -788,6 +875,7 @@ def _requirement_blockers(
     requirements: list[dict[str, str]],
     uses: dict[tuple[str, str], dict[str, Any]],
     label: str,
+    validation_date: date,
 ) -> list[str]:
     blockers: list[str] = []
     for requirement in requirements:
@@ -795,6 +883,15 @@ def _requirement_blockers(
         use = uses[(asset_id, use_id)]
         if use["status"] != "cleared":
             blockers.append(f"{label} requires {asset_id}/{use_id}, which is {use['status']}: {use['note']}")
+        elif (
+            use["term"] == "fixed"
+            and isinstance(use["expires"], str)
+            and date.fromisoformat(use["expires"]) < validation_date
+        ):
+            blockers.append(
+                f"{label} requires {asset_id}/{use_id}, whose fixed permission expired before "
+                "the validation date"
+            )
     return blockers
 
 
@@ -1024,13 +1121,22 @@ def validate_package(
     package: Path,
     *,
     root: Path = ROOT,
+    as_of: date | None = None,
 ) -> tuple[list[str], dict[str, Any] | None]:
     blockers: list[str] = []
+    validation_date = as_of or project_today()
     uses = _asset_use_index(document)
     try:
         package_root = _external_root(package, "package")
         manifest_path = _external_file(package_root, "manifest.json", "package manifest")
-        manifest = load_json(manifest_path, "package manifest", expose_path=False)
+        manifest_digest, _, manifest_payload = _stable_file_measure(
+            manifest_path,
+            "package manifest",
+            capture=True,
+        )
+        if manifest_payload is None:
+            raise RightsError("package manifest bytes could not be retained")
+        manifest = _parse_json_bytes(manifest_payload, "package manifest")
     except RightsError as exc:
         return [str(exc)], None
 
@@ -1062,6 +1168,7 @@ def validate_package(
     item_names: set[str] = set()
     item_records: dict[str, dict[str, Any]] = {}
     item_rule_ids: dict[str, str] = {}
+    verified_items: list[tuple[str, dict[str, Any]]] = []
     submission = load_yaml(regular_file(root, document["bindings"]["submission"]["source"]["path"], "submission binding"), "submission binding")
     expected_audio = sorted(((submission.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
     expected_origin = (((submission.get("package") or {}).get("origin_still") or {}).get("source_sha256"))
@@ -1088,13 +1195,20 @@ def validate_package(
         public_label = name if len(matched) == 1 else f"manifest item {index}"
         try:
             path = _external_file(package_root, name, f"package {public_label}")
+            actual_digest, actual_bytes, _ = _stable_file_measure(path, f"package {public_label}")
             expected_digest = item.get("sha256")
+            item_is_exact = True
             if not isinstance(expected_digest, str) or not HEX64.fullmatch(expected_digest):
                 blockers.append(f"package {public_label} has no valid SHA-256")
-            elif sha256(path) != expected_digest:
+                item_is_exact = False
+            elif actual_digest != expected_digest:
                 blockers.append(f"package {public_label} digest does not match its manifest")
-            if item.get("bytes") != path.stat().st_size:
+                item_is_exact = False
+            if item.get("bytes") != actual_bytes:
                 blockers.append(f"package {public_label} byte count does not match its manifest")
+                item_is_exact = False
+            if item_is_exact:
+                verified_items.append((name, item))
         except RightsError as exc:
             blockers.append(str(exc))
 
@@ -1102,7 +1216,14 @@ def validate_package(
             blockers.append(f"package manifest item {index} matches {len(matched)} rights rules; exactly one is required")
             rule_id = None
         else:
-            blockers.extend(_requirement_blockers(matched[0]["requirements"], uses, f"package item {name}"))
+            blockers.extend(
+                _requirement_blockers(
+                    matched[0]["requirements"],
+                    uses,
+                    f"package item {name}",
+                    validation_date,
+                )
+            )
             rule_id = matched[0]["id"]
             item_rule_ids[name] = rule_id
 
@@ -1185,9 +1306,24 @@ def validate_package(
         except RightsError as exc:
             blockers.append(str(exc))
 
+    for name, item in verified_items:
+        try:
+            path = _external_file(package_root, name, "package manifest item recheck")
+            actual_digest, actual_bytes, _ = _stable_file_measure(path, "package manifest item recheck")
+            if item.get("sha256") != actual_digest or item.get("bytes") != actual_bytes:
+                blockers.append("package manifest item changed during package validation")
+        except RightsError:
+            blockers.append("package manifest item changed during package validation")
+    try:
+        final_manifest_digest, _, _ = _stable_file_measure(manifest_path, "package manifest")
+        if final_manifest_digest != manifest_digest:
+            blockers.append("package manifest changed during validation")
+    except RightsError:
+        blockers.append("package manifest changed during validation")
+
     identity = {
         "schema": package_schema if package_schema == "danse.delivery.manifest.v1" else None,
-        "sha256": sha256(manifest_path),
+        "sha256": manifest_digest,
         "items": len(items),
     }
     return blockers, identity
@@ -1228,15 +1364,61 @@ def _verify_release_source(
     except RightsError as exc:
         return [str(exc)]
     expected = source.get("sha256")
-    if not isinstance(expected, str) or not HEX64.fullmatch(expected) or sha256(path) != expected:
+    try:
+        actual_digest, actual_bytes, _ = _stable_file_measure(path, f"{label} source")
+    except RightsError as exc:
+        return [str(exc)]
+    if not isinstance(expected, str) or not HEX64.fullmatch(expected) or actual_digest != expected:
         return [f"{label} source digest is missing or stale"]
     if require_artifact and (
         type(source.get("bytes")) is not int
         or source["bytes"] < 0
-        or source["bytes"] != path.stat().st_size
+        or source["bytes"] != actual_bytes
     ):
         return [f"{label} source byte count is missing or stale"]
     return []
+
+
+def _release_boundary_inventory(root: Path) -> tuple[set[str], list[str]]:
+    """Inventory every regular file staged beneath the public release boundary."""
+    boundary = root.absolute() / "media" / "assets"
+    if boundary.is_symlink():
+        return set(), ["release media boundary must not be a symlink"]
+    if not boundary.exists():
+        return set(), ["release media boundary is missing"]
+    if not boundary.is_dir():
+        return set(), ["release media boundary is not a directory"]
+
+    paths: set[str] = set()
+    blockers: list[str] = []
+
+    def walk_error(_: OSError) -> None:
+        blockers.append("release media boundary could not be inventoried")
+
+    for directory, dirnames, filenames in os.walk(
+        boundary,
+        topdown=True,
+        followlinks=False,
+        onerror=walk_error,
+    ):
+        parent = Path(directory)
+        descend: list[str] = []
+        for name in sorted(dirnames):
+            candidate = parent / name
+            if candidate.is_symlink():
+                blockers.append("release media boundary contains a symlink directory")
+            else:
+                descend.append(name)
+        dirnames[:] = descend
+        for name in sorted(filenames):
+            candidate = parent / name
+            if candidate.is_symlink():
+                blockers.append("release media boundary contains a symlink file")
+            elif not candidate.is_file():
+                blockers.append("release media boundary contains a non-regular file")
+            else:
+                paths.add(candidate.relative_to(root.absolute()).as_posix())
+    return paths, blockers
 
 
 def validate_release_manifest(
@@ -1246,16 +1428,23 @@ def validate_release_manifest(
     *,
     root: Path = ROOT,
     register_path: Path = REGISTER,
+    as_of: date | None = None,
 ) -> tuple[list[str], dict[str, Any] | None]:
     blockers: list[str] = []
+    validation_date = as_of or project_today()
     try:
         tracked = tracked_paths(root)
     except RightsError as exc:
         return [str(exc)], None
     try:
-        if release_manifest.is_symlink() or not release_manifest.is_file():
-            raise RightsError("release manifest must be an existing regular file")
-        manifest = load_json(release_manifest, "release manifest", expose_path=False)
+        manifest_digest, _, manifest_payload = _stable_file_measure(
+            release_manifest,
+            "release manifest",
+            capture=True,
+        )
+        if manifest_payload is None:
+            raise RightsError("release manifest bytes could not be retained")
+        manifest = _parse_json_bytes(manifest_payload, "release manifest")
     except RightsError as exc:
         return [str(exc)], None
     release_schema = manifest.get("schema")
@@ -1277,6 +1466,8 @@ def validate_release_manifest(
         blockers.append("release manifest has no media inventory")
         media_rows = []
     media_ids: set[str] = set()
+    manifested_destinations: set[str] = set()
+    verified_media: list[tuple[dict[str, Any], str]] = []
     for row in media_rows:
         if (
             not isinstance(row, dict)
@@ -1297,15 +1488,8 @@ def validate_release_manifest(
         declared_phases = row.get("required_for")
         if not same_strings(declared_phases, rule["required_for"]):
             blockers.append(f"release media {media_id} phase scope disagrees with its rights rule")
-            continue
         if phase not in rule["required_for"]:
             continue
-        blockers.extend(_requirement_blockers(rule["requirements"], uses, f"release media {media_id}"))
-        if row.get("status") != "ready":
-            blockers.append(f"release media {media_id} is not ready")
-        clearance = row.get("clearance") if isinstance(row.get("clearance"), dict) else {}
-        if clearance.get("status") != "cleared":
-            blockers.append(f"release media {media_id} clearance is not cleared")
         source = row.get("source")
         if not isinstance(source, dict) or (
             source.get("path") != rule["destination"]
@@ -1313,16 +1497,32 @@ def validate_release_manifest(
         ):
             blockers.append(f"release media {media_id} does not use its canonical destination")
         else:
-            blockers.extend(
-                _verify_release_source(
-                    root,
-                    source,
-                    f"release media {media_id}",
-                    tracked=tracked,
-                    require_tracked=False,
-                    require_artifact=True,
-                )
+            manifested_destinations.add(rule["destination"])
+            media_label = f"release media {media_id}"
+            source_blockers = _verify_release_source(
+                root,
+                source,
+                media_label,
+                tracked=tracked,
+                require_tracked=False,
+                require_artifact=True,
             )
+            blockers.extend(source_blockers)
+            if not source_blockers:
+                verified_media.append((source, media_label))
+        blockers.extend(
+            _requirement_blockers(
+                rule["requirements"],
+                uses,
+                f"release media {media_id}",
+                validation_date,
+            )
+        )
+        if row.get("status") != "ready":
+            blockers.append(f"release media {media_id} is not ready")
+        clearance = row.get("clearance") if isinstance(row.get("clearance"), dict) else {}
+        if clearance.get("status") != "cleared":
+            blockers.append(f"release media {media_id} clearance is not cleared")
         blockers.extend(
             _verify_release_source(
                 root,
@@ -1335,6 +1535,13 @@ def validate_release_manifest(
     missing_media = sorted(set(release_rules) - media_ids)
     if missing_media:
         blockers.append(f"release manifest is missing rights-ruled media: {', '.join(missing_media)}")
+    staged_destinations, boundary_blockers = _release_boundary_inventory(root)
+    blockers.extend(boundary_blockers)
+    unmanifested = staged_destinations - manifested_destinations
+    if unmanifested:
+        blockers.append(
+            f"release media boundary contains {len(unmanifested)} artifact(s) not listed in the release manifest"
+        )
 
     credit_rules = {row["credit_id"]: row for row in document["credit_rules"]}
     credit_rows = manifest.get("credits")
@@ -1426,9 +1633,32 @@ def validate_release_manifest(
             except RightsError as exc:
                 blockers.append(str(exc))
 
+    final_destinations, final_boundary_blockers = _release_boundary_inventory(root)
+    if (
+        not boundary_blockers
+        and (final_boundary_blockers or final_destinations != staged_destinations)
+    ):
+        blockers.append("release media boundary changed during validation")
+    for source, label in verified_media:
+        if _verify_release_source(
+            root,
+            source,
+            label,
+            tracked=tracked,
+            require_tracked=False,
+            require_artifact=True,
+        ):
+            blockers.append(f"{label} changed during release validation")
+    try:
+        final_manifest_digest, _, _ = _stable_file_measure(release_manifest, "release manifest")
+        if final_manifest_digest != manifest_digest:
+            blockers.append("release manifest changed during validation")
+    except RightsError:
+        blockers.append("release manifest changed during validation")
+
     identity = {
         "schema": release_schema if release_schema == "danse.release.v1" else None,
-        "sha256": sha256(release_manifest),
+        "sha256": manifest_digest,
         "release_id": release_id,
     }
     return blockers, identity
@@ -1442,6 +1672,7 @@ def phase_blockers(
     release_manifest: Path | None = None,
     root: Path = ROOT,
     register_path: Path = REGISTER,
+    as_of: date | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     if phase not in PHASES:
         raise RightsError(f"unknown rights phase {phase!r}")
@@ -1449,6 +1680,9 @@ def phase_blockers(
     if phase == "draft":
         return [], inputs
 
+    validation_date = as_of or project_today()
+    inputs["validation_date"] = validation_date.isoformat()
+    inputs["validation_timezone"] = PROJECT_TIMEZONE
     scopes = set(PHASE_SCOPES[phase])
     blockers: list[str] = []
     if document["status"] == "draft":
@@ -1483,6 +1717,16 @@ def phase_blockers(
                 root=root,
             ):
                 continue
+            if (
+                use["status"] == "cleared"
+                and use["term"] == "fixed"
+                and date.fromisoformat(use["expires"]) < validation_date
+            ):
+                blockers.append(
+                    f"asset use {asset['id']}/{use['id']} fixed permission expired before "
+                    f"the {phase} validation date"
+                )
+                continue
             if use["status"] == "cleared":
                 continue
             if use["status"] == "excluded" and asset["disposition"] == "excluded":
@@ -1493,7 +1737,12 @@ def phase_blockers(
         if package is None:
             blockers.append(f"{phase} requires --package with an exact delivery manifest")
         else:
-            package_blockers, identity = validate_package(document, package, root=root)
+            package_blockers, identity = validate_package(
+                document,
+                package,
+                root=root,
+                as_of=validation_date,
+            )
             blockers.extend(package_blockers)
             if identity is not None:
                 inputs["package_manifest"] = identity
@@ -1508,6 +1757,7 @@ def phase_blockers(
                 phase,
                 root=root,
                 register_path=register_path,
+                as_of=validation_date,
             )
             blockers.extend(release_blockers)
             if identity is not None:
