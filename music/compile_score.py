@@ -39,8 +39,30 @@ class Event:
     data: tuple[Any, ...]
 
 
+def _canonical_tree(value: Any) -> list[Any]:
+    """Type-tag a JSON value so Python and JavaScript hash identical bytes."""
+    if value is None:
+        return ["null"]
+    if type(value) is bool:
+        return ["boolean", value]
+    if type(value) in (int, float):
+        number = float(value)
+        if not math.isfinite(number) or (type(value) is int and int(number) != value):
+            raise ValueError(f"number cannot be represented as finite IEEE-754: {value!r}")
+        return ["number", struct.pack(">d", number).hex()]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, list):
+        return ["array", [_canonical_tree(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("canonical JSON object keys must be strings")
+        return ["object", [[key, _canonical_tree(value[key])] for key in sorted(value)]]
+    raise ValueError(f"unsupported canonical JSON value {type(value).__name__}")
+
+
 def canonical_sha256(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    encoded = json.dumps(_canonical_tree(value), separators=(",", ":"), ensure_ascii=False).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -100,6 +122,8 @@ def parse_track(data: bytes, track: int) -> tuple[list[Event], int]:
                 if length != 4:
                     raise ValueError(f"track {track}: meter payload is not four bytes")
                 events.append(Event(tick, track, order, "meter", tuple(payload)))
+            elif kind == 0x21:
+                raise ValueError("MIDI port meta events are unsupported; one output port is required")
             elif kind in {0x03, 0x06}:
                 try:
                     value = payload.decode("utf-8")
@@ -420,20 +444,58 @@ def dynamics_rows(
 def note_and_orchestration_rows(
     events: list[Event],
     names: dict[int, str],
+    duration_tick: int,
     division: int,
     timeline: Timeline,
     midi_sha256: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    programs: dict[tuple[int, int], int] = {}
+    programs: dict[int, int] = {}
+    pedal: dict[int, bool] = {}
     active: dict[tuple[int, int, int], list[tuple[Event, int]]] = {}
+    sustained: dict[int, list[tuple[Event, int]]] = {}
     notes: list[dict[str, Any]] = []
     stems: dict[tuple[int, int, int], str] = {}
+
+    def close_note(start: Event, program: int, end_tick: int) -> None:
+        channel, pitch, _velocity = map(int, start.data)
+        if end_tick <= start.tick:
+            raise ValueError("MIDI note has non-positive duration")
+        stem_key = (start.track, channel, program)
+        base = re.sub(r"[^a-z0-9]+", "-", names.get(start.track, f"track-{start.track}").lower()).strip("-")
+        stem = stems.setdefault(stem_key, f"{base or 'track'}-ch{channel + 1}-p{program}")
+        notes.append(
+            {
+                "index": len(notes),
+                "start_tick": start.tick,
+                "end_tick": end_tick,
+                "start_quarter": rounded(Fraction(start.tick, division)),
+                "end_quarter": rounded(Fraction(end_tick, division)),
+                "start_second": rounded(timeline.seconds(start.tick)),
+                "end_second": rounded(timeline.seconds(end_tick)),
+                "track": start.track,
+                "source_order": start.order,
+                "pitch": pitch,
+                "velocity": int(start.data[2]),
+                "channel": channel,
+                "program": program,
+                "stem": stem,
+            }
+        )
+
     for event in events:
         if event.kind == "program":
-            programs[(event.track, int(event.data[0]))] = int(event.data[1])
+            programs[int(event.data[0])] = int(event.data[1])
+        elif event.kind == "control" and int(event.data[1]) == 64:
+            channel = int(event.data[0])
+            was_down = pedal.get(channel, False)
+            is_down = int(event.data[2]) >= 64
+            pedal[channel] = is_down
+            if was_down and not is_down:
+                for start, program in sustained.pop(channel, []):
+                    close_note(start, program, event.tick)
         elif event.kind == "note_on":
             channel, pitch, velocity = map(int, event.data)
-            program = programs.get((event.track, channel), 0)
+            program = programs.get(channel, 0)
             active.setdefault((event.track, channel, pitch), []).append((event, program))
         elif event.kind == "note_off":
             channel, pitch, _velocity = map(int, event.data)
@@ -441,32 +503,16 @@ def note_and_orchestration_rows(
             if not active.get(key):
                 raise ValueError(f"note-off without note-on at tick {event.tick}, track {event.track}, pitch {pitch}")
             start, program = active[key].pop(0)
-            if event.tick <= start.tick:
-                raise ValueError("MIDI note has non-positive duration")
-            stem_key = (event.track, channel, program)
-            base = re.sub(r"[^a-z0-9]+", "-", names.get(event.track, f"track-{event.track}").lower()).strip("-")
-            stem = stems.setdefault(stem_key, f"{base or 'track'}-ch{channel + 1}-p{program}")
-            notes.append(
-                {
-                    "index": len(notes),
-                    "start_tick": start.tick,
-                    "end_tick": event.tick,
-                    "start_quarter": rounded(Fraction(start.tick, division)),
-                    "end_quarter": rounded(Fraction(event.tick, division)),
-                    "start_second": rounded(timeline.seconds(start.tick)),
-                    "end_second": rounded(timeline.seconds(event.tick)),
-                    "track": start.track,
-                    "source_order": start.order,
-                    "pitch": pitch,
-                    "velocity": int(start.data[2]),
-                    "channel": channel,
-                    "program": program,
-                    "stem": stem,
-                }
-            )
+            if pedal.get(channel, False):
+                sustained.setdefault(channel, []).append((start, program))
+            else:
+                close_note(start, program, event.tick)
     unfinished = [key for key, stack in active.items() if stack]
     if unfinished:
         raise ValueError(f"unterminated MIDI note(s): {unfinished[:3]}")
+    for pending in sustained.values():
+        for start, program in pending:
+            close_note(start, program, duration_tick)
     # At an identical tick the authored note-on order is semantic. Track order
     # follows the Standard MIDI File, then each track's original event order.
     notes.sort(key=lambda row: (row["start_tick"], row["track"], row["source_order"]))
@@ -578,7 +624,14 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
     cues = cue_rows(events, work["score"]["cue_bindings"], duration_tick, division, timeline)
     dynamics_source = work["score"]["dynamics_source"]
     dynamics = dynamics_rows(events, division, timeline, dynamics_source)
-    notes, orchestration = note_and_orchestration_rows(events, names, division, timeline, midi_digest)
+    notes, orchestration = note_and_orchestration_rows(
+        events,
+        names,
+        duration_tick,
+        division,
+        timeline,
+        midi_digest,
+    )
 
     program_ids = [movement["id"] for movement in program.get("movements", [])]
     score_ids = [movement["id"] for movement in movements]

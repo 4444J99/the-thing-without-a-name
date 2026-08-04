@@ -180,6 +180,33 @@ class MusicScoreContractTest(unittest.TestCase):
             any("composition.evidence[0].source.sha256" in error and "actual" in error for error in validate_document(stale_evidence, check_derived=False))
         )
 
+        work = ROOT / ".work"
+        work.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            private = Path(temporary) / "private-source.bin"
+            private.write_bytes(b"private custody must not enter a tracked score")
+            untracked = copy.deepcopy(self.register)
+            untracked["works"][0]["composition"]["source"] = {
+                "path": private.relative_to(ROOT).as_posix(),
+                "sha256": sha256(private),
+            }
+            errors = validate_document(untracked, check_derived=False)
+        self.assertTrue(any("composition.source.path" in error and "tracked by Git" in error for error in errors))
+
+        cleared_without_bytes = copy.deepcopy(self.register)
+        recording = cleared_without_bytes["works"][0]["recording"]
+        recording |= {"status": "project-authored", "owner": "fixture owner", "source": None}
+        self.assertTrue(
+            any("recording.source: is required" in error for error in validate_document(cleared_without_bytes, check_derived=False))
+        )
+
+        licensed_without_id = copy.deepcopy(self.register)
+        arrangement = licensed_without_id["works"][0]["arrangement_midi"]
+        arrangement |= {"status": "licensed", "license": None}
+        self.assertTrue(
+            any("arrangement_midi.license" in error for error in validate_document(licensed_without_id, check_derived=False))
+        )
+
     def test_compiler_boundaries_global_dynamics_and_authored_note_order(self) -> None:
         division = 480
         tempo = Event(0, 0, 0, "tempo", (500_000,))
@@ -212,19 +239,50 @@ class MusicScoreContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no CC11 expression"):
             dynamics_rows(expression, division, timeline, {"track": 3, "channel": 0})
 
-        notes, _stems = note_and_orchestration_rows(
+        notes, stems = note_and_orchestration_rows(
             [
+                Event(0, 0, 0, "program", (0, 41)),
+                Event(0, 0, 1, "control", (0, 64, 127)),
                 Event(0, 1, 0, "note_on", (0, 72, 100)),
                 Event(0, 1, 1, "note_on", (0, 60, 100)),
                 Event(480, 1, 2, "note_off", (0, 72, 0)),
                 Event(480, 1, 3, "note_off", (0, 60, 0)),
+                Event(960, 0, 2, "control", (0, 64, 0)),
             ],
             {1: "authored-order"},
+            1200,
             division,
             timeline,
             "a" * 64,
         )
-        self.assertEqual([(note["pitch"], note["source_order"]) for note in notes], [(72, 0), (60, 1)])
+        self.assertEqual(
+            [(note["pitch"], note["source_order"], note["program"], note["end_tick"]) for note in notes],
+            [(72, 0, 41, 960), (60, 1, 41, 960)],
+        )
+        self.assertEqual(stems[0]["program"], 41)
+
+    def test_score_contract_digest_rejects_content_with_a_stale_identity(self) -> None:
+        tampered = copy.deepcopy(self.score)
+        tampered["notes"][0]["pitch"] += 1
+        with self.assertRaisesRegex(ValueError, "contract_sha256 does not match"):
+            validate_score(tampered)
+
+        script = """
+          import fs from 'node:fs';
+          import { contractSha256, validate } from './engine/score.js';
+          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const declared = score.identity.contract_sha256;
+          const actual = contractSha256(score);
+          score.notes[0].pitch += 1;
+          let rejected = null;
+          try { validate(score); } catch (error) { rejected = error.message; }
+          console.log(JSON.stringify({declared, actual, rejected}));
+        """
+        result = run("node", "--input-type=module", "--eval", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["declared"], payload["actual"])
+        self.assertIn("contract_sha256 does not match", payload["rejected"])
 
     def test_js_and_python_queries_are_value_identical(self) -> None:
         window = {"t0": 17.25, "seconds": 312.54}

@@ -9,9 +9,9 @@
   },
   "identity": {
     "work_id": "generated-contract-study",
-    "repertoire_entry_sha256": "d68a7176d56c2c183f3a2ab59fa65654e6ea7ac97202e5853dd68ecf94b0b024",
+    "repertoire_entry_sha256": "59aba0b3ab19015e48a6aeac587478fd257b43fecb52b8810a2a1ac60598d69f",
     "midi_sha256": "c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d",
-    "contract_sha256": "08c331eec73555fc70cc1dd99af2feae0712c21931b058e0d21fcf6108ffb499"
+    "contract_sha256": "0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d"
   },
   "time": {
     "basis": "absolute-seconds",

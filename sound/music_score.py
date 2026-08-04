@@ -8,13 +8,45 @@ the event plan.
 from __future__ import annotations
 
 import bisect
+import hashlib
 import json
 import math
+import struct
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SCORE = ROOT / "music" / "score.json"
+
+
+def _canonical_tree(value: Any) -> list[Any]:
+    if value is None:
+        return ["null"]
+    if type(value) is bool:
+        return ["boolean", value]
+    if type(value) in (int, float):
+        number = float(value)
+        if not math.isfinite(number) or (type(value) is int and int(number) != value):
+            raise ValueError(f"music score: number is not finite IEEE-754: {value!r}")
+        return ["number", struct.pack(">d", number).hex()]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, list):
+        return ["array", [_canonical_tree(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("music score: canonical object keys must be strings")
+        return ["object", [[key, _canonical_tree(value[key])] for key in sorted(value)]]
+    raise ValueError(f"music score: unsupported canonical value {type(value).__name__}")
+
+
+def contract_sha256(score: dict[str, Any]) -> str:
+    identity = score.get("identity")
+    if not isinstance(identity, dict):
+        raise ValueError("music score: identity must be a mapping")
+    source = {**score, "identity": {key: value for key, value in identity.items() if key != "contract_sha256"}}
+    encoded = json.dumps(_canonical_tree(source), separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def load_score(path: Path = DEFAULT_SCORE) -> dict[str, Any]:
@@ -95,6 +127,10 @@ def validate(score: Any) -> dict[str, Any]:
         ):
             raise ValueError(f"music score: movement {movement.get('id')} breaks the score partition")
         cursor = float(end_second)
+    identity = score.get("identity")
+    declared = identity.get("contract_sha256") if isinstance(identity, dict) else None
+    if not isinstance(declared, str) or declared != contract_sha256(score):
+        raise ValueError("music score: identity.contract_sha256 does not match the score content")
     return score
 
 

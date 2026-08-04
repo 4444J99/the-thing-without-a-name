@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +192,30 @@ def validate_document(
 ) -> list[str]:
     errors = validate_schema_instance(register)
 
+    try:
+        listed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        listed = None
+        errors.append(f"repository sources: cannot query Git index: {exc}")
+    if listed is not None and listed.returncode != 0:
+        errors.append(
+            "repository sources: cannot query Git index: "
+            + listed.stderr.decode("utf-8", errors="replace").strip()
+        )
+        tracked: set[str] | None = None
+    elif listed is None:
+        tracked = None
+    else:
+        tracked = {
+            item.decode("utf-8", errors="surrogateescape")
+            for item in listed.stdout.split(b"\0")
+            if item
+        }
+
     def error(location: str, message: str) -> None:
         errors.append(f"{location}: {message}")
 
@@ -228,6 +253,10 @@ def validate_document(
         if not isinstance(digest, str) or not SHA256.fullmatch(digest):
             error(f"{location}.sha256", "must be a lowercase SHA-256 digest")
             return None
+        normalized = Path(relative).as_posix()
+        if tracked is None or normalized not in tracked:
+            error(f"{location}.path", "must be tracked by Git and available in a clean checkout")
+            return relative, digest
         candidate = root / relative
         try:
             resolved = candidate.resolve(strict=True)
@@ -289,6 +318,10 @@ def validate_document(
             allowed = RIGHTS_STATUSES | ({"none"} if layer_name == "samples" else set())
             if status not in allowed:
                 error(f"{location}.{layer_name}.status", f"unknown rights status {status!r}")
+            if layer_name != "samples" and status == "licensed":
+                license_id = layer.get("license")
+                if not isinstance(license_id, str) or not license_id.strip():
+                    error(f"{location}.{layer_name}.license", "must identify the license for licensed material")
             evidence(layer, f"{location}.{layer_name}")
 
         composition = layer_rows["composition"]
@@ -307,9 +340,15 @@ def validate_document(
             f"{location}.performance.source",
             required=performance.get("status") not in {"absent", "unverified"},
         )
-        for layer_name in ("composition", "edition", "recording"):
+        for layer_name in ("composition", "edition"):
             layer = layer_rows[layer_name]
             source(layer.get("source"), f"{location}.{layer_name}.source", required=False)
+        recording = layer_rows["recording"]
+        source(
+            recording.get("source"),
+            f"{location}.recording.source",
+            required=recording.get("status") in {"project-authored", "licensed"},
+        )
 
         samples = layer_rows["samples"]
         items = samples.get("items")
@@ -318,6 +357,8 @@ def validate_document(
         else:
             if samples.get("status") == "none" and items:
                 error(f"{location}.samples.items", "must be empty when sample status is none")
+            if samples.get("status") != "none" and not items:
+                error(f"{location}.samples.items", "must identify source bytes when sample status is not none")
             for item_index, item_value in enumerate(items):
                 item = mapping(item_value, f"{location}.samples.items[{item_index}]")
                 source(item.get("source"), f"{location}.samples.items[{item_index}].source", required=True)

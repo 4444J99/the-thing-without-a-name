@@ -7,8 +7,10 @@ cleared recording, or an accepted score/image relationship.
 `repertoire.yaml` separates six rights/provenance layers that cannot clear one
 another: composition, edition, arrangement/MIDI, performance, recording, and
 sample. `validate_repertoire.py` verifies every tracked source digest and rejects
-the false equivalence “public-domain composition therefore free recording.” Its
-interchange shape is `repertoire.schema.json`.
+ignored or untracked paths before reading them. Cleared recordings require exact
+tracked source bytes, and every licensed layer must name its license. The
+validator also rejects the false equivalence “public-domain composition therefore
+free recording.” Its enforced interchange shape is `repertoire.schema.json`.
 
 `fixtures/generated-study.mid` is 891 bytes of generated test data. It is exactly
 reproducible from `generate_fixture_midi.py`; it mirrors the nominal 390-second
@@ -28,7 +30,9 @@ contract contains:
 CC11 expression is channel-local, so each register entry must name one explicit
 `score.dynamics_source` track/channel for the global score clock. Expression on
 other stems is never silently folded into that value. Notes beginning at the same
-tick retain their authored Standard MIDI File track/event order.
+tick retain their authored Standard MIDI File track/event order. Program changes
+and sustain-pedal state follow their MIDI output channel across tracks; files that
+declare unsupported multiple output ports fail closed.
 
 The program still owns each passage's varying absolute duration. At query time,
 the nominal score is restarted and affinely mapped over that passage. Both image
@@ -39,6 +43,9 @@ The interval API is deliberately a half-open stream of authored note-ons and cue
 starts. A note already sounding at an arbitrary seek boundary is not emitted as
 a second note-on. Sustained-voice restoration would require its own declared
 voice-allocation and buffer-offset contract; this fixture does not invent one.
+The embedded contract digest covers a type-tagged canonical form of every score
+field except the digest itself, and both JavaScript and Python reject stale or
+edited content before exposing its identity.
 
 ## Reproduce and verify
 
