@@ -31,6 +31,8 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 CHUNK = 8 << 20
 PROGRESS_INTERVAL = 4 << 30
+GIT = shutil.which("git")
+DISKUTIL = shutil.which("diskutil")
 
 
 class CustodyError(RuntimeError):
@@ -59,7 +61,9 @@ def _run(
 
 
 def _git(source: Path, *args: str, text: bool = True):
-    return _run(["git", "-C", str(source), *args], text=text)
+    if GIT is None:
+        raise CustodyError("required command is unavailable: git")
+    return _run([GIT, "-C", str(source), *args], text=text)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -203,8 +207,10 @@ def _safe_remote_ref(value: str) -> str:
         or value.endswith(("/", ".", ".lock"))
     ):
         raise CustodyError("remote reference must be a safe origin branch")
+    if GIT is None:
+        raise CustodyError("required command is unavailable: git")
     result = subprocess.run(
-        ["git", "check-ref-format", f"refs/remotes/{value}"],
+        [GIT, "check-ref-format", f"refs/remotes/{value}"],
         capture_output=True,
         check=False,
     )
@@ -320,7 +326,7 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
             raise CustodyError("source head is not equal to the admitted remote reference")
     elif remote_mode == "ancestor":
         result = subprocess.run(
-            ["git", "-C", str(resolved), "merge-base", "--is-ancestor", head, remote_ref],
+            [GIT, "-C", str(resolved), "merge-base", "--is-ancestor", head, remote_ref],
             capture_output=True,
             check=False,
         )
@@ -333,7 +339,7 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
     if not fetch_url or fetch_url != push_url:
         raise CustodyError("origin fetch/push parity is not proven")
     branch_result = subprocess.run(
-        ["git", "-C", str(resolved), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        [GIT, "-C", str(resolved), "symbolic-ref", "--quiet", "--short", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
@@ -485,9 +491,9 @@ def create_snapshot(
 
 def _physical_device_token(path: Path) -> str:
     device_identity: str | None = None
-    if sys.platform == "darwin" and shutil.which("diskutil"):
+    if sys.platform == "darwin" and DISKUTIL is not None:
         result = subprocess.run(
-            ["diskutil", "info", "-plist", str(path)],
+            [DISKUTIL, "info", "-plist", str(path)],
             capture_output=True,
             check=False,
         )
