@@ -354,6 +354,18 @@ class RightsContractTest(unittest.TestCase):
             _, blockers = RIGHTS.load_attestation(package)
             self.assertTrue(any("invalid or unreadable YAML" in blocker for blocker in blockers), blockers)
 
+        candidate = {
+            "final-cut-only": 1,
+            "archive-library-choice": True,
+            "link-downloadable": False,
+            "unknown-private-field": {"nested": "value"},
+        }
+        blockers = RIGHTS.validate_attestation(self.document, candidate)
+        self.assertTrue(any("final-cut-only must be boolean" in blocker for blocker in blockers), blockers)
+        self.assertTrue(any("archive-library-choice must be one registered choice" in blocker for blocker in blockers), blockers)
+        self.assertTrue(any("1 unknown key" in blocker for blocker in blockers), blockers)
+        self.assertFalse(any("nested" in blocker or "value" in blocker for blocker in blockers), blockers)
+
     def test_release_manifest_binds_exact_rights_register_media_and_credits(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)

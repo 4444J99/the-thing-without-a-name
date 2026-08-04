@@ -738,6 +738,59 @@ def load_attestation(package: Path | None) -> tuple[dict[str, Any], list[str]]:
     return value, blockers
 
 
+def validate_attestation(
+    document: dict[str, Any],
+    attestation: dict[str, Any],
+    *,
+    root: Path = ROOT,
+) -> list[str]:
+    """Reject unknown or ill-typed package assertions without echoing their values."""
+    blockers: list[str] = []
+    contracts = {
+        gate["attestation"]["key"]: gate["attestation"]
+        for gate in document["human_gates"]
+        if gate["attestation"] is not None
+    }
+    try:
+        submission_path = regular_file(
+            root,
+            document["bindings"]["submission"]["source"]["path"],
+            "submission binding",
+        )
+        submission = load_yaml(submission_path, "submission binding")
+    except RightsError as exc:
+        return [str(exc)]
+    for section in ("requirements", "approvals"):
+        for row in submission.get(section, []):
+            if not isinstance(row, dict) or row.get("check") != "manual" or not isinstance(row.get("id"), str):
+                continue
+            choices = row.get("choices")
+            contract = {
+                "kind": "choice" if isinstance(choices, list) and choices else "boolean",
+                "values": choices if isinstance(choices, list) and choices else [True],
+            }
+            existing = contracts.get(row["id"])
+            if existing is not None and (
+                existing["kind"] != contract["kind"] or existing["values"] != contract["values"]
+            ):
+                blockers.append(f"attestation contract disagrees for registered gate {row['id']}")
+            contracts.setdefault(row["id"], contract)
+
+    unknown = [key for key in attestation if not isinstance(key, str) or key not in contracts]
+    if unknown:
+        blockers.append(f"package attestation contains {len(unknown)} unknown key(s)")
+    for key, record in contracts.items():
+        if key not in attestation or attestation[key] is None:
+            continue
+        value = attestation[key]
+        if record["kind"] == "boolean":
+            if type(value) is not bool:
+                blockers.append(f"package attestation {key} must be boolean or null")
+        elif not isinstance(value, str) or value not in record["values"]:
+            blockers.append(f"package attestation {key} must be one registered choice or null")
+    return blockers
+
+
 def gate_satisfied(gate: dict[str, Any], attestation: dict[str, Any], *, allow_attestation: bool) -> bool:
     if gate["state"] == "satisfied":
         return True
@@ -1085,6 +1138,8 @@ def phase_blockers(
     attestation, attestation_blockers = load_attestation(package)
     if scopes & {"package", "uploaded", "submitted"}:
         blockers.extend(attestation_blockers)
+        if not attestation_blockers:
+            blockers.extend(validate_attestation(document, attestation, root=root))
     allow_attestation = phase in {"package", "uploaded", "submitted"}
     for gate in document["human_gates"]:
         if scopes.intersection(gate["required_for"]) and not gate_satisfied(
