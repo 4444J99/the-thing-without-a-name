@@ -216,7 +216,7 @@ def check_deadline(reg: dict, phase: str, rep: Report, now: datetime | None = No
     d = reg["deadline"]
     try:
         zone = ZoneInfo(reg["opportunity_snapshot"]["timezone"])
-    except (KeyError, TypeError, ZoneInfoNotFoundError):
+    except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError):
         rep.add("deadline", "timezone", FAIL, "canonical named timezone is missing or unavailable")
         return
     wall = datetime.fromisoformat(d["hard_wall"])

@@ -82,18 +82,19 @@ STILL_FRACTIONS = (0.08, 0.22, 0.38, 0.54, 0.70, 0.88)
 
 SELECTORS = ("master", "derived", "reel", "stills", "origin", "text")
 FORCE_ITEMS = (*SELECTORS, *DERIVED)
+REEL_ITEM = "reel.mp4"
 AUDIO_ITEMS = {
     "master.mov",
     "midnight-moment.mov",
     "trailer.mp4",
     "screener.mp4",
-    "reel.mp4",
+    REEL_ITEM,
 }
 SCORE_SOURCE_ITEM = "provenance/passage-score.wav"
 PRODUCTION_RECEIPT = "provenance/production.json"
 PRODUCER_RECEIPTS = "provenance/producer-receipts"
 PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
-FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", "reel.mp4"}
+FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", REEL_ITEM}
 
 
 def sh(cmd: list, **kw) -> subprocess.CompletedProcess:
@@ -448,6 +449,17 @@ def write_production_receipt(
     targets = _production_targets(manifest)
     if not targets:
         return None
+    passage = _passage_identity(manifest)
+    source_tree = manifest.get("source_tree_sha256")
+    if not isinstance(source_tree, str) or not re.fullmatch(r"[0-9a-f]{64}", source_tree):
+        raise SystemExit("rendered package has no complete source-tree identity")
+    path = package / PRODUCTION_RECEIPT
+    if path.parent.is_symlink() or (
+        path.parent.exists() and not path.parent.is_dir()
+    ):
+        raise SystemExit("package production receipt parent is not a regular directory")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise SystemExit("package production receipt destination is not a regular file")
     prior = _prior_production_matches(package, manifest, previous)
     if prior is not None:
         return prior
@@ -518,13 +530,13 @@ def write_production_receipt(
     if SCORE_SOURCE_ITEM in targets or any(name in AUDIO_ITEMS for name in targets):
         score_id = add_receipt(score_receipt_path(render_root / "passage-score.wav"), "score")
     picture_id = None
-    if any(name in AUDIO_ITEMS - {"reel.mp4"} for name in targets):
+    if any(name in AUDIO_ITEMS - {REEL_ITEM} for name in targets):
         picture_id = add_receipt(
             render_root / "passage-default.mov.receipt.json",
             "render-concat",
         )
     reel_id = None
-    if "reel.mp4" in targets:
+    if REEL_ITEM in targets:
         reel_id = add_receipt(
             render_root / "reel-provenance/reel-default.mp4.receipt.json",
             "render-concat",
@@ -534,7 +546,7 @@ def write_production_receipt(
     for name, item in sorted(targets.items()):
         if name == SCORE_SOURCE_ITEM:
             producer_ids = [score_id]
-        elif name == "reel.mp4":
+        elif name == REEL_ITEM:
             producer_ids = [reel_id, score_id]
         elif name in AUDIO_ITEMS:
             producer_ids = [picture_id, score_id]
@@ -557,12 +569,11 @@ def write_production_receipt(
 
     production = {
         "schema": "danse.delivery.production.v1",
-        "source_tree_sha256": manifest["source_tree_sha256"],
-        "passage": _passage_identity(manifest),
+        "source_tree_sha256": source_tree,
+        "passage": passage,
         "producers": [producers[key] for key in sorted(producers)],
         "outputs": outputs,
     }
-    path = package / PRODUCTION_RECEIPT
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(production, indent=2) + "\n")
     return {"path": PRODUCTION_RECEIPT, "sha256": digest(path)}
@@ -667,7 +678,7 @@ def pending(program: dict, only: set[str], force: set[str], package: Path) -> di
         "master": "master" in only and (is_forced(force, "master") or not (package / "master.mov").is_file()),
         "derived": derived,
         "reel": "reel" in only
-        and (score_forced or is_forced(force, "reel") or not (package / "reel.mp4").is_file()),
+        and (score_forced or is_forced(force, "reel") or not (package / REEL_ITEM).is_file()),
         "stills": "stills" in only and (is_forced(force, "stills") or not all(path.is_file() for path in stills)),
     }
 
@@ -1038,7 +1049,7 @@ def deliver_derived(
 
 def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: float = 0.0) -> Path:
     """The one capture preset that must be rendered — vertical aspect is a different field of view."""
-    dest = PACKAGE / "reel.mp4"
+    dest = PACKAGE / REEL_ITEM
     if dest.is_file() and not force:
         return dest
     span = query_capture_span("reel", start=start)
@@ -1049,7 +1060,7 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
     rel_t0 = max(0.0, span["t0"] - passage_span["t0"])
     seconds = span["duration"]
 
-    print("  reel.mp4 · rendering (vertical is a different field of view, not a crop)")
+    print(f"  {REEL_ITEM} · rendering (vertical is a different field of view, not a crop)")
     with tempfile.TemporaryDirectory(prefix=".reel-", dir=OUT) as render_tmp:
         render_out = Path(render_tmp)
         stem = render_out / "reel-default"
@@ -1109,7 +1120,7 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             have = int(round(got["seconds"] * got.get("fps", fps))) if got else -1
             if not got or abs(have - want_frames) > 1:
                 raise SystemExit(
-                    f"reel.mp4 is {have} frames, the capture declares {want_frames} — the render is wrong"
+                    f"{REEL_ITEM} is {have} frames, the capture declares {want_frames} — the render is wrong"
                 )
             staged.replace(dest)
             print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
@@ -1441,7 +1452,7 @@ def main() -> int:
     rebuilt_audio = {
         *({"master.mov"} if work["master"] else set()),
         *(f"{name}{DERIVED[name]['suffix']}" for name in work["derived"]),
-        *({"reel.mp4"} if work["reel"] else set()),
+        *({REEL_ITEM} if work["reel"] else set()),
     }
     manifest = {
         "schema": "danse.delivery.manifest.v1",

@@ -513,7 +513,7 @@ def validate_binding(
         raise RegistryError("ScreenDance snapshot binding has no named timezone")
     try:
         zone = ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError as exc:
+    except (ValueError, ZoneInfoNotFoundError) as exc:
         raise RegistryError("ScreenDance snapshot binding timezone is unavailable") from exc
     expected_binding = {
         "snapshot_id": snapshot["snapshot_id"],

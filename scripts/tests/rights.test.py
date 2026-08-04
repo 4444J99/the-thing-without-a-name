@@ -531,8 +531,8 @@ class RightsContractTest(unittest.TestCase):
             with self.subTest(expected=expected):
                 candidate = copy.deepcopy(self.document)
                 candidate["assets"][0]["uses"][0][mutation[0]] = mutation[1]
-            errors = RIGHTS.validate_document(candidate)
-            self.assertTrue(any(expected in error for error in errors), errors)
+                errors = RIGHTS.validate_document(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
         candidate = copy.deepcopy(self.document)
         candidate["assets"][0]["private_evidence"]["signature"] = "redacted"
         errors = RIGHTS.validate_document(candidate)

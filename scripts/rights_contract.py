@@ -1625,6 +1625,17 @@ def _package_production_blockers(
     except RightsError as exc:
         blockers.append(str(exc))
         renderer_source_tree = None
+    try:
+        delivery_contract = _delivery_contract()
+        reel_item = delivery_contract.REEL_ITEM
+        if (
+            not isinstance(reel_item, str)
+            or reel_item not in delivery_contract.AUDIO_ITEMS
+        ):
+            raise RightsError("canonical delivery contract has no reel destination")
+    except (AttributeError, OSError, RightsError):
+        blockers.append("canonical delivery contract has no reel destination")
+        reel_item = None
     passage_keys = {
         "seed",
         "passage_seed",
@@ -1953,7 +1964,7 @@ def _package_production_blockers(
                 score_id = producer_ids[kinds.index("score")]
                 validate_render_invocation(
                     render_id,
-                    "reel" if name == "reel.mp4" else "passage",
+                    "reel" if name == reel_item else "passage",
                 )
                 if producers[score_id].get("output_sha256") != score_output_sha:
                     blockers.append(f"package moving image {name} names a different score producer")
@@ -2431,9 +2442,9 @@ def _release_manifest_shape_errors(
         if full
         else {"id", "name", "status", "evidence"}
     )
-    credits = manifest.get("credits")
-    if isinstance(credits, list):
-        for index, row in enumerate(credits):
+    credit_rows = manifest.get("credits")
+    if isinstance(credit_rows, list):
+        for index, row in enumerate(credit_rows):
             label = f"release credit[{index}]"
             if not isinstance(row, dict) or set(row) != credit_keys:
                 blockers.append(f"{label} has fields outside the closed credit schema")

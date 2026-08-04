@@ -1841,6 +1841,117 @@ class DeliveryContractTest(unittest.TestCase):
             prior = json.loads((package / "manifest.json").read_text())
             self.assertEqual(prior["items"][0]["sha256"], prior_digest)
 
+    def test_production_receipt_rejects_incomplete_identity_and_unsafe_destination(self) -> None:
+        target = {
+            "name": DELIVER.SCORE_SOURCE_ITEM,
+            "bytes": 5,
+            "sha256": "1" * 64,
+        }
+        complete = {
+            "seed": "0xAF6B7BE5",
+            "passage_seed": "0xAF6B7BE5",
+            "passage": 0,
+            "start": 0.0,
+            "t0": 0.0,
+            "t1": 312.54,
+            "duration": 312.54,
+            "corpus_tier": "film",
+            "source_tree_sha256": "0" * 64,
+            "items": [target],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(SystemExit, "complete passage identity"):
+                DELIVER.write_production_receipt(
+                    root / "missing-passage",
+                    root / "render",
+                    {"items": [target]},
+                    {},
+                )
+            without_source = {**complete}
+            without_source.pop("source_tree_sha256")
+            with self.assertRaisesRegex(SystemExit, "complete source-tree identity"):
+                DELIVER.write_production_receipt(
+                    root / "missing-source",
+                    root / "render",
+                    without_source,
+                    {},
+                )
+
+            package = root / "package"
+            provenance = package / "provenance"
+            provenance.mkdir(parents=True)
+            outside = root / "outside.json"
+            outside.write_bytes(b"must remain unchanged")
+            production = package / DELIVER.PRODUCTION_RECEIPT
+            production.symlink_to(outside)
+            with self.assertRaisesRegex(SystemExit, "destination is not a regular file"):
+                DELIVER.write_production_receipt(
+                    package,
+                    root / "render",
+                    complete,
+                    {},
+                )
+            self.assertEqual(outside.read_bytes(), b"must remain unchanged")
+            self.assertFalse((package / DELIVER.PRODUCER_RECEIPTS).exists())
+
+    def test_production_receipt_uses_the_decimal_renderer_still_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            render_root = root / "render"
+            package.mkdir()
+            render_root.mkdir()
+            seed = int("0x12AB", 0)
+            receipt_path = render_root / f"passage-{seed}-seg-001.mov.receipt.json"
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.render.segment.v1",
+                        "segment": 1,
+                        "frames": 1,
+                        "inputs": {
+                            "source_tree_sha256": "renderer-source",
+                            "tier": "film",
+                        },
+                        "file_sha256": "2" * 64,
+                    }
+                )
+            )
+            manifest = {
+                "seed": "0xAF6B7BE5",
+                "passage_seed": "0xAF6B7BE5",
+                "passage": 0,
+                "start": 0.0,
+                "t0": 0.0,
+                "t1": 312.54,
+                "duration": 312.54,
+                "corpus_tier": "film",
+                "source_tree_sha256": "0" * 64,
+                "items": [
+                    {
+                        "name": "stills/seed-0x12AB.jpg",
+                        "bytes": 5,
+                        "sha256": "3" * 64,
+                    }
+                ],
+            }
+            with mock.patch.object(
+                DELIVER,
+                "renderer_source_sha256",
+                return_value="renderer-source",
+            ):
+                reference = DELIVER.write_production_receipt(
+                    package,
+                    render_root,
+                    manifest,
+                    {},
+                )
+            self.assertIsNotNone(reference)
+            production = json.loads((package / DELIVER.PRODUCTION_RECEIPT).read_text())
+            self.assertEqual(production["outputs"][0]["name"], "stills/seed-0x12AB.jpg")
+            self.assertEqual(production["producers"][0]["kind"], "render-segment")
+
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             score = Path(tmp) / "passage-score.wav"
@@ -2548,6 +2659,14 @@ class DeliveryContractTest(unittest.TestCase):
         package = CHECK.Report()
         CHECK.check_deadline(reg, "package", package, now=now)
         self.assertEqual(package.rows[0][2], CHECK.FAIL)
+
+    def test_deadline_with_malformed_timezone_fails_closed(self) -> None:
+        reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+        reg["opportunity_snapshot"]["timezone"] = "/UTC"
+        report = CHECK.Report()
+        CHECK.check_deadline(reg, "package", report)
+        timezone = next(row for row in report.rows if row[1] == "timezone")
+        self.assertEqual(timezone[2], CHECK.FAIL)
 
     def test_probe_ignores_attached_picture_streams(self) -> None:
         payload = {
