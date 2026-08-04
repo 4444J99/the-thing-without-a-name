@@ -1,0 +1,263 @@
+{
+  "schema": "danse.convergence.v1",
+  "recorded_at": "2026-08-04T01:27:26Z",
+  "status_vocabulary": [
+    "merged",
+    "active",
+    "archived",
+    "ported",
+    "superseded",
+    "blocked",
+    "not recorded"
+  ],
+  "scope": {
+    "canonical_repository": "organvm/the-thing-without-a-name",
+    "source_main": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+    "boundary": "Every ref, worktree, stash, pull request, issue, remote, and agent outcome visible in the canonical repository at recorded_at, plus the one explicitly related Limen archive branch. Other Limen repository state is not Danse state and is not claimed here."
+  },
+  "remotes": [
+    {
+      "id": "canonical-origin",
+      "status": "active",
+      "fetch": "https://github.com/organvm/the-thing-without-a-name.git",
+      "push": "https://github.com/organvm/the-thing-without-a-name.git"
+    },
+    {
+      "id": "predecessor-archive-origin",
+      "status": "archived",
+      "fetch": "https://github.com/organvm/limen.git",
+      "push": "https://github.com/organvm/limen.git"
+    }
+  ],
+  "branches": [
+    {
+      "id": "main",
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "merged",
+      "receipt": "origin/main contains this head; the default checkout was ten commits behind the observed remote and must not be reclaimed while it carries custody."
+    },
+    {
+      "id": "agent/alpha-omega-control-surface",
+      "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+      "status": "merged",
+      "receipt": "PR #19; merge 519573e427bdf376e9ad03cdd2c7ab8871211398"
+    },
+    {
+      "id": "agent/screendance-published-terms",
+      "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+      "status": "merged",
+      "receipt": "PR #23; merge abf0ba5f517f3b96a32b0afa78f5f0b58d354116"
+    },
+    {
+      "id": "docs/convergence-custody-receipt-20260803",
+      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "status": "active",
+      "receipt": "This snapshot branch; a pushed commit and PR are required at closeout."
+    },
+    {
+      "id": "feat/canonical-import-20260802",
+      "head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+      "status": "merged",
+      "receipt": "PR #1; merge 3c588c6309600590d8eccd33872c53b7b2e17125"
+    },
+    {
+      "id": "feat/local-pose-input-20260803",
+      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "status": "active",
+      "receipt": "Issue #13 implementation session; no remote receipt existed at recorded_at."
+    },
+    {
+      "id": "feat/music-score-fixtures-20260803",
+      "head": "cbfd89634770df47d14a0dcb55779abb73877e28",
+      "status": "active",
+      "receipt": "Danse PR #25; exact head is pushed and platform checks are green."
+    },
+    {
+      "id": "fix/pages-hud-allowlist-20260803",
+      "head": "00c891b21747d498230a29ae03d10ddbe45f5983",
+      "status": "merged",
+      "receipt": "PR #24; merge 697f74ceb4ee11fe3cce380d85913afa86313d0b"
+    },
+    {
+      "id": "fix/reel-publishable-mode-closeout-20260802",
+      "head": "8d621b14a1952b4627732ae2aa844f133c21b69c",
+      "status": "merged",
+      "receipt": "PR #6; merge aa8afef941410c0790f60ea79b1eb04deb3baa43"
+    },
+    {
+      "id": "fix/reel-single-segment-closeout-20260802",
+      "head": "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe",
+      "status": "merged",
+      "receipt": "PR #5; merge a70d68467f564428ffcf8e6f3bb2141a589e0fd8"
+    },
+    {
+      "id": "work/canonical-merge-closeout-20260802",
+      "head": "b26b1a796d4356959a9e9e451da682457822a79b",
+      "status": "merged",
+      "receipt": "PR #4; merge 967cf2db90d47d86fc627c451120a6375ac15814"
+    },
+    {
+      "id": "work/danse-alpha-omega-20260803",
+      "head": "55891b5044ceecb35b405f89f72add8590c146ae",
+      "status": "merged",
+      "receipt": "PR #18; merge 5ba1c8090d6172bcea1e0dc908d55075de49a5ea"
+    },
+    {
+      "id": "archive/danse-predecessor-experiments-20260802",
+      "head": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "status": "archived",
+      "receipt": "Remote-equal Limen archive receipt; it is explicitly not a merge candidate."
+    }
+  ],
+  "worktrees": [
+    {
+      "id": "canonical-default",
+      "branch": "main",
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Default checkout; local main was behind origin/main."
+    },
+    {
+      "id": "canonical-import",
+      "branch": "feat/canonical-import-20260802",
+      "head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Small merged worktree; cleanup deferred to an accepted issue #20 receipt."
+    },
+    {
+      "id": "alpha-omega-control",
+      "branch": "agent/alpha-omega-control-surface",
+      "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Merged PR #19; cleanup deferred until the whole snapshot is reviewed."
+    },
+    {
+      "id": "canonical-closeout-material-custody",
+      "branch": null,
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "blocked",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Approximately 56 GiB of ignored render and package custody; two independent verified copies and a clean restore are not proven."
+    },
+    {
+      "id": "convergence-custody",
+      "branch": "docs/convergence-custody-receipt-20260803",
+      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "status": "active",
+      "tracked_clean": false,
+      "cleanup_authorized": false,
+      "reason": "Current receipt implementation."
+    },
+    {
+      "id": "alpha-omega-first-capsule",
+      "branch": "work/danse-alpha-omega-20260803",
+      "head": "55891b5044ceecb35b405f89f72add8590c146ae",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Identity-locked predecessor capsule; never edit or rerun it."
+    },
+    {
+      "id": "local-pose-input",
+      "branch": "feat/local-pose-input-20260803",
+      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "status": "active",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Issue #13 implementation session."
+    },
+    {
+      "id": "music-score-fixtures",
+      "branch": "feat/music-score-fixtures-20260803",
+      "head": "cbfd89634770df47d14a0dcb55779abb73877e28",
+      "status": "active",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Issues #8 and #9 implementation session."
+    },
+    {
+      "id": "pages-hud-allowlist",
+      "branch": "fix/pages-hud-allowlist-20260803",
+      "head": "00c891b21747d498230a29ae03d10ddbe45f5983",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Merged PR #24; cleanup deferred until the whole snapshot is reviewed."
+    },
+    {
+      "id": "screendance-published-terms",
+      "branch": "agent/screendance-published-terms",
+      "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d",
+      "status": "merged",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Merged PR #23; cleanup deferred until the whole snapshot is reviewed."
+    },
+    {
+      "id": "limen-predecessor-experiment-custody",
+      "branch": "archive/danse-predecessor-experiments-20260802",
+      "head": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "status": "blocked",
+      "tracked_clean": true,
+      "cleanup_authorized": false,
+      "reason": "Approximately 1.6 GiB and 561 currently observed ignored items; independent copies and restore are not proven."
+    }
+  ],
+  "stashes": {
+    "canonical_repository": [],
+    "related_limen_repository": {
+      "observed_count": 16,
+      "status": "not recorded",
+      "reason": "The shared Limen stash namespace contains no subject identified as Danse. Attribution cannot be inferred, so none was edited, applied, or dropped."
+    }
+  },
+  "pull_requests": [
+    {"id": 1, "status": "merged", "head": "3cbd15f3b978aa318c5640a46c69eb6eaa4a5dba", "merge": "3c588c6309600590d8eccd33872c53b7b2e17125"},
+    {"id": 4, "status": "merged", "head": "b26b1a796d4356959a9e9e451da682457822a79b", "merge": "967cf2db90d47d86fc627c451120a6375ac15814"},
+    {"id": 5, "status": "merged", "head": "1beba9daf82cd05a8b8e49bf951813eb1af0e1fe", "merge": "a70d68467f564428ffcf8e6f3bb2141a589e0fd8"},
+    {"id": 6, "status": "merged", "head": "8d621b14a1952b4627732ae2aa844f133c21b69c", "merge": "aa8afef941410c0790f60ea79b1eb04deb3baa43"},
+    {"id": 18, "status": "merged", "head": "55891b5044ceecb35b405f89f72add8590c146ae", "merge": "5ba1c8090d6172bcea1e0dc908d55075de49a5ea"},
+    {"id": 19, "status": "merged", "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25", "merge": "519573e427bdf376e9ad03cdd2c7ab8871211398"},
+    {"id": 23, "status": "merged", "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d", "merge": "abf0ba5f517f3b96a32b0afa78f5f0b58d354116"},
+    {"id": 24, "status": "merged", "head": "00c891b21747d498230a29ae03d10ddbe45f5983", "merge": "697f74ceb4ee11fe3cce380d85913afa86313d0b"},
+    {"id": 25, "status": "active", "head": "cbfd89634770df47d14a0dcb55779abb73877e28", "merge": null}
+  ],
+  "issues": [
+    {"id": 2, "status": "active", "receipt": "Submission and account-owned filing gate."},
+    {"id": 3, "status": "active", "receipt": "Archive disposition owner."},
+    {"id": 7, "status": "active", "receipt": "Alpha to Omega epic and direct progress ledger."},
+    {"id": 8, "status": "active", "receipt": "Owned repertoire and provenance."},
+    {"id": 9, "status": "active", "receipt": "Shared score contract."},
+    {"id": 10, "status": "blocked", "receipt": "Requires owner-selected repertoire and accepted score/image relation."},
+    {"id": 11, "status": "active", "receipt": "Deterministic room event and spatial routing."},
+    {"id": 12, "status": "blocked", "receipt": "Requires an actual presentation lifecycle and terminal child receipts."},
+    {"id": 13, "status": "active", "receipt": "Local pose wrapper and fallbacks."},
+    {"id": 14, "status": "blocked", "receipt": "Venue, hardware, and wall-plug recovery evidence require external access."},
+    {"id": 15, "status": "active", "receipt": "Frozen Omega opportunity snapshot; successor maintenance is #22."},
+    {"id": 16, "status": "blocked", "receipt": "Dancer, biography, final-cut, and rights attestations remain owner gates."},
+    {"id": 17, "status": "active", "receipt": "PR #24 and deployment receipt comment 5173478567 complete the immediate public-boundary slice."},
+    {"id": 20, "status": "active", "receipt": "This convergence registry."},
+    {"id": 21, "status": "blocked", "receipt": "No two-copy checksum and clean-restore proof exists for either material custody root."},
+    {"id": 22, "status": "active", "receipt": "Post-Omega opportunity maintenance outside the milestone."}
+  ],
+  "agent_outcomes": [
+    {"id": "traversal-repair", "status": "merged", "receipt": "Danse PR #18"},
+    {"id": "control-surface", "status": "merged", "receipt": "Danse PR #19"},
+    {"id": "published-terms", "status": "merged", "receipt": "Danse PR #23"},
+    {"id": "pages-hud", "status": "merged", "receipt": "Danse PR #24 and issue #17 comment 5173478567"},
+    {"id": "limen-successor-interface", "status": "active", "receipt": "Limen PR #1799"},
+    {"id": "music-score-fixtures", "status": "active", "receipt": "Danse PR #25 at exact head cbfd89634770df47d14a0dcb55779abb73877e28; platform checks green"},
+    {"id": "local-pose-input", "status": "active", "receipt": "Issue #13 session; no commit existed at recorded_at"},
+    {"id": "configured-claude-history-search", "status": "not recorded", "receipt": "No Danse-specific durable artifact was found in configured local history stores."},
+    {"id": "configured-agy-history-search", "status": "not recorded", "receipt": "No Danse-specific durable artifact was found in configured local history stores."},
+    {"id": "unrecorded-conversations", "status": "not recorded", "receipt": "Conversation content without an existing durable receipt cannot be reconstructed and is not represented as recovered work."}
+  ],
+  "closeout_rule": "docs/session-closeout.md"
+}

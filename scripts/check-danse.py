@@ -80,7 +80,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 42
+FLOOR = 44
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -895,6 +895,55 @@ def check_purity() -> None:
     )
 
 
+# ── 3b. convergence and private custody stay fail-closed ──────────────────────
+
+CONVERGENCE_CHECK = APP / "scripts" / "check-convergence.py"
+PRIVATE_CUSTODY = APP / "docs" / "continuations" / "alpha-omega" / "private-custody-20260804.json"
+
+
+def check_convergence_receipts() -> None:
+    """Keep repository cleanup subordinate to durable, redacted custody proof."""
+    result = subprocess.run(
+        [sys.executable, str(CONVERGENCE_CHECK), "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    detail = (result.stderr or result.stdout).strip().splitlines()
+    check(
+        "the convergence, archive, and session receipts validate",
+        result.returncode == 0,
+        detail[-1] if detail else "danse.convergence.v1",
+    )
+
+    try:
+        custody = load(PRIVATE_CUSTODY)
+        required = custody["policy"]["required_independent_verified_copies"]
+        violations = []
+        for root in custody["roots"]:
+            copies = root.get("independent_verified_copies") or []
+            media = {copy.get("medium_id") for copy in copies if copy.get("verified") is True}
+            eligible = (
+                len(media) >= required
+                and (root.get("restore_rehearsal") or {}).get("ok") is True
+                and (root.get("human_acceptance") or {}).get("ok") is True
+                and root.get("tracked_tree_clean") is True
+            )
+            if root.get("cleanup_authorized") is True and not eligible:
+                violations.append(root.get("id", "unnamed"))
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            not violations,
+            ", ".join(violations) if violations else f"{len(custody['roots'])} material roots remain fail-closed",
+        )
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            False,
+            str(exc),
+        )
+
+
 # ── 4. every frame the score names is deliverable ──────────────────────────────
 
 
@@ -967,6 +1016,8 @@ def main() -> int:
         check_arrival()
     else:
         NOTE.append(f"no film program at {PROGRAM.relative_to(ROOT)} — the piece runs free, nothing is cut")
+    print("\n repository convergence retains private custody")
+    check_convergence_receipts()
     print("\n the corpus is deliverable")
     check_delivery(score, manifest)
     print("\n the sound is the same film")
