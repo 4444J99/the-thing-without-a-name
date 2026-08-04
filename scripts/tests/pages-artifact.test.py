@@ -121,6 +121,8 @@ def public_fixture(root: Path) -> None:
             write(root / f"corpus/{kind}/{tier}/FRAME.webp")
     write(root / "submission/text/stale.md", b"must stay private\n")
     write(root / "pipeline/private.py", b"must stay private\n")
+    write(root / "installation/digital-twin.json", b"internal reference contract\n")
+    write(root / "installation/OPERATIONS.md", b"venue operations stay private\n")
     write(root / "README.md", b"repository documentation\n")
     write(root / "corpus/tier-receipts/browse.json", b"internal receipt\n")
 
@@ -259,6 +261,8 @@ class ProductionArtifactTest(unittest.TestCase):
             "done.sh",
             "film.html",
             "interaction-test.html",
+            "installation/OPERATIONS.md",
+            "installation/digital-twin.json",
             "join.html",
             "probe.html",
             "pyproject.toml",
@@ -269,6 +273,7 @@ class ProductionArtifactTest(unittest.TestCase):
         }
         self.assertTrue(paths.isdisjoint(forbidden))
         self.assertFalse(any(path.startswith("pipeline/") for path in paths))
+        self.assertFalse(any(path.startswith("installation/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
         self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
@@ -308,6 +313,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
         self.assertNotIn("README.md", inventory)
         self.assertFalse(any(path.startswith("submission/") for path in inventory))
         self.assertFalse(any(path.startswith("pipeline/") for path in inventory))
+        self.assertFalse(any(path.startswith("installation/") for path in inventory))
         self.assertFalse(any(path.startswith("rights/") for path in inventory))
         self.assertFalse(any(path.startswith("corpus/tier-receipts/") for path in inventory))
 
