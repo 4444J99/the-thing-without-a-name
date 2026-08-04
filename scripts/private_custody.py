@@ -1,0 +1,949 @@
+#!/usr/bin/env python3
+"""Create, duplicate, and restore-test private Danse custody snapshots.
+
+The payload manifest is deliberately private: it contains relative filenames and
+travels only with the encrypted/controlled custody copies.  The restore receipt
+is redacted and safe to track.  This tool never removes a source, snapshot,
+partial snapshot, or restored tree, and it refuses to overwrite any target.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import plistlib
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO
+
+SCHEMA = "danse.private-custody.snapshot.v1"
+RECEIPT_SCHEMA = "danse.private-custody.restore-receipt.v1"
+ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,95}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+CHUNK = 8 << 20
+PROGRESS_INTERVAL = 4 << 30
+
+
+class CustodyError(RuntimeError):
+    """A custody precondition or byte-integrity check failed."""
+
+
+def _run(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=text,
+            check=False,
+        )
+    except OSError as exc:
+        raise CustodyError(f"required command is unavailable: {argv[0]}") from exc
+    if result.returncode != 0:
+        raise CustodyError(f"{argv[0]} failed with exit {result.returncode}")
+    return result
+
+
+def _git(source: Path, *args: str, text: bool = True):
+    return _run(["git", "-C", str(source), *args], text=text)
+
+
+def _json_bytes(value: object) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
+
+
+def _write_new(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+
+
+def _load_json(path: Path, label: str) -> dict:
+    def unique(pairs: list[tuple[str, object]]) -> dict:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise CustodyError(f"{label} contains duplicate JSON keys")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CustodyError(f"{label} is missing or invalid") from exc
+    if not isinstance(value, dict):
+        raise CustodyError(f"{label} must be a JSON object")
+    return value
+
+
+@dataclass
+class Progress:
+    label: str
+    total: int
+    seen: int = 0
+    next_report: int = PROGRESS_INTERVAL
+
+    def add(self, amount: int) -> None:
+        self.seen += amount
+        if self.seen >= self.next_report:
+            print(
+                f"custody: {self.label} {self.seen >> 30} GiB / {max(1, self.total >> 30)} GiB",
+                flush=True,
+            )
+            self.next_report += PROGRESS_INTERVAL
+
+
+class _ProgressReader:
+    def __init__(self, handle: BinaryIO, progress: Progress):
+        self.handle = handle
+        self.progress = progress
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        value = self.handle.read(size)
+        self.digest.update(value)
+        self.progress.add(len(value))
+        return value
+
+    def hexdigest(self) -> str:
+        return self.digest.hexdigest()
+
+
+def _sha256(path: Path, progress: Progress | None = None) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+            if progress is not None:
+                progress.add(len(block))
+    return digest.hexdigest()
+
+
+def _safe_relative(value: object, label: str = "material path") -> str:
+    if not isinstance(value, str):
+        raise CustodyError(f"{label} is not a safe portable relative path")
+    pure = PurePosixPath(value)
+    if (
+        not value
+        or pure.is_absolute()
+        or "\\" in value
+        or any(part in {"", ".", ".."} for part in pure.parts)
+    ):
+        raise CustodyError(f"{label} is not a safe portable relative path")
+    return pure.as_posix()
+
+
+def _contained_path(root: Path, relative: str, label: str) -> Path:
+    current = root
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        if current.is_symlink() and current != root / relative:
+            raise CustodyError(f"{label} traverses an intermediate symlink")
+    try:
+        current.parent.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise CustodyError(f"{label} escapes the source root") from exc
+    return current
+
+
+def _restore_path(root: Path, relative: str) -> Path:
+    parts = PurePosixPath(relative).parts
+    current = root
+    for part in parts[:-1]:
+        current = current / part
+        if _lexists(current):
+            if current.is_symlink() or not current.is_dir():
+                raise CustodyError("restore path traverses a non-directory or symlink")
+        else:
+            current.mkdir(mode=0o700)
+    return current / parts[-1]
+
+
+def _lexists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _safe_remote_ref(value: str) -> str:
+    if (
+        not value.startswith("origin/")
+        or value.startswith("-")
+        or any(token in value for token in ("..", "@{", "//", "\\", " "))
+        or value.endswith(("/", ".", ".lock"))
+    ):
+        raise CustodyError("remote reference must be a safe origin branch")
+    result = subprocess.run(
+        ["git", "check-ref-format", f"refs/remotes/{value}"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise CustodyError("remote reference must be a safe origin branch")
+    return value
+
+
+def _material_inventory(source: Path) -> tuple[list[dict], int]:
+    ignored_raw = _git(
+        source,
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        text=False,
+    ).stdout
+    untracked_raw = _git(
+        source,
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        text=False,
+    ).stdout
+
+    def decode(raw: bytes, label: str) -> set[str]:
+        values: set[str] = set()
+        for item in raw.split(b"\0"):
+            if not item:
+                continue
+            try:
+                value = item.decode("utf-8", errors="strict")
+            except UnicodeError as exc:
+                raise CustodyError(f"{label} contains a non-UTF-8 path") from exc
+            values.add(_safe_relative(value))
+        return values
+
+    ignored = decode(ignored_raw, "ignored inventory")
+    untracked = decode(untracked_raw, "untracked inventory")
+    paths = sorted(ignored | untracked)
+    entries: list[dict] = []
+    total = 0
+    progress = Progress("hashing private inventory", sum((source / path).lstat().st_size for path in paths))
+    for relative in paths:
+        path = _contained_path(source, relative, "material path")
+        before = path.lstat()
+        mode = stat.S_IMODE(before.st_mode)
+        if stat.S_ISREG(before.st_mode):
+            digest = _sha256(path, progress)
+            after = path.lstat()
+            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            if identity_before != identity_after:
+                raise CustodyError("a material file changed while it was being hashed")
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "file",
+                    "bytes": before.st_size,
+                    "mode": mode,
+                    "sha256": digest,
+                    "ignored": relative in ignored,
+                }
+            )
+            total += before.st_size
+        elif stat.S_ISLNK(before.st_mode):
+            target = os.readlink(path)
+            target_pure = PurePosixPath(target)
+            if target_pure.is_absolute() or any(part == ".." for part in target_pure.parts):
+                raise CustodyError("a material symlink escapes the portable snapshot")
+            entries.append(
+                {
+                    "path": relative,
+                    "type": "symlink",
+                    "target": target,
+                    "mode": mode,
+                    "ignored": relative in ignored,
+                }
+            )
+        else:
+            raise CustodyError("the material inventory contains an unsupported special file")
+    return entries, total
+
+
+def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dict:
+    remote_ref = _safe_remote_ref(remote_ref)
+    if source.is_symlink():
+        raise CustodyError("source repository root must not be a symlink")
+    try:
+        resolved = source.resolve(strict=True)
+    except OSError as exc:
+        raise CustodyError("source repository is missing") from exc
+    top = Path(str(_git(resolved, "rev-parse", "--show-toplevel").stdout).strip()).resolve()
+    if top != resolved:
+        raise CustodyError("source must be the repository worktree root")
+    status = str(_git(resolved, "status", "--porcelain=v1", "--untracked-files=no").stdout)
+    if status:
+        raise CustodyError("source has tracked modifications")
+    shallow = str(_git(resolved, "rev-parse", "--is-shallow-repository").stdout).strip()
+    if shallow != "false":
+        raise CustodyError("source must contain complete Git history, not a shallow checkout")
+    index = _git(resolved, "ls-files", "--stage", "-z", text=False).stdout
+    if any(record.startswith(b"160000 ") for record in index.split(b"\0") if record):
+        raise CustodyError("source contains a submodule that a single repository bundle cannot restore")
+    head = str(_git(resolved, "rev-parse", "HEAD").stdout).strip()
+    remote_head = str(_git(resolved, "rev-parse", "--verify", f"{remote_ref}^{{commit}}").stdout).strip()
+    if not GIT_SHA.fullmatch(head) or not GIT_SHA.fullmatch(remote_head):
+        raise CustodyError("source or remote reference did not resolve to a commit")
+    if remote_mode == "equal":
+        if head != remote_head:
+            raise CustodyError("source head is not equal to the admitted remote reference")
+    elif remote_mode == "ancestor":
+        result = subprocess.run(
+            ["git", "-C", str(resolved), "merge-base", "--is-ancestor", head, remote_ref],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise CustodyError("source head is not reachable from the admitted remote reference")
+    else:
+        raise CustodyError("remote mode must be equal or ancestor")
+    fetch_url = str(_git(resolved, "remote", "get-url", "origin").stdout).strip()
+    push_url = str(_git(resolved, "remote", "get-url", "--push", "origin").stdout).strip()
+    if not fetch_url or fetch_url != push_url:
+        raise CustodyError("origin fetch/push parity is not proven")
+    branch_result = subprocess.run(
+        ["git", "-C", str(resolved), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
+    return {
+        "head": head,
+        "branch": branch,
+        "tracked_clean": True,
+        "remote_ref": remote_ref,
+        "remote_head": remote_head,
+        "remote_mode": remote_mode,
+        "remote_fetch_push_parity": True,
+    }
+
+
+def _tar_materials(source: Path, entries: list[dict], output: Path, total: int) -> None:
+    progress = Progress("archiving private inventory", total)
+    with tarfile.open(output, "x", format=tarfile.PAX_FORMAT) as archive:
+        for entry in entries:
+            relative = entry["path"]
+            source_path = _contained_path(source, relative, "material path")
+            info = tarfile.TarInfo(relative)
+            info.uid = 0
+            info.gid = 0
+            info.uname = ""
+            info.gname = ""
+            info.mode = entry["mode"]
+            info.mtime = int(source_path.lstat().st_mtime)
+            if entry["type"] == "symlink":
+                if os.readlink(source_path) != entry["target"]:
+                    raise CustodyError("a material symlink changed before archival")
+                info.type = tarfile.SYMTYPE
+                info.linkname = entry["target"]
+                archive.addfile(info)
+                continue
+            info.type = tarfile.REGTYPE
+            info.size = entry["bytes"]
+            before = source_path.lstat()
+            with source_path.open("rb") as handle:
+                descriptor = os.fstat(handle.fileno())
+                if (descriptor.st_dev, descriptor.st_ino) != (before.st_dev, before.st_ino):
+                    raise CustodyError("a material file changed before archival")
+                reader = _ProgressReader(handle, progress)
+                archive.addfile(info, reader)
+                if reader.hexdigest() != entry["sha256"]:
+                    raise CustodyError("a material file changed between inventory and archival")
+            after = source_path.lstat()
+            if (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise CustodyError("a material file changed during archival")
+
+
+def _artifact(path: Path, label: str) -> dict:
+    size = path.stat().st_size
+    return {
+        "label": label,
+        "bytes": size,
+        "sha256": _sha256(path, Progress(f"verifying {label}", size)),
+    }
+
+
+def create_snapshot(
+    source: Path,
+    primary_root: Path,
+    snapshot_id: str,
+    remote_ref: str,
+    remote_mode: str,
+) -> Path:
+    """Create one immutable snapshot directory without overwriting anything."""
+    if not ID.fullmatch(snapshot_id):
+        raise CustodyError("snapshot id must be a portable lowercase identifier")
+    if primary_root.is_symlink() or not primary_root.is_dir():
+        raise CustodyError("primary custody root must be an existing regular directory")
+    final = primary_root / snapshot_id
+    staging = primary_root / f".{snapshot_id}.incomplete"
+    if _lexists(final) or _lexists(staging):
+        raise CustodyError("primary snapshot target already exists")
+
+    identity = _repository_identity(source, remote_ref, remote_mode)
+    entries, total = _material_inventory(source)
+    required_free = total + max(1 << 30, total // 20)
+    if shutil.disk_usage(primary_root).free <= required_free:
+        raise CustodyError("primary custody target has insufficient free space")
+    staging.mkdir(mode=0o700)
+    manifest = {
+        "schema": SCHEMA,
+        "snapshot_id": snapshot_id,
+        "source": identity,
+        "inventory": {
+            "entries": len(entries),
+            "bytes": total,
+            "ignored_entries": sum(entry["ignored"] for entry in entries),
+            "untracked_entries": sum(not entry["ignored"] for entry in entries),
+            "materials": entries,
+        },
+    }
+    manifest_path = staging / "private-manifest.json"
+    _write_new(manifest_path, _json_bytes(manifest))
+
+    materials_path = staging / "materials.tar"
+    _tar_materials(source, entries, materials_path, total)
+    bundle_path = staging / "source.bundle"
+    _git(source, "bundle", "create", str(bundle_path), "HEAD")
+    _git(source, "bundle", "verify", str(bundle_path))
+    bundle_heads = str(_git(source, "bundle", "list-heads", str(bundle_path)).stdout).splitlines()
+    if not any(line.split(maxsplit=1)[0] == identity["head"] for line in bundle_heads if line.strip()):
+        raise CustodyError("source bundle does not advertise the admitted source head")
+    final_head = str(_git(source, "rev-parse", "HEAD").stdout).strip()
+    final_status = str(_git(source, "status", "--porcelain=v1", "--untracked-files=no").stdout)
+    if final_head != identity["head"] or final_status:
+        raise CustodyError("source repository changed during snapshot creation")
+
+    artifacts = {
+        "private-manifest.json": _artifact(manifest_path, "private manifest"),
+        "materials.tar": _artifact(materials_path, "materials archive"),
+        "source.bundle": _artifact(bundle_path, "source bundle"),
+    }
+    control = {
+        "schema": SCHEMA,
+        "snapshot_id": snapshot_id,
+        "source_head": identity["head"],
+        "remote_ref": identity["remote_ref"],
+        "remote_head": identity["remote_head"],
+        "remote_mode": identity["remote_mode"],
+        "tracked_clean": True,
+        "inventory_entries": len(entries),
+        "inventory_bytes": total,
+        "artifacts": artifacts,
+    }
+    _write_new(staging / "control.json", _json_bytes(control))
+    os.rename(staging, final)
+    _fsync_directory(primary_root)
+    print(
+        f"custody: created {snapshot_id} ({len(entries)} private entries, {total} bytes)",
+        flush=True,
+    )
+    return final
+
+
+def _physical_device_token(path: Path) -> str:
+    device_identity: str | None = None
+    if sys.platform == "darwin" and shutil.which("diskutil"):
+        result = subprocess.run(
+            ["diskutil", "info", "-plist", str(path)],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            try:
+                info = plistlib.loads(result.stdout)
+            except plistlib.InvalidFileException:
+                info = {}
+            candidate = info.get("ParentWholeDisk") or info.get("DeviceIdentifier")
+            if isinstance(candidate, str) and candidate:
+                device_identity = f"darwin:{candidate}"
+    if device_identity is None:
+        device_identity = f"st_dev:{path.stat().st_dev}"
+    return hashlib.sha256(device_identity.encode("utf-8")).hexdigest()
+
+
+def ensure_independent(primary_root: Path, secondary_root: Path) -> tuple[str, str]:
+    if (
+        primary_root.is_symlink()
+        or secondary_root.is_symlink()
+        or not primary_root.is_dir()
+        or not secondary_root.is_dir()
+    ):
+        raise CustodyError("custody roots must be existing regular directories")
+    primary = _physical_device_token(primary_root)
+    secondary = _physical_device_token(secondary_root)
+    if primary == secondary:
+        raise CustodyError("custody targets do not resolve to independent physical devices")
+    return primary, secondary
+
+
+def verify_snapshot(snapshot: Path) -> dict:
+    if snapshot.is_symlink() or not snapshot.is_dir():
+        raise CustodyError("snapshot is not a regular directory")
+    control = _load_json(snapshot / "control.json", "snapshot control")
+    expected_control_keys = {
+        "schema",
+        "snapshot_id",
+        "source_head",
+        "remote_ref",
+        "remote_head",
+        "remote_mode",
+        "tracked_clean",
+        "inventory_entries",
+        "inventory_bytes",
+        "artifacts",
+    }
+    if set(control) != expected_control_keys:
+        raise CustodyError("snapshot control has an unknown or incomplete shape")
+    if control.get("schema") != SCHEMA or not ID.fullmatch(str(control.get("snapshot_id", ""))):
+        raise CustodyError("snapshot control has the wrong schema or identity")
+    if (
+        not GIT_SHA.fullmatch(str(control.get("source_head", "")))
+        or not GIT_SHA.fullmatch(str(control.get("remote_head", "")))
+        or control.get("remote_mode") not in {"equal", "ancestor"}
+        or control.get("tracked_clean") is not True
+        or type(control.get("inventory_entries")) is not int
+        or control["inventory_entries"] < 0
+        or type(control.get("inventory_bytes")) is not int
+        or control["inventory_bytes"] < 0
+    ):
+        raise CustodyError("snapshot control identity or inventory is malformed")
+    _safe_remote_ref(control["remote_ref"])
+    artifacts = control.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != {
+        "private-manifest.json",
+        "materials.tar",
+        "source.bundle",
+    }:
+        raise CustodyError("snapshot control has an incomplete artifact inventory")
+    expected_files = {"control.json", *artifacts}
+    if {item.name for item in snapshot.iterdir()} != expected_files:
+        raise CustodyError("snapshot directory contains an unexpected artifact")
+    for name, record in artifacts.items():
+        path = snapshot / name
+        if path.is_symlink() or not path.is_file() or not isinstance(record, dict):
+            raise CustodyError("snapshot artifact is missing or unsafe")
+        expected = record.get("sha256")
+        if set(record) != {"label", "bytes", "sha256"}:
+            raise CustodyError("snapshot artifact record has an unknown shape")
+        if (
+            not isinstance(record.get("label"), str)
+            or not record["label"]
+            or type(record.get("bytes")) is not int
+            or record["bytes"] < 0
+            or not isinstance(expected, str)
+            or not HEX64.fullmatch(expected)
+        ):
+            raise CustodyError("snapshot artifact has no valid digest")
+        if record.get("bytes") != path.stat().st_size:
+            raise CustodyError("snapshot artifact byte count changed")
+        if _sha256(path, Progress(f"verifying copied {record.get('label', 'artifact')}", path.stat().st_size)) != expected:
+            raise CustodyError("snapshot artifact digest changed")
+    manifest = _load_json(snapshot / "private-manifest.json", "private manifest")
+    if manifest.get("snapshot_id") != control["snapshot_id"]:
+        raise CustodyError("private manifest identity disagrees with snapshot control")
+    _manifest_entries(snapshot, control)
+    return control
+
+
+def _copy_file(source: Path, destination: Path, label: str) -> None:
+    total = source.stat().st_size
+    progress = Progress(label, total)
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with source.open("rb") as reader, os.fdopen(descriptor, "wb") as writer:
+        while True:
+            block = reader.read(CHUNK)
+            if not block:
+                break
+            writer.write(block)
+            progress.add(len(block))
+        writer.flush()
+        os.fsync(writer.fileno())
+
+
+def copy_snapshot(primary: Path, secondary_root: Path) -> Path:
+    control = verify_snapshot(primary)
+    snapshot_id = control["snapshot_id"]
+    if secondary_root.is_symlink() or not secondary_root.is_dir():
+        raise CustodyError("secondary custody root must be an existing regular directory")
+    final = secondary_root / snapshot_id
+    staging = secondary_root / f".{snapshot_id}.incomplete"
+    if _lexists(final) or _lexists(staging):
+        raise CustodyError("secondary snapshot target already exists")
+    required = sum(record["bytes"] for record in control["artifacts"].values())
+    if shutil.disk_usage(secondary_root).free <= required:
+        raise CustodyError("secondary custody target has insufficient free space")
+    staging.mkdir(mode=0o700)
+    for name in ("private-manifest.json", "materials.tar", "source.bundle", "control.json"):
+        _copy_file(primary / name, staging / name, f"copying {name}")
+    os.rename(staging, final)
+    _fsync_directory(secondary_root)
+    secondary_control = verify_snapshot(final)
+    if _json_bytes(secondary_control) != _json_bytes(control):
+        raise CustodyError("secondary snapshot control differs from primary")
+    print(f"custody: duplicated and verified {snapshot_id}", flush=True)
+    return final
+
+
+def _manifest_entries(snapshot: Path, control: dict) -> list[dict]:
+    manifest = _load_json(snapshot / "private-manifest.json", "private manifest")
+    if set(manifest) != {"schema", "snapshot_id", "source", "inventory"}:
+        raise CustodyError("private manifest has an unknown or incomplete shape")
+    if manifest.get("schema") != SCHEMA or manifest.get("snapshot_id") != control["snapshot_id"]:
+        raise CustodyError("private manifest identity is invalid")
+    source = manifest.get("source")
+    if not isinstance(source, dict) or set(source) != {
+        "head",
+        "branch",
+        "tracked_clean",
+        "remote_ref",
+        "remote_head",
+        "remote_mode",
+        "remote_fetch_push_parity",
+    }:
+        raise CustodyError("private manifest source identity is malformed")
+    if (
+        source["head"] != control["source_head"]
+        or source["remote_ref"] != control["remote_ref"]
+        or source["remote_head"] != control["remote_head"]
+        or source["remote_mode"] != control["remote_mode"]
+        or source["tracked_clean"] is not True
+        or source["remote_fetch_push_parity"] is not True
+        or (source["branch"] is not None and not isinstance(source["branch"], str))
+    ):
+        raise CustodyError("private manifest source identity disagrees with snapshot control")
+    inventory = manifest.get("inventory")
+    if (
+        not isinstance(inventory, dict)
+        or set(inventory) != {
+            "entries",
+            "bytes",
+            "ignored_entries",
+            "untracked_entries",
+            "materials",
+        }
+        or not isinstance(inventory.get("materials"), list)
+    ):
+        raise CustodyError("private manifest inventory is malformed")
+    entries = inventory["materials"]
+    if (
+        type(inventory.get("entries")) is not int
+        or inventory["entries"] != control["inventory_entries"]
+        or type(inventory.get("bytes")) is not int
+        or inventory["bytes"] != control["inventory_bytes"]
+        or type(inventory.get("ignored_entries")) is not int
+        or type(inventory.get("untracked_entries")) is not int
+        or inventory["ignored_entries"] + inventory["untracked_entries"] != len(entries)
+        or len(entries) != control["inventory_entries"]
+    ):
+        raise CustodyError("private manifest entry count disagrees with snapshot control")
+    seen: set[str] = set()
+    observed_bytes = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("type") not in {"file", "symlink"}:
+            raise CustodyError("private manifest contains a malformed material record")
+        relative = _safe_relative(entry.get("path"), "private manifest path")
+        if relative in seen:
+            raise CustodyError("private manifest repeats a material path")
+        seen.add(relative)
+        if type(entry.get("mode")) is not int or not 0 <= entry["mode"] <= 0o7777:
+            raise CustodyError("private manifest contains an invalid material mode")
+        if type(entry.get("ignored")) is not bool:
+            raise CustodyError("private manifest contains an invalid inventory class")
+        if entry["type"] == "file":
+            if (
+                set(entry) != {"path", "type", "bytes", "mode", "sha256", "ignored"}
+                or type(entry.get("bytes")) is not int
+                or entry["bytes"] < 0
+                or not isinstance(entry.get("sha256"), str)
+                or not HEX64.fullmatch(entry["sha256"])
+            ):
+                raise CustodyError("private manifest contains an invalid file record")
+            observed_bytes += entry["bytes"]
+        elif (
+            set(entry) != {"path", "type", "target", "mode", "ignored"}
+            or not isinstance(entry.get("target"), str)
+        ):
+            raise CustodyError("private manifest contains an invalid symlink record")
+        else:
+            target = PurePosixPath(entry["target"])
+            if target.is_absolute() or any(part == ".." for part in target.parts):
+                raise CustodyError("private manifest contains an escaping symlink")
+    if observed_bytes != control["inventory_bytes"]:
+        raise CustodyError("private manifest byte count disagrees with snapshot control")
+    return entries
+
+
+def _extract_materials(snapshot: Path, target: Path, entries: list[dict], total: int) -> None:
+    expected = {entry["path"]: entry for entry in entries}
+    seen: set[str] = set()
+    progress = Progress("restoring private inventory", total)
+    with tarfile.open(snapshot / "materials.tar", "r:") as archive:
+        for member in archive:
+            relative = _safe_relative(member.name, "archive member")
+            if relative in seen or relative not in expected:
+                raise CustodyError("materials archive contains an unexpected or duplicate member")
+            seen.add(relative)
+            entry = expected[relative]
+            destination = _restore_path(target, relative)
+            if destination.exists() or destination.is_symlink():
+                raise CustodyError("material restore would overwrite an existing path")
+            if entry["type"] == "symlink":
+                if not member.issym() or member.linkname != entry["target"]:
+                    raise CustodyError("archive symlink disagrees with its private manifest")
+                os.symlink(member.linkname, destination)
+                continue
+            if not member.isfile() or member.size != entry["bytes"]:
+                raise CustodyError("archive file disagrees with its private manifest")
+            source = archive.extractfile(member)
+            if source is None:
+                raise CustodyError("archive file could not be read")
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, entry["mode"])
+            digest = hashlib.sha256()
+            with source, os.fdopen(descriptor, "wb") as writer:
+                while True:
+                    block = source.read(CHUNK)
+                    if not block:
+                        break
+                    writer.write(block)
+                    digest.update(block)
+                    progress.add(len(block))
+                writer.flush()
+                os.fsync(writer.fileno())
+            os.chmod(destination, entry["mode"])
+            if digest.hexdigest() != entry["sha256"]:
+                raise CustodyError("restored file digest disagrees with its private manifest")
+    if seen != set(expected):
+        raise CustodyError("materials archive is missing private manifest entries")
+
+
+def _verify_restored_inventory(target: Path, entries: list[dict]) -> None:
+    expected_paths = {entry["path"] for entry in entries}
+    ignored_raw = _git(
+        target,
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        text=False,
+    ).stdout
+    untracked_raw = _git(
+        target,
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        text=False,
+    ).stdout
+    observed = {
+        item.decode("utf-8", errors="strict")
+        for item in ignored_raw.split(b"\0") + untracked_raw.split(b"\0")
+        if item
+    }
+    if observed != expected_paths:
+        raise CustodyError("restored private inventory is incomplete or contains extra files")
+    progress = Progress("verifying restored inventory", sum(entry.get("bytes", 0) for entry in entries))
+    for entry in entries:
+        path = target / entry["path"]
+        value = path.lstat()
+        if stat.S_IMODE(value.st_mode) != entry["mode"]:
+            raise CustodyError("restored material mode disagrees with its private manifest")
+        if entry["type"] == "symlink":
+            if not path.is_symlink() or os.readlink(path) != entry["target"]:
+                raise CustodyError("restored material symlink disagrees with its private manifest")
+        elif (
+            not stat.S_ISREG(value.st_mode)
+            or value.st_size != entry["bytes"]
+            or _sha256(path, progress) != entry["sha256"]
+        ):
+            raise CustodyError("restored material file disagrees with its private manifest")
+
+
+def restore_snapshot(snapshot: Path, target: Path) -> dict:
+    control = verify_snapshot(snapshot)
+    if _lexists(target):
+        raise CustodyError("restore target already exists")
+    if target.parent.is_symlink() or not target.parent.is_dir():
+        raise CustodyError("restore target parent must be an existing regular directory")
+    target.mkdir(mode=0o700)
+    _run(["git", "init", "--quiet", str(target)])
+    _git(target, "fetch", "--quiet", str(snapshot / "source.bundle"), "HEAD")
+    _git(target, "checkout", "--quiet", "--detach", "FETCH_HEAD")
+    restored_head = str(_git(target, "rev-parse", "HEAD").stdout).strip()
+    if restored_head != control["source_head"]:
+        raise CustodyError("restored source head disagrees with snapshot control")
+    entries = _manifest_entries(snapshot, control)
+    _extract_materials(snapshot, target, entries, control["inventory_bytes"])
+    _verify_restored_inventory(target, entries)
+    status = str(_git(target, "status", "--porcelain=v1", "--untracked-files=no").stdout)
+    if status:
+        raise CustodyError("restored source has tracked modifications")
+    print(f"custody: clean restore verified for {control['snapshot_id']}", flush=True)
+    return control
+
+
+def redacted_receipt(
+    primary: Path,
+    secondary: Path,
+    target: Path,
+    primary_id: str,
+    secondary_id: str,
+) -> dict:
+    for value, label in ((primary_id, "primary medium id"), (secondary_id, "secondary medium id")):
+        if not ID.fullmatch(value):
+            raise CustodyError(f"{label} must be a portable lowercase identifier")
+    primary_root = primary.parent
+    secondary_root = secondary.parent
+    primary_token, secondary_token = ensure_independent(primary_root, secondary_root)
+    first = verify_snapshot(primary)
+    second = verify_snapshot(secondary)
+    if _json_bytes(first) != _json_bytes(second):
+        raise CustodyError("independent snapshot controls are not byte-identical")
+    restored = restore_snapshot(secondary, target)
+    if restored != first:
+        raise CustodyError("restore control disagrees with the verified copies")
+    artifacts = first["artifacts"]
+    manifest_digest = artifacts["private-manifest.json"]["sha256"]
+    return {
+        "schema": RECEIPT_SCHEMA,
+        "snapshot_id": first["snapshot_id"],
+        "source": {
+            "head": first["source_head"],
+            "remote_ref": first["remote_ref"],
+            "remote_head": first["remote_head"],
+            "remote_mode": first["remote_mode"],
+            "tracked_clean": first["tracked_clean"],
+            "remote_fetch_push_parity": True,
+        },
+        "inventory": {
+            "entries": first["inventory_entries"],
+            "bytes": first["inventory_bytes"],
+            "manifest_sha256": manifest_digest,
+            "materials_sha256": artifacts["materials.tar"]["sha256"],
+            "source_bundle_sha256": artifacts["source.bundle"]["sha256"],
+        },
+        "independent_verified_copies": [
+            {
+                "medium_id": primary_id,
+                "device_identity_sha256": primary_token,
+                "manifest_sha256": manifest_digest,
+                "verified": True,
+            },
+            {
+                "medium_id": secondary_id,
+                "device_identity_sha256": secondary_token,
+                "manifest_sha256": manifest_digest,
+                "verified": True,
+            },
+        ],
+        "restore_rehearsal": {
+            "ok": True,
+            "restored_from": secondary_id,
+            "source_head": first["source_head"],
+            "inventory_verified": True,
+            "tracked_clean": True,
+        },
+        "human_acceptance": {"ok": False, "receipt": None},
+        "cleanup_authorized": False,
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    snapshot = subparsers.add_parser("snapshot", help="create and independently duplicate custody")
+    snapshot.add_argument("--source", type=Path, required=True)
+    snapshot.add_argument("--primary-root", type=Path, required=True)
+    snapshot.add_argument("--secondary-root", type=Path, required=True)
+    snapshot.add_argument("--snapshot-id", required=True)
+    snapshot.add_argument("--remote-ref", required=True)
+    snapshot.add_argument("--remote-mode", choices=("equal", "ancestor"), required=True)
+
+    restore = subparsers.add_parser("restore", help="verify both copies and rehearse a clean restore")
+    restore.add_argument("--primary", type=Path, required=True)
+    restore.add_argument("--secondary", type=Path, required=True)
+    restore.add_argument("--primary-id", required=True)
+    restore.add_argument("--secondary-id", required=True)
+    restore.add_argument("--target", type=Path, required=True)
+    restore.add_argument("--receipt", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.command == "snapshot":
+            ensure_independent(args.primary_root, args.secondary_root)
+            primary = create_snapshot(
+                args.source,
+                args.primary_root,
+                args.snapshot_id,
+                args.remote_ref,
+                args.remote_mode,
+            )
+            copy_snapshot(primary, args.secondary_root)
+        else:
+            receipt = redacted_receipt(
+                args.primary,
+                args.secondary,
+                args.target,
+                args.primary_id,
+                args.secondary_id,
+            )
+            if _lexists(args.receipt):
+                raise CustodyError("receipt target already exists")
+            if args.receipt.parent.is_symlink() or not args.receipt.parent.is_dir():
+                raise CustodyError("receipt parent must be an existing regular directory")
+            _write_new(args.receipt, _json_bytes(receipt))
+            print("custody: wrote one redacted restore receipt", flush=True)
+    except CustodyError as exc:
+        print(f"custody: BLOCKED — {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
