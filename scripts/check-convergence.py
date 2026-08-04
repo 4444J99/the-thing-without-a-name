@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +30,7 @@ STATUSES = {
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
-DURABLE_RECEIPT = re.compile(r"^(?:https://\S+|docs/[A-Za-z0-9._/-]+)$")
+HTTPS_RECEIPT = re.compile(r"^https://\S+$")
 PRIVATE_PATH = re.compile(
     r"(?:^|[\s'\"`(\[])"
     r"(?:/(?!/)[^\s'\"`)]*|//[^/\s]+/[^\s'\"`)]*|[A-Za-z]:[\\/][^\s'\"`)]*|"
@@ -79,6 +80,59 @@ EXPECTED_AGENT_OUTCOMES = {
 }
 EXPECTED_ISSUES = {2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 22}
 EXPECTED_PRS = {1, 4, 5, 6, 18, 19, 23, 24, 25, 26}
+EXPECTED_CUSTODY_ROOTS = {
+    "canonical-closeout-material-custody",
+    "limen-predecessor-experiment-custody",
+}
+SNAPSHOT_MAX_AGE_SECONDS = 600
+EXPECTED_ARCHIVE_SOURCE = {
+    "repository": "organvm/limen",
+    "branch": "archive/danse-predecessor-experiments-20260802",
+    "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+    "merge_wholesale": False,
+}
+EXPECTED_ARCHIVE_ARTIFACTS = {
+    "visitor-pose-prototype": {
+        "paths": ["apps/danse/join.html", "apps/danse/index.html"],
+        "status": "active",
+        "disposition": "Port only the body-derived modulation concept through issue #13. Reject the CDN-dependent implementation and require explicit permission, dropout, privacy, accessibility, and no-camera behavior.",
+    },
+    "stateful-spatial-score-prototype": {
+        "paths": ["apps/danse/engine/score.js", "apps/danse/sound/score.py"],
+        "status": "superseded",
+        "disposition": "Reject accumulated WebAudio scheduling and timer state as a canonical engine contract. Port only deterministic typed musical and plane-event ideas through issues #9 and #11, queried by absolute time.",
+    },
+    "browser-audio-harness": {
+        "paths": ["apps/danse/test-audio.html"],
+        "status": "archived",
+        "disposition": "Retain as historical internal test material. It is not an artwork route and must not enter the Pages allowlist or release artifact.",
+    },
+    "cloudflare-deployment-experiment": {
+        "paths": [".github/workflows/deploy-danse.yml"],
+        "status": "superseded",
+        "disposition": "Superseded by the staged, allowlisted GitHub Pages artifact merged in Danse PR #24. Do not port the workflow.",
+    },
+    "theoretical-framework": {
+        "paths": ["docs/plans/2026-07-31-danse-theoretical-framework.md"],
+        "status": "archived",
+        "disposition": "Preserve as historical working theory. It contains unapproved claims and is not cleared public copy; any future use requires deliberate editing and release-manifest evidence.",
+    },
+    "installation-proposal": {
+        "paths": ["docs/plans/danse-installation-spec.md", "organs/artist/chambers/danse.yaml"],
+        "status": "active",
+        "disposition": "Use as non-authoritative input to issue #14. Venue-approved dimensions, routing, recovery, and three wall-plug proofs must come from the canonical repository before this can be called a specification.",
+    },
+    "submission-attestation": {
+        "paths": ["apps/danse/.work/submission/attest.yaml"],
+        "status": "superseded",
+        "disposition": "The archive commit removed the unsupported attestation. Filing and upload can be recorded only by the canonical phase predicates in issue #2.",
+    },
+    "private-brainstorm-history": {
+        "paths": [],
+        "status": "not recorded",
+        "disposition": "No Danse-specific durable artifact was found in the configured Claude, Agy, or Codex history surfaces. Unrecorded conversations cannot be reconstructed; no creative claim is inferred from their absence.",
+    },
+}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -137,11 +191,52 @@ def validate_no_private_paths(document: dict[str, Any], label: str, errors: list
             errors.append(f"{path}: tracked receipt contains a personal or local absolute path")
 
 
+def durable_receipt(value: object, root: Path = ROOT) -> bool:
+    """Accept a durable HTTPS receipt or an existing tracked file under docs/."""
+    if not isinstance(value, str) or not value:
+        return False
+    if HTTPS_RECEIPT.fullmatch(value):
+        return True
+    pure = PurePosixPath(value)
+    if (
+        pure.is_absolute()
+        or not pure.parts
+        or pure.parts[0] != "docs"
+        or "." in pure.parts
+        or ".." in pure.parts
+        or "\\" in value
+    ):
+        return False
+    repository = root.resolve()
+    current = repository
+    for part in pure.parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    try:
+        target = current.resolve(strict=True)
+        target.relative_to(repository)
+    except (FileNotFoundError, ValueError):
+        return False
+    if not target.is_file():
+        return False
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(repository), "ls-files", "--error-unmatch", "--", value],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return tracked.returncode == 0
+
+
 def validate_documents(
     convergence: dict[str, Any],
     custody: dict[str, Any],
     archive: dict[str, Any],
     closeout_text: str,
+    root: Path = ROOT,
 ) -> list[str]:
     errors: list[str] = []
     expected_schemas = (
@@ -181,15 +276,14 @@ def validate_documents(
                 errors.append(f"convergence.snapshot_relationships.{label}: timestamp does not bind receipt")
             if relation.get("relation") != "precedes-convergence-census":
                 errors.append(f"convergence.snapshot_relationships.{label}: unsupported relation")
-            max_age = relation.get("max_age_seconds")
             observed = observed_times.get(label)
             if (
                 convergence_time is None
                 or observed is None
-                or not isinstance(max_age, int)
-                or isinstance(max_age, bool)
-                or max_age <= 0
-                or not 0 <= (convergence_time - observed).total_seconds() <= max_age
+                or relation.get("max_age_seconds") != SNAPSHOT_MAX_AGE_SECONDS
+                or not 0
+                <= (convergence_time - observed).total_seconds()
+                <= SNAPSHOT_MAX_AGE_SECONDS
             ):
                 errors.append(f"convergence.snapshot_relationships.{label}: observations are not contemporaneous")
 
@@ -211,6 +305,7 @@ def validate_documents(
 
     branches = unique(convergence.get("branches"), "id", "convergence.branches", errors)
     branch_ids = {record.get("id") for record in branches}
+    branch_by_id = {record.get("id"): record for record in branches}
     if branch_ids != EXPECTED_BRANCHES:
         errors.append("convergence: branch snapshot is incomplete")
     for record in branches:
@@ -226,6 +321,10 @@ def validate_documents(
         branch = record.get("branch")
         if branch is not None and branch not in branch_ids:
             errors.append(f"convergence.worktrees[{record.get('id')}]: unknown branch {branch!r}")
+        elif branch is not None and record.get("head") != branch_by_id[branch].get("head"):
+            errors.append(
+                f"convergence.worktrees[{record.get('id')}]: head disagrees with branch {branch!r}"
+            )
         if not GIT_SHA.fullmatch(str(record.get("head", ""))):
             errors.append(f"convergence.worktrees[{record.get('id')}]: head must be a full Git object id")
         if record.get("cleanup_authorized") is not False:
@@ -289,6 +388,8 @@ def validate_documents(
 
     copy_floor = 2
     custody_roots = unique(custody.get("roots"), "id", "custody.roots", errors)
+    if {record.get("id") for record in custody_roots} != EXPECTED_CUSTODY_ROOTS:
+        errors.append("custody: protected root snapshot is incomplete")
     worktree_by_id = {record.get("id"): record for record in worktrees}
     for record in custody_roots:
         copies = record.get("independent_verified_copies")
@@ -304,14 +405,15 @@ def validate_documents(
             medium = copy.get("medium_id")
             digest = copy.get("manifest_sha256")
             medium_ok = isinstance(medium, str) and bool(medium.strip())
+            normalized_medium = medium.strip() if medium_ok else None
             digest_ok = isinstance(digest, str) and bool(SHA256.fullmatch(digest))
             verified = copy.get("verified") is True
-            if not medium_ok or medium in media:
+            if not medium_ok or normalized_medium in media:
                 errors.append(f"custody.roots[{record.get('id')}]: copy media must be independent")
             if not verified or not digest_ok:
                 errors.append(f"custody.roots[{record.get('id')}]: invalid checksum copy receipt")
             if medium_ok and verified and digest_ok:
-                media.add(medium)
+                media.add(normalized_medium)
                 manifest_digests.add(digest)
 
         if len(manifest_digests) > 1:
@@ -329,53 +431,41 @@ def validate_documents(
         human_ok = acceptance.get("ok") is True
         restore_receipt = restore.get("receipt")
         acceptance_receipt = acceptance.get("receipt")
-        if restore_ok and not (
-            isinstance(restore_receipt, str) and bool(DURABLE_RECEIPT.fullmatch(restore_receipt))
-        ):
+        restore_receipt_ok = durable_receipt(restore_receipt, root)
+        acceptance_receipt_ok = durable_receipt(acceptance_receipt, root)
+        if restore_ok and not restore_receipt_ok:
             errors.append(f"custody.roots[{record.get('id')}]: clean restore lacks a durable receipt")
-        if human_ok and not (
-            isinstance(acceptance_receipt, str) and bool(DURABLE_RECEIPT.fullmatch(acceptance_receipt))
-        ):
+        if human_ok and not acceptance_receipt_ok:
             errors.append(f"custody.roots[{record.get('id')}]: owner acceptance lacks a durable receipt")
         cleanup_authorized = record.get("cleanup_authorized")
         if not isinstance(cleanup_authorized, bool):
             errors.append(f"custody.roots[{record.get('id')}]: cleanup_authorized must be an explicit boolean")
+        linked = worktree_by_id.get(record.get("id"))
         eligible = (
             len(media) >= copy_floor
             and len(manifest_digests) == 1
             and restore_ok
-            and isinstance(restore_receipt, str)
-            and bool(DURABLE_RECEIPT.fullmatch(restore_receipt))
+            and restore_receipt_ok
             and human_ok
-            and isinstance(acceptance_receipt, str)
-            and bool(DURABLE_RECEIPT.fullmatch(acceptance_receipt))
+            and acceptance_receipt_ok
             and record.get("tracked_tree_clean") is True
+            and linked is not None
+            and linked.get("tracked_clean") is True
         )
         if cleanup_authorized is True and not eligible:
             errors.append(f"custody.roots[{record.get('id')}]: cleanup bypasses copy/restore/acceptance gates")
         if cleanup_authorized is False and record.get("status") != "blocked":
             errors.append(f"custody.roots[{record.get('id')}]: retained material must be classified blocked")
-        linked = worktree_by_id.get(record.get("id"))
         if not linked or linked.get("cleanup_authorized") is not False:
             errors.append(f"custody.roots[{record.get('id')}]: no fail-closed worktree cross-reference")
 
     source = archive.get("source") or {}
-    if source.get("merge_wholesale") is not False:
-        errors.append("archive: predecessor branch must never be a wholesale merge candidate")
-    if not GIT_SHA.fullmatch(str(source.get("commit", ""))):
-        errors.append("archive: source commit must be exact")
+    if source != EXPECTED_ARCHIVE_SOURCE:
+        errors.append(
+            "archive: source repository, branch, commit, and wholesale merge prohibition must remain exact"
+        )
     artifacts = unique(archive.get("artifacts"), "id", "archive.artifacts", errors)
-    required_artifacts = {
-        "visitor-pose-prototype",
-        "stateful-spatial-score-prototype",
-        "browser-audio-harness",
-        "cloudflare-deployment-experiment",
-        "theoretical-framework",
-        "installation-proposal",
-        "submission-attestation",
-        "private-brainstorm-history",
-    }
-    if {record.get("id") for record in artifacts} != required_artifacts:
+    if {record.get("id") for record in artifacts} != set(EXPECTED_ARCHIVE_ARTIFACTS):
         errors.append("archive: disposition matrix is incomplete")
     for record in artifacts:
         paths = record.get("paths")
@@ -383,6 +473,9 @@ def validate_documents(
             errors.append(f"archive.artifacts[{record.get('id')}]: paths must be safe relative paths")
         if not str(record.get("disposition", "")).strip():
             errors.append(f"archive.artifacts[{record.get('id')}]: missing disposition")
+        expected = EXPECTED_ARCHIVE_ARTIFACTS.get(record.get("id"))
+        if expected is not None and any(record.get(key) != value for key, value in expected.items()):
+            errors.append(f"archive.artifacts[{record.get('id')}]: disposition decision drifted")
     brainstorm = next((record for record in artifacts if record.get("id") == "private-brainstorm-history"), None)
     if not brainstorm or brainstorm.get("status") != "not recorded" or "cannot be reconstructed" not in str(
         brainstorm.get("disposition", "")
@@ -414,7 +507,7 @@ def audit(root: Path = ROOT) -> list[str]:
         closeout = (root / CLOSEOUT).read_text(encoding="utf-8")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return [str(exc)]
-    return validate_documents(convergence, custody, archive, closeout)
+    return validate_documents(convergence, custody, archive, closeout, root)
 
 
 def main() -> int:

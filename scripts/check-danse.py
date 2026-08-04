@@ -938,12 +938,13 @@ def check_convergence_receipts() -> None:
                 and isinstance(copy.get("manifest_sha256"), str)
                 and bool(re.fullmatch(r"[0-9a-f]{64}", copy["manifest_sha256"]))
             ]
-            media = {copy["medium_id"] for copy in valid}
+            media = {copy["medium_id"].strip() for copy in valid}
             manifests = {copy["manifest_sha256"] for copy in valid}
             restore = root.get("restore_rehearsal") or {}
             acceptance = root.get("human_acceptance") or {}
             eligible = (
-                len(media) >= required
+                result.returncode == 0
+                and len(media) >= required
                 and len(manifests) == 1
                 and restore.get("ok") is True
                 and isinstance(restore.get("receipt"), str)

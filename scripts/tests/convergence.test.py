@@ -15,7 +15,8 @@ def load_module():
     spec = importlib.util.spec_from_file_location(
         "danse_convergence_test", ROOT / "scripts/check-convergence.py"
     )
-    assert spec and spec.loader
+    if spec is None or spec.loader is None:
+        raise RuntimeError("convergence checker module could not be loaded")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -84,6 +85,16 @@ class ConvergenceReceiptTest(unittest.TestCase):
         value["stashes"].pop("canonical_repository")
         self.assertTrue(any("stash namespace snapshot is incomplete" in item for item in errors(convergence=value)))
 
+    def test_custody_root_inventory_is_exact(self) -> None:
+        value = copy.deepcopy(CUSTODY)
+        value["roots"].pop()
+        self.assertTrue(any("protected root snapshot is incomplete" in item for item in errors(custody=value)))
+
+    def test_attached_worktree_head_must_match_its_branch(self) -> None:
+        value = copy.deepcopy(CONVERGENCE)
+        value["worktrees"][0]["head"] = "f" * 40
+        self.assertTrue(any("head disagrees with branch" in item for item in errors(convergence=value)))
+
     def test_unrecorded_conversation_cannot_be_promoted(self) -> None:
         value = copy.deepcopy(CONVERGENCE)
         outcome = next(item for item in value["agent_outcomes"] if item["id"] == "unrecorded-conversations")
@@ -103,6 +114,15 @@ class ConvergenceReceiptTest(unittest.TestCase):
         root["independent_verified_copies"] = [
             {"medium_id": "same", "manifest_sha256": "a" * 64, "verified": True},
             {"medium_id": "same", "manifest_sha256": "a" * 64, "verified": True},
+        ]
+        self.assertTrue(any("copy media must be independent" in item for item in errors(custody=value)))
+
+    def test_whitespace_cannot_make_one_medium_look_independent(self) -> None:
+        value = copy.deepcopy(CUSTODY)
+        root = value["roots"][0]
+        root["independent_verified_copies"] = [
+            {"medium_id": "archive-a", "manifest_sha256": "a" * 64, "verified": True},
+            {"medium_id": " archive-a ", "manifest_sha256": "a" * 64, "verified": True},
         ]
         self.assertTrue(any("copy media must be independent" in item for item in errors(custody=value)))
 
@@ -139,6 +159,17 @@ class ConvergenceReceiptTest(unittest.TestCase):
                 self.assertTrue(any("clean restore lacks a durable receipt" in item for item in found))
                 self.assertTrue(any("owner acceptance lacks a durable receipt" in item for item in found))
 
+    def test_local_durable_receipt_must_exist_and_be_tracked(self) -> None:
+        for receipt in ("docs/does-not-exist", "docs/../../missing"):
+            with self.subTest(receipt=receipt):
+                value = copy.deepcopy(CUSTODY)
+                root = value["roots"][0]
+                root["restore_rehearsal"] = {"ok": True, "receipt": receipt}
+                self.assertTrue(
+                    any("clean restore lacks a durable receipt" in item for item in errors(custody=value))
+                )
+        self.assertTrue(CHECK.durable_receipt("docs/session-closeout.md", ROOT))
+
     def test_cleanup_authorization_must_be_an_explicit_boolean(self) -> None:
         value = copy.deepcopy(CUSTODY)
         value["roots"][0].pop("cleanup_authorized")
@@ -155,15 +186,69 @@ class ConvergenceReceiptTest(unittest.TestCase):
         found = errors(convergence=convergence, custody=stale)
         self.assertTrue(any("observations are not contemporaneous" in item for item in found))
 
+    def test_receipt_cannot_choose_a_larger_contemporaneous_window(self) -> None:
+        stale = copy.deepcopy(CUSTODY)
+        stale["recorded_at"] = "2026-08-03T01:27:26Z"
+        convergence = copy.deepcopy(CONVERGENCE)
+        relation = convergence["snapshot_relationships"]["custody"]
+        relation["recorded_at"] = stale["recorded_at"]
+        relation["max_age_seconds"] = 100_000
+        self.assertTrue(
+            any(
+                "observations are not contemporaneous" in item
+                for item in errors(convergence=convergence, custody=stale)
+            )
+        )
+
+    def test_dirty_linked_worktree_blocks_cleanup(self) -> None:
+        custody = copy.deepcopy(CUSTODY)
+        root = custody["roots"][0]
+        root["independent_verified_copies"] = [
+            {"medium_id": "archive-a", "manifest_sha256": "a" * 64, "verified": True},
+            {"medium_id": "archive-b", "manifest_sha256": "a" * 64, "verified": True},
+        ]
+        root["restore_rehearsal"] = {"ok": True, "receipt": "docs/session-closeout.md"}
+        root["human_acceptance"] = {"ok": True, "receipt": "docs/session-closeout.md"}
+        root["status"] = "merged"
+        root["cleanup_authorized"] = True
+        convergence = copy.deepcopy(CONVERGENCE)
+        linked = next(item for item in convergence["worktrees"] if item["id"] == root["id"])
+        linked["tracked_clean"] = False
+        self.assertTrue(
+            any(
+                "cleanup bypasses copy/restore/acceptance gates" in item
+                for item in errors(convergence=convergence, custody=custody)
+            )
+        )
+
     def test_wholesale_archive_merge_fails(self) -> None:
         value = copy.deepcopy(ARCHIVE)
         value["source"]["merge_wholesale"] = True
         self.assertTrue(any("wholesale merge" in item for item in errors(archive=value)))
 
+    def test_archive_source_identity_is_exact(self) -> None:
+        for field, replacement in (
+            ("repository", "someone/else"),
+            ("branch", "archive/unrelated"),
+        ):
+            with self.subTest(field=field):
+                value = copy.deepcopy(ARCHIVE)
+                value["source"][field] = replacement
+                self.assertTrue(any("source repository" in item for item in errors(archive=value)))
+
     def test_missing_archive_disposition_fails(self) -> None:
         value = copy.deepcopy(ARCHIVE)
         value["artifacts"].pop()
         self.assertTrue(any("disposition matrix is incomplete" in item for item in errors(archive=value)))
+
+    def test_archive_disposition_decisions_are_immutable(self) -> None:
+        value = copy.deepcopy(ARCHIVE)
+        artifact = next(
+            item for item in value["artifacts"] if item["id"] == "cloudflare-deployment-experiment"
+        )
+        artifact["status"] = "ported"
+        artifact["disposition"] = "Merge this workflow."
+        self.assertTrue(any("disposition decision drifted" in item for item in errors(archive=value)))
 
 
 if __name__ == "__main__":
