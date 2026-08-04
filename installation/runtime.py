@@ -29,6 +29,7 @@ try:
     from .contract import (
         ContractError,
         load_json,
+        load_json_bytes,
         load_reference_contracts,
         runtime_plan,
     )
@@ -36,11 +37,25 @@ except ImportError:  # Direct `python3 installation/runtime.py` execution.
     from contract import (  # type: ignore[no-redef]
         ContractError,
         load_json,
+        load_json_bytes,
         load_reference_contracts,
         runtime_plan,
     )
 
 TELEMETRY_SCHEMA = "danse.installation.telemetry.v1"
+
+
+def canonical_relative_path(value: Any, label: str) -> PurePosixPath:
+    if not isinstance(value, str) or "\\" in value:
+        raise ContractError(f"{label} must be a canonical relative path")
+    pure = PurePosixPath(value)
+    if (
+        pure.is_absolute()
+        or pure.as_posix() != value
+        or any(part in {"", ".", ".."} for part in pure.parts)
+    ):
+        raise ContractError(f"{label} must be a canonical relative path")
+    return pure
 
 
 class Telemetry:
@@ -92,79 +107,64 @@ def terminate(process: subprocess.Popen[Any]) -> None:
             pass
 
 
-def open_verified_launcher(root: Path, launcher: dict[str, Any]) -> int:
-    """Open and hash the launcher through no-follow directory descriptors.
-
-    The returned descriptor, rather than its mutable pathname, is the byte source
-    from which the private executable snapshot is made.
-    """
-    relative = launcher.get("path")
-    if not isinstance(relative, str):
-        raise ContractError("runtime launcher path is invalid")
-    pure = PurePosixPath(relative)
-    if (
-        os.name != "posix"
-        or pure.is_absolute()
-        or pure.as_posix() != relative
-        or any(part in {"", ".", ".."} for part in pure.parts)
-        or not all(
-            hasattr(os, name) for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW")
-        )
+def open_verified_release_file(root: Path, record: dict[str, Any]) -> int:
+    """Open and hash one manifest record through no-follow descriptors."""
+    relative = record.get("path")
+    pure = canonical_relative_path(relative, "runtime release path")
+    if os.name != "posix" or not all(
+        hasattr(os, name) for name in ("O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW")
     ):
-        raise ContractError(
-            "descriptor-bound launcher execution is unavailable or unsafe"
-        )
+        raise ContractError("descriptor-bound release access is unavailable or unsafe")
     directory_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
     file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
     directories: list[int] = []
-    launcher_fd: int | None = None
+    file_fd: int | None = None
     try:
         directories.append(os.open(root, directory_flags))
         for part in pure.parts[:-1]:
             directories.append(os.open(part, directory_flags, dir_fd=directories[-1]))
-        launcher_fd = os.open(pure.parts[-1], file_flags, dir_fd=directories[-1])
-        metadata = os.fstat(launcher_fd)
+        file_fd = os.open(pure.parts[-1], file_flags, dir_fd=directories[-1])
+        metadata = os.fstat(file_fd)
+        executable = record.get("executable")
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_size != launcher.get("bytes")
-            or not metadata.st_mode & 0o111
+            or metadata.st_size != record.get("bytes")
+            or not isinstance(executable, bool)
+            or bool(metadata.st_mode & 0o111) != executable
         ):
-            raise ContractError("runtime launcher identity or mode drifted")
+            raise ContractError("runtime release file identity or mode drifted")
         digest = hashlib.sha256()
-        os.lseek(launcher_fd, 0, os.SEEK_SET)
-        for block in iter(lambda: os.read(launcher_fd, 1024 * 1024), b""):
+        os.lseek(file_fd, 0, os.SEEK_SET)
+        for block in iter(lambda: os.read(file_fd, 1024 * 1024), b""):
             digest.update(block)
-        os.lseek(launcher_fd, 0, os.SEEK_SET)
-        after = os.fstat(launcher_fd)
-        if digest.hexdigest() != launcher.get("sha256") or (
+        os.lseek(file_fd, 0, os.SEEK_SET)
+        after = os.fstat(file_fd)
+        if digest.hexdigest() != record.get("sha256") or (
             metadata.st_dev,
             metadata.st_ino,
             metadata.st_size,
         ) != (after.st_dev, after.st_ino, after.st_size):
-            raise ContractError("runtime launcher bytes drifted")
-        return launcher_fd
+            raise ContractError("runtime release file bytes drifted")
+        return file_fd
     except (OSError, ContractError):
-        if launcher_fd is not None:
-            os.close(launcher_fd)
+        if file_fd is not None:
+            os.close(file_fd)
         raise
     finally:
         for descriptor in reversed(directories):
             os.close(descriptor)
 
 
-def snapshot_verified_launcher(
-    root: Path, launcher: dict[str, Any]
-) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
-    """Copy verified bytes into a private, read/execute-only launch snapshot."""
-    source_fd = open_verified_launcher(root, launcher)
-    temporary = tempfile.TemporaryDirectory(prefix="danse-launcher-")
-    snapshot = Path(temporary.name) / "launcher"
-    snapshot_fd: int | None = None
+def _copy_release_file(
+    source_fd: int, destination: Path, record: dict[str, Any]
+) -> None:
+    destination_fd: int | None = None
     try:
-        snapshot_fd = os.open(
-            snapshot,
+        mode = 0o500 if record["executable"] else 0o400
+        destination_fd = os.open(
+            destination,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
-            0o500,
+            mode,
         )
         digest = hashlib.sha256()
         byte_count = 0
@@ -174,41 +174,158 @@ def snapshot_verified_launcher(
             byte_count += len(block)
             remaining = memoryview(block)
             while remaining:
-                written = os.write(snapshot_fd, remaining)
+                written = os.write(destination_fd, remaining)
                 if written <= 0:
-                    raise OSError("launcher snapshot write made no progress")
+                    raise OSError("release snapshot write made no progress")
                 remaining = remaining[written:]
-        os.fsync(snapshot_fd)
-        metadata = os.fstat(snapshot_fd)
+        os.fsync(destination_fd)
+        metadata = os.fstat(destination_fd)
         if (
-            byte_count != launcher.get("bytes")
-            or metadata.st_size != launcher.get("bytes")
-            or digest.hexdigest() != launcher.get("sha256")
+            byte_count != record["bytes"]
+            or metadata.st_size != record["bytes"]
+            or digest.hexdigest() != record["sha256"]
         ):
-            raise ContractError("runtime launcher changed while being snapshotted")
-        os.fchmod(snapshot_fd, 0o500)
-        os.close(snapshot_fd)
-        snapshot_fd = None
-        os.chmod(temporary.name, 0o500)
-        return snapshot, temporary
-    except (OSError, ContractError):
-        if snapshot_fd is not None:
-            os.close(snapshot_fd)
-        temporary.cleanup()
-        raise
+            raise ContractError("runtime release changed while being snapshotted")
+        os.fchmod(destination_fd, mode)
     finally:
-        os.close(source_fd)
+        if destination_fd is not None:
+            os.close(destination_fd)
 
 
-def cleanup_launcher_snapshot(temporary: tempfile.TemporaryDirectory[str]) -> None:
-    try:
-        os.chmod(temporary.name, 0o700)
-    except OSError:
-        pass
+def cleanup_release_snapshot(temporary: tempfile.TemporaryDirectory[str]) -> None:
+    root = Path(temporary.name)
+    if root.exists():
+        for current, directories, _files in os.walk(root, topdown=True):
+            try:
+                Path(current).chmod(0o700)
+            except OSError:
+                pass
+            directories.sort()
     try:
         temporary.cleanup()
     except OSError:
         pass
+
+
+def snapshot_verified_release(
+    root: Path, plan: dict[str, Any]
+) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    """Stream the complete admitted release into one private immutable snapshot."""
+    manifest = plan.get("release_manifest")
+    records = plan.get("release_files")
+    if not isinstance(manifest, dict) or set(manifest) != {"path", "content"}:
+        raise ContractError("runtime release manifest snapshot is malformed")
+    if not isinstance(records, list) or not records:
+        raise ContractError("runtime plan has no canonical release inventory")
+    manifest_path = manifest["path"]
+    content = manifest["content"]
+    manifest_pure = canonical_relative_path(
+        manifest_path, "runtime release manifest path"
+    )
+    if not isinstance(content, str):
+        raise ContractError("runtime release manifest snapshot is malformed")
+    manifest_bytes = content.encode("utf-8")
+    manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    if manifest_digest != plan.get("release_manifest_sha256"):
+        raise ContractError("runtime release manifest snapshot digest drifted")
+    document = load_json_bytes(manifest_bytes, "runtime release manifest")
+    if set(document) != {"schema", "spec_contract_sha256", "files"}:
+        raise ContractError("runtime release manifest shape drifted")
+    if document["spec_contract_sha256"] != plan.get("spec_contract_sha256"):
+        raise ContractError("runtime release manifest contract drifted")
+    if document["files"] != records:
+        raise ContractError("runtime release inventory disagrees with its manifest")
+
+    paths: list[str] = []
+    by_path: dict[str, dict[str, Any]] = {}
+    for index, record in enumerate(records):
+        if not isinstance(record, dict) or set(record) != {
+            "path",
+            "bytes",
+            "sha256",
+            "executable",
+        }:
+            raise ContractError("runtime release inventory is malformed")
+        pure = canonical_relative_path(
+            record["path"], f"runtime release inventory[{index}].path"
+        )
+        relative = pure.as_posix()
+        byte_count = record["bytes"]
+        digest = record["sha256"]
+        if (
+            isinstance(byte_count, bool)
+            or not isinstance(byte_count, int)
+            or byte_count < 0
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not isinstance(record["executable"], bool)
+        ):
+            raise ContractError("runtime release inventory is malformed")
+        paths.append(relative)
+        by_path[relative] = record
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ContractError("runtime release inventory must be unique and sorted")
+    if manifest_pure.as_posix() in by_path:
+        raise ContractError("runtime release manifest may not inventory itself")
+    argv = plan.get("argv")
+    launcher = plan.get("launcher")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not isinstance(argv[0], str)
+        or not isinstance(launcher, dict)
+        or by_path.get(argv[0]) != launcher
+        or launcher.get("executable") is not True
+    ):
+        raise ContractError("runtime launcher disagrees with the release inventory")
+
+    temporary = tempfile.TemporaryDirectory(prefix="danse-release-")
+    snapshot_root = Path(temporary.name)
+    try:
+        for record in records:
+            relative = record["path"]
+            destination = snapshot_root.joinpath(
+                *canonical_relative_path(relative, "runtime release path").parts
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            source_fd = open_verified_release_file(root, record)
+            try:
+                _copy_release_file(source_fd, destination, record)
+            finally:
+                os.close(source_fd)
+
+        destination = snapshot_root.joinpath(*manifest_pure.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        manifest_fd = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o400,
+        )
+        try:
+            remaining = memoryview(manifest_bytes)
+            while remaining:
+                written = os.write(manifest_fd, remaining)
+                if written <= 0:
+                    raise OSError("release manifest snapshot write made no progress")
+                remaining = remaining[written:]
+            os.fsync(manifest_fd)
+            if os.fstat(manifest_fd).st_size != len(manifest_bytes):
+                raise ContractError("runtime release manifest snapshot is incomplete")
+            os.fchmod(manifest_fd, 0o400)
+        finally:
+            os.close(manifest_fd)
+
+        directories = [snapshot_root]
+        directories.extend(path for path in snapshot_root.rglob("*") if path.is_dir())
+        for directory in sorted(
+            directories, key=lambda path: len(path.parts), reverse=True
+        ):
+            directory.chmod(0o500)
+        return snapshot_root, temporary
+    except (OSError, ContractError):
+        cleanup_release_snapshot(temporary)
+        raise
 
 
 def supervise(
@@ -238,6 +355,9 @@ def supervise(
             "DANSE_INSTALLATION_CONTRACT_SHA256": plan["spec_contract_sha256"],
             "DANSE_INSTALLATION_EVIDENCE_ID": plan["evidence_id"],
             "DANSE_INSTALLATION_EVIDENCE_SHA256": plan["evidence_sha256"],
+            "DANSE_INSTALLATION_RELEASE_MANIFEST_SHA256": plan[
+                "release_manifest_sha256"
+            ],
             "DANSE_INSTALLATION_LAUNCHER_SHA256": launcher["sha256"],
             "DANSE_INSTALLATION_OUTPUTS": ",".join(plan["outputs"]),
             "DANSE_RIVER_SEED": str(plan["river"]["seed"]),
@@ -246,117 +366,127 @@ def supervise(
         }
     )
 
+    try:
+        if launcher["path"] != relative_argv[0]:
+            raise ContractError("runtime launcher path drifted")
+        snapshot_root, temporary = snapshot_verified_release(root, plan)
+    except (ContractError, OSError):
+        telemetry.emit("release-integrity-failed", attempt=0)
+        return 78
+
+    snapshot_launcher = snapshot_root.joinpath(
+        *canonical_relative_path(launcher["path"], "runtime launcher path").parts
+    )
+    argv = list(relative_argv)
     restart_times: list[float] = []
     attempt = 0
-    while True:
-        now = clock()
-        restart_times = [
-            stamp
-            for stamp in restart_times
-            if now - stamp <= recovery["window_seconds"]
-        ]
-        if attempt > 0:
-            if len(restart_times) >= recovery["max_restarts"]:
-                telemetry.emit(
-                    "recovery-budget-exhausted",
-                    attempt=attempt,
-                    restarts=len(restart_times),
-                )
-                return 75
-            delay = recovery["backoff_seconds"][len(restart_times)]
-            telemetry.emit(
-                "restart-admitted", attempt=attempt + 1, backoff_seconds=delay
-            )
-            sleep(delay)
-            restart_times.append(clock())
-
-        attempt += 1
-        try:
-            if launcher["path"] != relative_argv[0]:
-                raise ContractError("runtime launcher path drifted")
-            snapshot, temporary = snapshot_verified_launcher(root, launcher)
-        except (ContractError, OSError):
-            telemetry.emit("launcher-integrity-failed", attempt=attempt)
-            return 78
-        argv = list(relative_argv)
-        telemetry.emit("launcher-start", attempt=attempt)
-        try:
-            process = popen(
-                argv,
-                cwd=root,
-                env=environment,
-                executable=str(snapshot),
-                shell=False,
-            )
-        except OSError as exc:
-            telemetry.emit("launcher-error", attempt=attempt, error=type(exc).__name__)
-            cleanup_launcher_snapshot(temporary)
-            continue
-
-        started = clock()
-        ever_healthy = plan["health_url"] is None
-        consecutive_failures = 0
-        forced_failure: str | None = None
-        try:
-            while process.poll() is None:
-                if plan["health_url"] is not None:
-                    ok = health_probe(
-                        plan["health_url"], health["probe_timeout_seconds"]
+    try:
+        while True:
+            now = clock()
+            restart_times = [
+                stamp
+                for stamp in restart_times
+                if now - stamp <= recovery["window_seconds"]
+            ]
+            if attempt > 0:
+                if len(restart_times) >= recovery["max_restarts"]:
+                    telemetry.emit(
+                        "recovery-budget-exhausted",
+                        attempt=attempt,
+                        restarts=len(restart_times),
                     )
-                    if ok:
-                        if not ever_healthy:
-                            telemetry.emit("health-ready", attempt=attempt)
-                        ever_healthy = True
-                        consecutive_failures = 0
-                    else:
-                        consecutive_failures += 1
-                        telemetry.emit(
-                            "health-failed",
-                            attempt=attempt,
-                            consecutive=consecutive_failures,
-                        )
-                        elapsed = clock() - started
-                        startup_failed = (
-                            not ever_healthy
-                            and elapsed >= health["startup_timeout_seconds"]
-                        )
-                        runtime_failed = (
-                            ever_healthy
-                            and consecutive_failures
-                            >= health["max_consecutive_failures"]
-                        )
-                        if startup_failed or runtime_failed:
-                            forced_failure = (
-                                "startup-health" if startup_failed else "runtime-health"
-                            )
-                            terminate(process)
-                            break
-                sleep(health["probe_interval_seconds"])
-        except KeyboardInterrupt:
-            terminate(process)
-            telemetry.emit("operator-stop", attempt=attempt)
-            cleanup_launcher_snapshot(temporary)
-            return 130
+                    return 75
+                delay = recovery["backoff_seconds"][len(restart_times)]
+                telemetry.emit(
+                    "restart-admitted", attempt=attempt + 1, backoff_seconds=delay
+                )
+                sleep(delay)
+                restart_times.append(clock())
 
-        returncode = process.poll()
-        if returncode is None:
+            attempt += 1
+            telemetry.emit("launcher-start", attempt=attempt)
             try:
-                returncode = process.wait(timeout=1)
-            except (OSError, subprocess.TimeoutExpired):
+                process = popen(
+                    argv,
+                    cwd=snapshot_root,
+                    env=environment,
+                    executable=str(snapshot_launcher),
+                    shell=False,
+                )
+            except OSError as exc:
+                telemetry.emit(
+                    "launcher-error", attempt=attempt, error=type(exc).__name__
+                )
+                continue
+
+            started = clock()
+            ever_healthy = plan["health_url"] is None
+            consecutive_failures = 0
+            forced_failure: str | None = None
+            try:
+                while process.poll() is None:
+                    if plan["health_url"] is not None:
+                        ok = health_probe(
+                            plan["health_url"], health["probe_timeout_seconds"]
+                        )
+                        if ok:
+                            if not ever_healthy:
+                                telemetry.emit("health-ready", attempt=attempt)
+                            ever_healthy = True
+                            consecutive_failures = 0
+                        else:
+                            consecutive_failures += 1
+                            telemetry.emit(
+                                "health-failed",
+                                attempt=attempt,
+                                consecutive=consecutive_failures,
+                            )
+                            elapsed = clock() - started
+                            startup_failed = (
+                                not ever_healthy
+                                and elapsed >= health["startup_timeout_seconds"]
+                            )
+                            runtime_failed = (
+                                ever_healthy
+                                and consecutive_failures
+                                >= health["max_consecutive_failures"]
+                            )
+                            if startup_failed or runtime_failed:
+                                forced_failure = (
+                                    "startup-health"
+                                    if startup_failed
+                                    else "runtime-health"
+                                )
+                                terminate(process)
+                                break
+                    sleep(health["probe_interval_seconds"])
+            except KeyboardInterrupt:
                 terminate(process)
-                returncode = process.poll()
-        duration = max(0.0, clock() - started)
-        cleanup_launcher_snapshot(temporary)
-        if forced_failure is not None:
-            telemetry.emit("launcher-unhealthy", attempt=attempt, reason=forced_failure)
-        elif returncode == 0:
-            telemetry.emit("launcher-exit", attempt=attempt, returncode=0)
-            return 0
-        else:
-            telemetry.emit("launcher-exit", attempt=attempt, returncode=returncode)
-        if duration >= recovery["stable_seconds"]:
-            restart_times.clear()
-            telemetry.emit("recovery-window-reset", attempt=attempt)
+                telemetry.emit("operator-stop", attempt=attempt)
+                return 130
+
+            returncode = process.poll()
+            if returncode is None:
+                try:
+                    returncode = process.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    terminate(process)
+                    returncode = process.poll()
+            duration = max(0.0, clock() - started)
+            if forced_failure is not None:
+                telemetry.emit(
+                    "launcher-unhealthy", attempt=attempt, reason=forced_failure
+                )
+            elif returncode == 0:
+                telemetry.emit("launcher-exit", attempt=attempt, returncode=0)
+                return 0
+            else:
+                telemetry.emit("launcher-exit", attempt=attempt, returncode=returncode)
+            if duration >= recovery["stable_seconds"]:
+                restart_times.clear()
+                telemetry.emit("recovery-window-reset", attempt=attempt)
+    finally:
+        cleanup_release_snapshot(temporary)
 
 
 def parser() -> argparse.ArgumentParser:

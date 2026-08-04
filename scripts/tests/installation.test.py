@@ -57,8 +57,15 @@ def run(*command: str) -> subprocess.CompletedProcess[str]:
 
 def make_release(root: Path, spec: dict) -> None:
     (root / "bin").mkdir()
+    (root / "config").mkdir()
+    configuration = root / "config/fixture.txt"
+    configuration.write_text("fixture configuration\n", encoding="utf-8")
     launcher = root / "bin/danse-launcher"
-    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.write_text(
+        "#!/bin/sh\nIFS= read -r line < config/fixture.txt\n"
+        '[ "$line" = "fixture configuration" ]\n',
+        encoding="utf-8",
+    )
     launcher.chmod(0o755)
     manifest = {
         "schema": spec["release"]["manifest_schema"],
@@ -69,7 +76,13 @@ def make_release(root: Path, spec: dict) -> None:
                 "bytes": launcher.stat().st_size,
                 "sha256": file_digest(launcher),
                 "executable": True,
-            }
+            },
+            {
+                "path": "config/fixture.txt",
+                "bytes": configuration.stat().st_size,
+                "sha256": file_digest(configuration),
+                "executable": False,
+            },
         ],
     }
     (root / "release-manifest.json").write_text(
@@ -374,6 +387,15 @@ class InstallationContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "score bytes drifted"):
             validate_digital_twin(stale_source)
 
+        weakened_source = copy.deepcopy(self.spec)
+        score = next(
+            row for row in weakened_source["source_contracts"] if row["id"] == "score"
+        )
+        del score["embedded_contract_sha256"]
+        refresh_identity(weakened_source)
+        with self.assertRaisesRegex(ContractError, "score has an unknown shape"):
+            validate_digital_twin(weakened_source)
+
         wider_gate = copy.deepcopy(self.spec)
         wider_gate["calibration"]["thresholds"]["max_output_skew_ms"] = 100.0
         refresh_identity(wider_gate)
@@ -425,6 +447,16 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(
                 plan["launcher"]["sha256"],
                 file_digest(release / "bin/danse-launcher"),
+            )
+            self.assertEqual(
+                [record["path"] for record in plan["release_files"]],
+                ["bin/danse-launcher", "config/fixture.txt"],
+            )
+            self.assertEqual(
+                hashlib.sha256(
+                    plan["release_manifest"]["content"].encode("utf-8")
+                ).hexdigest(),
+                plan["release_manifest_sha256"],
             )
 
             evidence["venue"]["approved"] = False
@@ -482,8 +514,8 @@ class InstallationContractTest(unittest.TestCase):
             make_release(release, self.spec)
             evidence = evidence_for(self.spec, release)
             launcher = release / "bin/danse-launcher"
-            launcher.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
-            launcher.chmod(0o755)
+            original = launcher.read_bytes()
+            launcher.write_bytes(original[:-1] + b"#")
             with self.assertRaisesRegex(ContractError, "release file digest drifted"):
                 validate_evidence(
                     evidence, self.spec, phase="runtime", release_root=release
@@ -626,9 +658,19 @@ class InstallationContractTest(unittest.TestCase):
             output = io.StringIO()
             telemetry = Telemetry(output, clock=clock)
             calls = []
+            snapshot_configurations: list[bytes] = []
+            snapshot_manifests: list[bytes] = []
 
             def popen(argv, **kwargs):
                 calls.append((argv, kwargs))
+                snapshot_configurations.append(
+                    (Path(kwargs["cwd"]) / "config/fixture.txt").read_bytes()
+                )
+                snapshot_manifests.append(
+                    (
+                        Path(kwargs["cwd"]) / plan["release_manifest"]["path"]
+                    ).read_bytes()
+                )
                 return FailedProcess()
 
             result = supervise(
@@ -644,9 +686,22 @@ class InstallationContractTest(unittest.TestCase):
             self.assertTrue(all(call[1]["shell"] is False for call in calls))
             self.assertTrue(
                 all(
-                    Path(call[1]["executable"]).name == "launcher"
+                    Path(call[1]["executable"]).name == "danse-launcher"
                     and str(release) not in call[1]["executable"]
                     for call in calls
+                )
+            )
+            self.assertEqual(len({call[1]["cwd"] for call in calls}), 1)
+            self.assertNotEqual(calls[0][1]["cwd"], release)
+            self.assertEqual(
+                snapshot_configurations,
+                [b"fixture configuration\n"] * 4,
+            )
+            self.assertTrue(
+                all(
+                    hashlib.sha256(content).hexdigest()
+                    == plan["release_manifest_sha256"]
+                    for content in snapshot_manifests
                 )
             )
             self.assertTrue(
@@ -663,6 +718,13 @@ class InstallationContractTest(unittest.TestCase):
                     for call in calls
                 )
             )
+            self.assertTrue(
+                all(
+                    call[1]["env"]["DANSE_INSTALLATION_RELEASE_MANIFEST_SHA256"]
+                    == plan["release_manifest_sha256"]
+                    for call in calls
+                )
+            )
             records = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(
                 [row["sequence"] for row in records], list(range(len(records)))
@@ -670,16 +732,15 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(records[-1]["event"], "recovery-budget-exhausted")
             self.assertNotIn(str(release), output.getvalue())
 
-    def test_foreground_supervisor_rechecks_launcher_bytes_before_every_exec(
+    def test_foreground_supervisor_rechecks_every_release_file_before_exec(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             release = Path(temporary)
             make_release(release, self.spec)
             plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
-            launcher = release / "bin/danse-launcher"
-            launcher.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
-            launcher.chmod(0o755)
+            configuration = release / "config/fixture.txt"
+            configuration.write_text("drifted configuration\n", encoding="utf-8")
             output = io.StringIO()
             calls = []
 
@@ -692,7 +753,29 @@ class InstallationContractTest(unittest.TestCase):
             self.assertEqual(result, 78)
             self.assertEqual(calls, [])
             records = [json.loads(line) for line in output.getvalue().splitlines()]
-            self.assertEqual(records[-1]["event"], "launcher-integrity-failed")
+            self.assertEqual(records[-1]["event"], "release-integrity-failed")
+
+    def test_runtime_plan_cannot_weaken_the_authenticated_release_inventory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary)
+            make_release(release, self.spec)
+            plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
+            plan["release_files"].pop()
+            output = io.StringIO()
+            calls = []
+
+            result = supervise(
+                plan,
+                release,
+                Telemetry(output),
+                popen=lambda *args, **kwargs: calls.append((args, kwargs)),
+            )
+            self.assertEqual(result, 78)
+            self.assertEqual(calls, [])
+            records = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(records[-1]["event"], "release-integrity-failed")
 
     def test_verified_snapshot_survives_a_path_replacement_race(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -700,8 +783,10 @@ class InstallationContractTest(unittest.TestCase):
             make_release(release, self.spec)
             plan = runtime_plan(evidence_for(self.spec, release), self.spec, release)
             launcher = release / "bin/danse-launcher"
-            expected = launcher.read_bytes()
-            observed: list[bytes] = []
+            configuration = release / "config/fixture.txt"
+            expected_launcher = launcher.read_bytes()
+            expected_configuration = configuration.read_bytes()
+            observed: list[tuple[bytes, bytes]] = []
 
             def replace_during_popen(argv, **kwargs):
                 malicious = release / "bin/malicious"
@@ -709,9 +794,22 @@ class InstallationContractTest(unittest.TestCase):
                 malicious.chmod(0o755)
                 launcher.unlink()
                 launcher.symlink_to(malicious)
-                observed.append(Path(kwargs["executable"]).read_bytes())
+                malicious_configuration = release / "config/malicious.txt"
+                malicious_configuration.write_text(
+                    "malicious configuration\n", encoding="utf-8"
+                )
+                configuration.unlink()
+                configuration.symlink_to(malicious_configuration)
+                snapshot_root = Path(kwargs["cwd"])
+                observed.append(
+                    (
+                        Path(kwargs["executable"]).read_bytes(),
+                        (snapshot_root / "config/fixture.txt").read_bytes(),
+                    )
+                )
                 self.assertEqual(argv[0], "bin/danse-launcher")
                 self.assertNotEqual(Path(kwargs["executable"]), launcher)
+                self.assertNotEqual(snapshot_root, release)
                 return SuccessfulProcess()
 
             result = supervise(
@@ -721,8 +819,13 @@ class InstallationContractTest(unittest.TestCase):
                 popen=replace_during_popen,
             )
             self.assertEqual(result, 0)
-            self.assertEqual(observed, [expected])
-            self.assertNotEqual(observed[0], (release / "bin/malicious").read_bytes())
+            self.assertEqual(observed, [(expected_launcher, expected_configuration)])
+            self.assertNotEqual(
+                observed[0][0], (release / "bin/malicious").read_bytes()
+            )
+            self.assertNotEqual(
+                observed[0][1], (release / "config/malicious.txt").read_bytes()
+            )
 
     def test_verified_snapshot_launcher_executes_on_the_supported_host(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

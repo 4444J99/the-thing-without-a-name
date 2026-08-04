@@ -75,15 +75,19 @@ spec through review; never raise a threshold merely to obtain green output.
 
 1. From the venue-approved session, start `installation/runtime.py --run` in the
    foreground with the external evidence and canonical release root.
-2. Confirm `runtime-admitted`, `launcher-start`, and (when configured)
+2. Allow the supervisor to stream the complete manifested release into its
+   private runtime snapshot. This admission time and temporary-storage demand
+   count against the venue's 180-second wall-plug recovery budget and must be
+   proven on the approved host with the final release.
+3. Confirm `runtime-admitted`, `launcher-start`, and (when configured)
    `health-ready` telemetry before opening to visitors.
-3. Keep the terminal/console and emergency stop accessible to venue staff but
+4. Keep the terminal/console and emergency stop accessible to venue staff but
    outside the public projection field.
-4. The supervisor permits three restarts in a five-minute window. Repeated health
+5. The supervisor permits three restarts in a five-minute window. Repeated health
    failure exhausts the budget and stops; it never becomes an unbounded reboot
    loop. Investigate power, thermals, storage, release integrity, or hardware
    before restarting the supervisor manually.
-5. Interaction remains optional. Permission denial, no camera, dropout, and the
+6. Interaction remains optional. Permission denial, no camera, dropout, and the
    keyboard/touch accessibility path are normal supported states.
 
 ## Three wall-plug recovery proofs

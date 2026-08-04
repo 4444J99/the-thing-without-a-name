@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import stat
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -72,16 +73,23 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def load_json_bytes(data: bytes, label: str) -> dict[str, Any]:
+    try:
+        text = data.decode("utf-8")
+        value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"{label}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ContractError(f"{label}: root must be an object")
+    return value
+
+
 def load_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
-        )
-    except (OSError, json.JSONDecodeError) as exc:
+        data = path.read_bytes()
+    except OSError as exc:
         raise ContractError(f"{path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ContractError(f"{path}: root must be an object")
-    return value
+    return load_json_bytes(data, str(path))
 
 
 def canonical_sha256(value: Any) -> str:
@@ -199,6 +207,66 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _stable_file_bytes(path: Path, label: str) -> bytes:
+    """Read one regular file once and reject identity drift during the read."""
+    try:
+        with path.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            data = stream.read()
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise ContractError(f"{label} cannot be read") from exc
+    if not stat.S_ISREG(before.st_mode) or (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mode,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mode,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise ContractError(f"{label} changed while being read")
+    if len(data) != before.st_size:
+        raise ContractError(f"{label} byte count changed while being read")
+    return data
+
+
+def _stable_file_digest(path: Path, label: str) -> tuple[int, str, bool]:
+    """Hash one regular file through one descriptor and return its bound mode."""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise ContractError(f"{label} cannot be read") from exc
+    if not stat.S_ISREG(before.st_mode) or (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mode,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mode,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise ContractError(f"{label} changed while being hashed")
+    return before.st_size, digest.hexdigest(), bool(before.st_mode & 0o111)
+
+
 def _objects(value: Any, label: str, *, minimum: int = 1) -> list[dict[str, Any]]:
     if (
         not isinstance(value, list)
@@ -266,28 +334,27 @@ def validate_digital_twin(value: dict[str, Any], root: Path = ROOT) -> dict[str,
     if set(by_source) != REQUIRED_SOURCE_CONTRACTS:
         raise ContractError("digital twin source contract inventory is incomplete")
     for source_id, source in by_source.items():
-        allowed = {
-            "id",
-            "path",
-            "sha256",
-            "embedded_schema",
-            "embedded_contract_sha256",
-        }
-        if not set(source) <= allowed or not {"id", "path", "sha256"} <= set(source):
+        extras = {
+            "program": {"embedded_schema"},
+            "score": {"embedded_contract_sha256"},
+            "room-layout": {"embedded_contract_sha256"},
+        }.get(source_id, set())
+        if set(source) != {"id", "path", "sha256", *extras}:
             raise ContractError(f"source_contracts.{source_id} has an unknown shape")
         path = safe_file(root, source["path"], f"source_contracts.{source_id}.path")
-        if file_sha256(path) != _sha256(
+        source_bytes = _stable_file_bytes(path, f"source contract {source_id}")
+        if hashlib.sha256(source_bytes).hexdigest() != _sha256(
             source["sha256"], f"source_contracts.{source_id}.sha256"
         ):
             raise ContractError(f"source contract {source_id} bytes drifted")
         if "embedded_schema" in source:
-            document = load_json(path)
+            document = load_json_bytes(source_bytes, f"source contract {source_id}")
             if document.get("schema") != source["embedded_schema"]:
                 raise ContractError(
                     f"source contract {source_id} embedded schema drifted"
                 )
         if "embedded_contract_sha256" in source:
-            document = load_json(path)
+            document = load_json_bytes(source_bytes, f"source contract {source_id}")
             embedded = (document.get("identity") or {}).get("contract_sha256")
             if embedded != _sha256(
                 source["embedded_contract_sha256"],
@@ -957,7 +1024,7 @@ def _release_inventory(root: Path, manifest_relative: str) -> set[str]:
 
 def _validate_release(
     release: dict[str, Any], release_root: Path, spec: dict[str, Any]
-) -> tuple[Path, dict[str, dict[str, Any]]]:
+) -> tuple[Path, dict[str, dict[str, Any]], bytes]:
     _exact_keys(
         release,
         {"root_kind", "manifest_path", "manifest_sha256", "developer_checkout"},
@@ -988,11 +1055,12 @@ def _validate_release(
     manifest = safe_file(
         root, release["manifest_path"], "evidence.release.manifest_path"
     )
-    if file_sha256(manifest) != _receipt_sha(
+    manifest_bytes = _stable_file_bytes(manifest, "canonical release manifest")
+    if hashlib.sha256(manifest_bytes).hexdigest() != _receipt_sha(
         release["manifest_sha256"], "evidence.release.manifest_sha256"
     ):
         raise ContractError("canonical release manifest digest does not match evidence")
-    document = load_json(manifest)
+    document = load_json_bytes(manifest_bytes, "canonical release manifest")
     _exact_keys(
         document,
         {"schema", "spec_contract_sha256", "files"},
@@ -1035,18 +1103,28 @@ def _validate_release(
             isinstance(byte_count, bool)
             or not isinstance(byte_count, int)
             or byte_count < 0
-            or path.stat().st_size != byte_count
         ):
             raise ContractError(
                 f"canonical release file byte count drifted: {relative}"
             )
-        if file_sha256(path) != _sha256(
+        expected_digest = _sha256(
             record["sha256"], f"canonical release file {relative}.sha256"
-        ):
-            raise ContractError(f"canonical release file digest drifted: {relative}")
+        )
         executable = record["executable"]
-        actual_executable = bool(path.stat().st_mode & 0o111)
-        if not isinstance(executable, bool) or executable != actual_executable:
+        if not isinstance(executable, bool):
+            raise ContractError(
+                f"canonical release file executable mode drifted: {relative}"
+            )
+        actual_bytes, actual_digest, actual_executable = _stable_file_digest(
+            path, f"canonical release file {relative}"
+        )
+        if actual_bytes != byte_count:
+            raise ContractError(
+                f"canonical release file byte count drifted: {relative}"
+            )
+        if actual_digest != expected_digest:
+            raise ContractError(f"canonical release file digest drifted: {relative}")
+        if executable != actual_executable:
             raise ContractError(
                 f"canonical release file executable mode drifted: {relative}"
             )
@@ -1057,7 +1135,7 @@ def _validate_release(
         raise ContractError(
             f"canonical release inventory drifted; missing={missing}, extra={extra}"
         )
-    return root, by_path
+    return root, by_path, manifest_bytes
 
 
 def _validate_health_url(value: Any) -> str | None:
@@ -1314,7 +1392,7 @@ def validate_evidence(
         )
     _receipt_sha(geometry["receipt_sha256"], "venue geometry receipt")
 
-    root, release_files = _validate_release(value["release"], release_root, spec)
+    root, release_files, _ = _validate_release(value["release"], release_root, spec)
 
     hardware = _exact_keys(
         value["hardware"],
@@ -1587,7 +1665,9 @@ def runtime_plan(
 ) -> dict[str, Any]:
     validate_evidence(value, spec, phase="runtime", release_root=release_root)
     runtime = value["runtime"]
-    _, release_files = _validate_release(value["release"], release_root, spec)
+    _, release_files, manifest_bytes = _validate_release(
+        value["release"], release_root, spec
+    )
     launcher = release_files[runtime["argv"][0]]
     return {
         "schema": "danse.installation.runtime-plan.v1",
@@ -1595,6 +1675,11 @@ def runtime_plan(
         "evidence_id": value["evidence_id"],
         "evidence_sha256": canonical_sha256(value),
         "release_manifest_sha256": value["release"]["manifest_sha256"],
+        "release_manifest": {
+            "path": value["release"]["manifest_path"],
+            "content": manifest_bytes.decode("utf-8"),
+        },
+        "release_files": copy.deepcopy(list(release_files.values())),
         "launcher": copy.deepcopy(launcher),
         "argv": list(runtime["argv"]),
         "health_url": runtime["health_url"],
