@@ -1,0 +1,51 @@
+{
+  "schema": "danse.private-custody.v1",
+  "recorded_at": "2026-08-04T01:27:26Z",
+  "policy": {
+    "required_independent_verified_copies": 2,
+    "clean_restore_required": true,
+    "human_acceptance_required": true,
+    "tracked_receipt_is_redacted": true
+  },
+  "roots": [
+    {
+      "id": "canonical-closeout-material-custody",
+      "status": "blocked",
+      "location_class": "ignored canonical worktree storage",
+      "approximate_bytes_label": "56 GiB",
+      "observed_ignored_items": 1203,
+      "tracked_tree_clean": true,
+      "contents": [
+        {"class": "render", "approximate_bytes_label": "21 GiB"},
+        {"class": "submission-package-at-967cf2d", "approximate_bytes_label": "17 GiB"},
+        {"class": "submission-package-at-aa8afef", "approximate_bytes_label": "17 GiB"},
+        {"class": "submission-state", "approximate_bytes_label": "2.6 MiB"},
+        {"class": "reel-mode-proof", "approximate_bytes_label": "1.7 MiB"}
+      ],
+      "independent_verified_copies": [],
+      "restore_rehearsal": {"ok": false, "receipt": null},
+      "human_acceptance": {"ok": false, "receipt": null},
+      "cleanup_authorized": false,
+      "next_action": "Mount two independent custody targets, produce checksummed copies, restore one into a clean temporary root, verify package bytes, and record owner acceptance."
+    },
+    {
+      "id": "limen-predecessor-experiment-custody",
+      "status": "blocked",
+      "location_class": "ignored predecessor worktree storage",
+      "approximate_bytes_label": "1.6 GiB",
+      "observed_ignored_items": 561,
+      "tracked_tree_clean": true,
+      "contents": [
+        {"class": "generated-public-corpus", "approximate_bytes_label": "included in root total"},
+        {"class": "derived-grain-bank", "approximate_bytes_label": "included in root total"},
+        {"class": "sound-renders", "approximate_bytes_label": "included in root total"},
+        {"class": "generated-work-and-submission-state", "approximate_bytes_label": "included in root total"}
+      ],
+      "independent_verified_copies": [],
+      "restore_rehearsal": {"ok": false, "receipt": null},
+      "human_acceptance": {"ok": false, "receipt": null},
+      "cleanup_authorized": false,
+      "next_action": "Do not merge the archive branch wholesale. Copy and checksum the ignored custody to two independent targets, restore one copy, and retain until issue #3 dispositions and issue #21 acceptance are complete."
+    }
+  ]
+}
