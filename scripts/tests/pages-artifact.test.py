@@ -155,6 +155,7 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertTrue(paths.isdisjoint(forbidden))
         self.assertFalse(any(path.startswith("pipeline/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
+        self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
 
     def test_every_recorded_sha256_and_byte_count_verifies(self) -> None:
