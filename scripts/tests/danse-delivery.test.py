@@ -1257,6 +1257,12 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertIn("later: null", text)
         self.assertIn("without-rule: null", text)
         self.assertNotIn("has no identifier", text)
+        self.assertIn("dancer-release-and-credit: null", text)
+        self.assertIn("pictured-objects-reviewed: null", text)
+        self.assertIn("music-cleared: null", text)
+        self.assertIn("submission-copy-approved: null", text)
+        self.assertIn("archive-library-choice: null", text)
+        self.assertIn('choose one of ["include", "opt-out"]', text)
 
     def test_text_preflight_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2400,6 +2406,18 @@ class DeliveryContractTest(unittest.TestCase):
                 CHECK.check_attestations(reg, root, phase, report)
                 self.assertEqual(len(report.rows), count)
                 self.assertEqual(report.failures, count - 1)
+
+    def test_submission_phase_includes_the_redacted_exact_manifest_rights_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            (package / "attest.yaml").write_text("{}\n")
+            report = CHECK.Report()
+            CHECK.check_rights(package, "package", report)
+            self.assertEqual(len(report.rows), 1)
+            self.assertEqual(report.rows[0][1], "redacted exact-manifest contract")
+            self.assertEqual(report.rows[0][2], CHECK.FAIL)
+            self.assertIn("blocker(s)", report.rows[0][3])
+            self.assertNotIn(str(package), report.rows[0][3])
 
     def test_published_terms_keep_provenance_and_explicit_archive_choice(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())

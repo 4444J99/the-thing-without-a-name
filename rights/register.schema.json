@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://organvm.github.io/the-thing-without-a-name/rights/register.schema.json",
+  "title": "Danse public-safe rights and attribution register",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "assessment",
+    "status",
+    "policy",
+    "bindings",
+    "package_text",
+    "human_gates",
+    "assets",
+    "package_rules",
+    "release_rules",
+    "credit_rules"
+  ],
+  "properties": {
+    "schema": {"const": "danse.rights.v1"},
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "issue", "note"],
+      "properties": {
+        "date": {"type": "string", "format": "date"},
+        "issue": {"const": 16},
+        "note": {"type": "string", "minLength": 1}
+      }
+    },
+    "status": {"enum": ["draft", "reviewed", "cleared"]},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "private_custody", "statement"],
+      "properties": {
+        "classification": {"const": "public-safe-redacted"},
+        "private_custody": {"const": "external-only"},
+        "statement": {"type": "string", "minLength": 1}
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["corpus", "music", "pose_vendor", "submission"],
+      "properties": {
+        "corpus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "schema", "frames"],
+          "properties": {
+            "source": {"$ref": "#/$defs/source"},
+            "schema": {"const": "danse.corpus.v1"},
+            "frames": {"type": "integer", "minimum": 1}
+          }
+        },
+        "music": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "schema", "works", "artistic_gate"],
+          "properties": {
+            "source": {"$ref": "#/$defs/source"},
+            "schema": {"const": "danse.music.repertoire.v1"},
+            "works": {"type": "integer", "minimum": 1},
+            "artistic_gate": {"enum": ["pending", "accepted", "rejected"]}
+          }
+        },
+        "pose_vendor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "schema", "files", "package_license", "model_license"],
+          "properties": {
+            "source": {"$ref": "#/$defs/source"},
+            "schema": {"const": "danse.vendor.v1"},
+            "files": {"type": "integer", "minimum": 1},
+            "package_license": {"type": "string", "minLength": 1},
+            "model_license": {"type": "string", "minLength": 1}
+          }
+        },
+        "submission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "schema", "required_terms"],
+          "properties": {
+            "source": {"$ref": "#/$defs/source"},
+            "schema": {"const": "danse.submission.v2"},
+            "required_terms": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/id"}
+            }
+          }
+        }
+      }
+    },
+    "package_text": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/textBinding"}
+    },
+    "human_gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/humanGate"}
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/asset"}
+    },
+    "package_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/packageRule"}
+    },
+    "release_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/releaseRule"}
+    },
+    "credit_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/creditRule"}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "phase": {"enum": ["public", "package", "uploaded", "submitted", "release"]},
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]+$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "summary"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "kind", "values"],
+      "properties": {
+        "key": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["boolean", "choice"]},
+        "values": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": ["string", "boolean"]}
+        }
+      }
+    },
+    "humanGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "required_for",
+        "authority",
+        "state",
+        "evidence",
+        "attestation",
+        "note"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "label": {"type": "string", "minLength": 1},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/phase"}
+        },
+        "authority": {"type": "string", "minLength": 1},
+        "state": {"enum": ["pending", "satisfied", "rejected"]},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/source"}]},
+        "attestation": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/attestation"}]},
+        "note": {"type": "string", "minLength": 1}
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx", "name", "evidence"],
+      "properties": {
+        "spdx": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/source"}
+      }
+    },
+    "publicCredit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "label", "note"],
+      "properties": {
+        "state": {"enum": ["pending", "approved", "not-required"]},
+        "label": {"type": ["string", "null"]},
+        "note": {"type": "string", "minLength": 1}
+      }
+    },
+    "privateEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "custodian", "receipt"],
+      "properties": {
+        "state": {"enum": ["not-recorded", "not-required", "verified"]},
+        "custodian": {"type": ["string", "null"]},
+        "receipt": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/source"}]}
+      }
+    },
+    "use": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "medium",
+        "required_for",
+        "territory",
+        "term",
+        "expires",
+        "promotion",
+        "archive",
+        "status",
+        "evidence",
+        "note"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "medium": {
+          "enum": [
+            "interactive-site",
+            "film",
+            "still",
+            "audio",
+            "installation",
+            "press",
+            "festival-promotion",
+            "festival-archive",
+            "software-distribution",
+            "text",
+            "sale"
+          ]
+        },
+        "required_for": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/phase"}
+        },
+        "territory": {"enum": ["worldwide", "specified", "not-applicable", "pending"]},
+        "term": {"enum": ["perpetual", "fixed", "project-duration", "event-only", "not-applicable", "pending"]},
+        "expires": {"type": ["string", "null"], "format": "date"},
+        "promotion": {"enum": ["allowed", "prohibited", "not-applicable", "pending"]},
+        "archive": {"enum": ["allowed", "opt-out", "not-applicable", "pending"]},
+        "status": {"enum": ["cleared", "blocked", "excluded"]},
+        "evidence": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/source"}]},
+        "note": {"type": "string", "minLength": 1}
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "description",
+        "disposition",
+        "rights_holder",
+        "license",
+        "public_credit",
+        "private_evidence",
+        "provenance",
+        "uses",
+        "blocker"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "category": {
+          "enum": [
+            "performer",
+            "photograph",
+            "video",
+            "design",
+            "pictured-object",
+            "archive",
+            "font",
+            "texture",
+            "recording",
+            "still",
+            "music",
+            "software",
+            "text",
+            "installation-evidence",
+            "other-third-party"
+          ]
+        },
+        "description": {"type": "string", "minLength": 1},
+        "disposition": {"enum": ["owned", "licensed", "public-domain-with-provenance", "excluded", "blocked"]},
+        "rights_holder": {"type": ["string", "null"]},
+        "license": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/license"}]},
+        "public_credit": {"$ref": "#/$defs/publicCredit"},
+        "private_evidence": {"$ref": "#/$defs/privateEvidence"},
+        "provenance": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/source"}
+        },
+        "uses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/use"}
+        },
+        "blocker": {"type": ["string", "null"]}
+      }
+    },
+    "assetUseRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset", "use"],
+      "properties": {
+        "asset": {"$ref": "#/$defs/id"},
+        "use": {"$ref": "#/$defs/id"}
+      }
+    },
+    "textBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "destination", "gate"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "source": {"$ref": "#/$defs/source"},
+        "destination": {"$ref": "#/$defs/path"},
+        "gate": {"$ref": "#/$defs/id"}
+      }
+    },
+    "packageRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "pattern", "requirements"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "pattern": {"type": "string", "minLength": 1},
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/assetUseRef"}
+        }
+      }
+    },
+    "releaseRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_id", "requirements"],
+      "properties": {
+        "media_id": {"$ref": "#/$defs/id"},
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/assetUseRef"}
+        }
+      }
+    },
+    "creditRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credit_id", "asset", "gate"],
+      "properties": {
+        "credit_id": {"$ref": "#/$defs/id"},
+        "asset": {"$ref": "#/$defs/id"},
+        "gate": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

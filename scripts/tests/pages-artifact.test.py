@@ -212,6 +212,7 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertFalse(any(path.startswith("submission/") for path in paths))
         self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
+        self.assertFalse(any(path.startswith("rights/") for path in paths))
 
     def test_every_recorded_sha256_and_byte_count_verifies(self) -> None:
         verified = PAGES.verify_artifact(
@@ -237,6 +238,7 @@ class ArtifactBoundaryTest(unittest.TestCase):
         self.assertNotIn("README.md", inventory)
         self.assertFalse(any(path.startswith("submission/") for path in inventory))
         self.assertFalse(any(path.startswith("pipeline/") for path in inventory))
+        self.assertFalse(any(path.startswith("rights/") for path in inventory))
         self.assertFalse(any(path.startswith("corpus/tier-receipts/") for path in inventory))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")

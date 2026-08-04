@@ -59,6 +59,7 @@ PACKAGE = DEFAULT_OUT / "package"
 SCORE = DANSE / "sound" / "score.py"
 RENDER = HERE / "render.py"
 REGISTER = DANSE / "submission" / "screendance-2027.yaml"
+RIGHTS_REGISTER = DANSE / "rights" / "register.json"
 RAW = DANSE / "pipeline" / ".work" / "raw"
 BANK = DANSE / "sound" / "bank" / "bank.json"
 sys.path.insert(0, str(DANSE / "sound"))
@@ -974,15 +975,55 @@ def attestation_template() -> str:
         for item in reg.get(section, [])
         if item.get("check") == "manual"
     ]
+    entries = [
+        {
+            "key": item["id"],
+            "phase": item.get("phase", "UNOWNED"),
+            "rule": item.get("rule", ""),
+            "kind": "boolean",
+            "values": [True],
+        }
+        for item in requirements
+        if item.get("id")
+    ]
+    seen = {entry["key"] for entry in entries}
+    try:
+        rights = json.loads(RIGHTS_REGISTER.read_text()) if RIGHTS_REGISTER.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        rights = {}
+    for gate in rights.get("human_gates", []):
+        attestation = gate.get("attestation") if isinstance(gate, dict) else None
+        if not isinstance(attestation, dict) or attestation.get("key") in seen:
+            continue
+        key = attestation.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", key):
+            continue
+        phases = [
+            phase
+            for phase in (gate.get("required_for") or [])
+            if phase in {"public", "package", "uploaded", "submitted", "release"}
+        ]
+        note = " ".join(str(gate.get("note", "")).split())
+        entries.append(
+            {
+                "key": key,
+                "phase": ",".join(phases) if phases else "UNOWNED",
+                "rule": note,
+                "kind": attestation.get("kind"),
+                "values": attestation.get("values") or [],
+            }
+        )
+        seen.add(key)
+
     lines = [
         "# Human assertions. The package build creates nulls; only a human who",
         "# performed or verified an act may set its value to true.",
-        "# check.py reads only the cumulative requirements owned by --phase.",
+        "# check.py and check-rights.py read only the cumulative gates owned by --phase.",
     ]
-    requirements = [item for item in requirements if item.get("id")]
-    for item in requirements:
-        lines.append(f"#   {item['id']:<30} [{item.get('phase', 'UNOWNED')}] {item.get('rule', '')}")
-    lines.extend(f"{item['id']}: null" for item in requirements)
+    for entry in entries:
+        choice = f" choose one of {json.dumps(entry['values'])}" if entry["kind"] == "choice" else ""
+        lines.append(f"#   {entry['key']:<34} [{entry['phase']}] {entry['rule']}{choice}")
+    lines.extend(f"{entry['key']}: null" for entry in entries)
     return "\n".join(lines) + "\n"
 
 

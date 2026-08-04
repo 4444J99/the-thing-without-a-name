@@ -39,6 +39,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 REGISTER = HERE / "screendance-2027.yaml"
 OPPORTUNITY_CHECKER = HERE.parent / "scripts" / "check-opportunities.py"
+RIGHTS_CHECKER = HERE.parent / "scripts" / "rights_contract.py"
 
 PASS, FAIL, OPEN, SKIP = "PASS", "FAIL", "OPEN", "SKIP"
 GLYPH = {PASS: "\033[32m ok \033[0m", FAIL: "\033[31mFAIL\033[0m", OPEN: "\033[33mOPEN\033[0m", SKIP: "skip"}
@@ -341,6 +342,27 @@ def check_opportunity_snapshot(register_path: Path, rep: Report) -> None:
         PASS,
         f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}… · issue #2 bound / #12 pending",
     )
+
+
+def check_rights(package: Path, phase: str, rep: Report) -> None:
+    """Require the exact redacted issue-16 contract for every staged phase."""
+    try:
+        spec = importlib.util.spec_from_file_location("danse_rights_checker", RIGHTS_CHECKER)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("checker module could not be loaded")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        _, receipt = checker.validate_all(phase=phase, package=package)
+    except Exception as exc:
+        rep.add("rights", "redacted exact-manifest contract", FAIL, str(exc))
+        return
+    blockers = receipt["blockers"]
+    detail = (
+        f"{receipt['inventory']['assets']} assets · register {receipt['register']['sha256'][:16]}…"
+        if not blockers
+        else f"{len(blockers)} blocker(s): " + "; ".join(blockers[:3])
+    )
+    rep.add("rights", "redacted exact-manifest contract", PASS if not blockers else FAIL, detail)
 
 
 def check_attestations(reg: dict, root: Path, phase: str, rep: Report) -> None:
@@ -743,6 +765,7 @@ def main() -> int:
             check_trailer(pkg["trailer"], root, rep)
             check_audio(pkg["audio"], root, rep)
             check_text(pkg["text"], root, rep)
+            check_rights(root, args.phase, rep)
     else:
         rep.add("package", "not staged", OPEN, "re-run with --package <dir> once the cut exists")
 
