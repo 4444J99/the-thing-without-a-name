@@ -71,14 +71,23 @@ SENSITIVE_KEYS = {
     "token",
 }
 RIGHTS_MEDIA_SUFFIXES = {
+    ".avif",
+    ".flac",
+    ".gif",
     ".mov",
     ".mp4",
+    ".mp3",
     ".mxf",
     ".m4v",
+    ".m4a",
     ".jpg",
     ".jpeg",
     ".png",
+    ".ogg",
+    ".opus",
     ".wav",
+    ".webm",
+    ".webp",
     ".aif",
     ".aiff",
 }
@@ -86,6 +95,45 @@ RIGHTS_MEDIA_SUFFIXES = {
 
 class RightsError(ValueError):
     """The rights register or a bound artifact violates its contract."""
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects ambiguous duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeySafeLoader,
+    node: yaml.MappingNode,
+    deep: bool = False,
+) -> dict[Any, Any]:
+    loader.flatten_mapping(node)
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable mapping key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
 
 
 def sha256(path: Path) -> str:
@@ -118,7 +166,7 @@ def load_json(path: Path, label: str, *, expose_path: bool = True) -> dict[str, 
 
 def load_yaml(path: Path, label: str, *, expose_path: bool = True) -> dict[str, Any]:
     try:
-        value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeySafeLoader) or {}
     except (OSError, yaml.YAMLError) as exc:
         detail = f" at {path}: {exc}" if expose_path else ": invalid or unreadable YAML"
         raise RightsError(f"cannot read {label}{detail}") from exc
@@ -698,7 +746,12 @@ def gate_satisfied(gate: dict[str, Any], attestation: dict[str, Any], *, allow_a
     record = gate["attestation"]
     if not allow_attestation or record is None:
         return False
-    return attestation.get(record["key"]) in record["values"]
+    value = attestation.get(record["key"])
+    if record["kind"] == "boolean":
+        # bool is a subclass of int in Python: membership alone would let the
+        # YAML integer ``1`` satisfy a human-authored ``true`` gate.
+        return value is True and any(candidate is True for candidate in record["values"])
+    return isinstance(value, str) and value in record["values"]
 
 
 def validate_package(
@@ -862,12 +915,19 @@ def validate_release_manifest(
             blockers.append("release manifest contains malformed media")
             continue
         media_id = row["id"]
-        media_ids.add(media_id)
-        if phase not in (row.get("required_for") or []):
+        if media_id in media_ids:
+            blockers.append(f"release manifest repeats media id {media_id}")
             continue
+        media_ids.add(media_id)
         rule = release_rules.get(media_id)
         if rule is None:
             blockers.append(f"release media {media_id} has no rights rule")
+            continue
+        declared_phases = row.get("required_for")
+        if not isinstance(declared_phases, list) or sorted(declared_phases) != sorted(rule["required_for"]):
+            blockers.append(f"release media {media_id} phase scope disagrees with its rights rule")
+            continue
+        if phase not in rule["required_for"]:
             continue
         blockers.extend(_requirement_blockers(rule["requirements"], uses, f"release media {media_id}"))
         if row.get("status") != "ready":
@@ -894,6 +954,9 @@ def validate_release_manifest(
             blockers.append("release manifest contains malformed credit")
             continue
         credit_id = row["id"]
+        if credit_id in credit_ids:
+            blockers.append(f"release manifest repeats credit id {credit_id}")
+            continue
         credit_ids.add(credit_id)
         rule = credit_rules.get(credit_id)
         if rule is None:
@@ -910,14 +973,25 @@ def validate_release_manifest(
     if missing_credits:
         blockers.append(f"release manifest is missing rights-ruled credits: {', '.join(missing_credits)}")
 
-    release_gates = {
-        row.get("id"): row
-        for row in manifest.get("gates", [])
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
+    release_gates: dict[str, dict[str, Any]] = {}
+    gate_rows = manifest.get("gates")
+    if not isinstance(gate_rows, list):
+        blockers.append("release manifest has no gate inventory")
+        gate_rows = []
+    for row in gate_rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            blockers.append("release manifest contains malformed gate")
+            continue
+        gate_id = row["id"]
+        if gate_id in release_gates:
+            blockers.append(f"release manifest repeats gate id {gate_id}")
+            continue
+        release_gates[gate_id] = row
     rights_gate = release_gates.get("rights-register")
     if not rights_gate or rights_gate.get("state") != "satisfied":
         blockers.append("release manifest rights-register gate is not satisfied")
+    elif phase not in (rights_gate.get("required_for") or []):
+        blockers.append(f"release manifest rights-register gate is not required for {phase}")
     else:
         evidence = rights_gate.get("evidence")
         expected_path = register_path.resolve()

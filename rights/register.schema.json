@@ -358,9 +358,15 @@
     "releaseRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["media_id", "requirements"],
+      "required": ["media_id", "required_for", "requirements"],
       "properties": {
         "media_id": {"$ref": "#/$defs/id"},
+        "required_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["public", "release"]}
+        },
         "requirements": {
           "type": "array",
           "minItems": 1,

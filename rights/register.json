@@ -566,11 +566,11 @@
     }
   ],
   "release_rules": [
-    {"media_id": "press-still-primary", "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
-    {"media_id": "project-social-card", "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
-    {"media_id": "accessible-trailer", "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "score-driven-master", "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "installation-proof", "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]}
+    {"media_id": "press-still-primary", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "project-social-card", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "accessible-trailer", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "score-driven-master", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "installation-proof", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]}
   ],
   "credit_rules": [
     {"credit_id": "artist-credit", "asset": "project-software-design", "gate": "rights-declaration-approved"},

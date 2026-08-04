@@ -127,7 +127,7 @@ def make_release(base: Path, document: dict, register_path: Path = RIGHTS.REGIST
         media.append(
             {
                 "id": rule["media_id"],
-                "required_for": ["public", "release"],
+                "required_for": rule["required_for"],
                 "status": "ready",
                 "source": {**copy.deepcopy(evidence), "destination": f"media/assets/{rule['media_id']}.bin"},
                 "clearance": {"status": "cleared", "owner": "Rights test", "evidence": copy.deepcopy(evidence)},
@@ -151,6 +151,7 @@ def make_release(base: Path, document: dict, register_path: Path = RIGHTS.REGIST
         "gates": [
             {
                 "id": "rights-register",
+                "required_for": ["public", "release"],
                 "state": "satisfied",
                 "evidence": {
                     "path": "rights/register.json",
@@ -299,6 +300,7 @@ class RightsContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             package = make_package(Path(temporary), candidate)
             (package / "unlisted.mp4").write_bytes(b"unlisted")
+            (package / "unlisted.webp").write_bytes(b"unlisted webp")
             outside = Path(temporary) / "outside.jpg"
             outside.write_bytes(b"outside")
             (package / "stills/link.jpg").symlink_to(outside)
@@ -310,7 +312,11 @@ class RightsContractTest(unittest.TestCase):
             )
             (package / "manifest.json").write_text(json.dumps(manifest))
             blockers, _ = RIGHTS.validate_package(candidate, package)
-            self.assertTrue(any("absent from the manifest" in blocker for blocker in blockers), blockers)
+            self.assertGreaterEqual(
+                sum("absent from the manifest" in blocker for blocker in blockers),
+                2,
+                blockers,
+            )
             self.assertTrue(any("symlink file" in blocker for blocker in blockers), blockers)
             self.assertTrue(any("manifest item" in blocker and "0 rights rules" in blocker for blocker in blockers), blockers)
 
@@ -321,13 +327,32 @@ class RightsContractTest(unittest.TestCase):
             RIGHTS.gate_satisfied(gate, {"dancer-release-and-credit": True}, allow_attestation=True)
         )
         self.assertFalse(
+            RIGHTS.gate_satisfied(gate, {"dancer-release-and-credit": 1}, allow_attestation=True)
+        )
+        self.assertFalse(
             RIGHTS.gate_satisfied(gate, {"dancer-release-and-credit": True}, allow_attestation=False)
+        )
+        choice = next(row for row in self.document["human_gates"] if row["id"] == "archive-library-choice")
+        self.assertTrue(
+            RIGHTS.gate_satisfied(choice, {"archive-library-choice": "include"}, allow_attestation=True)
+        )
+        self.assertFalse(
+            RIGHTS.gate_satisfied(choice, {"archive-library-choice": True}, allow_attestation=True)
         )
         rejected = copy.deepcopy(gate)
         rejected["state"] = "rejected"
         self.assertFalse(
             RIGHTS.gate_satisfied(rejected, {"dancer-release-and-credit": True}, allow_attestation=True)
         )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary)
+            (package / "attest.yaml").write_text(
+                "final-cut-only: true\nfinal-cut-only: false\n",
+                encoding="utf-8",
+            )
+            _, blockers = RIGHTS.load_attestation(package)
+            self.assertTrue(any("invalid or unreadable YAML" in blocker for blocker in blockers), blockers)
 
     def test_release_manifest_binds_exact_rights_register_media_and_credits(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -343,6 +368,27 @@ class RightsContractTest(unittest.TestCase):
             release.write_text(json.dumps(manifest))
             blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "release")
             self.assertTrue(any("does not bind this exact rights register" in blocker for blocker in blockers), blockers)
+
+    def test_release_manifest_cannot_hide_rights_rows_or_repeat_gate_identities(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
+            manifest["media"][0]["required_for"] = ["release"]
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "public")
+            self.assertTrue(any("phase scope disagrees" in blocker for blocker in blockers), blockers)
+
+            manifest = json.loads(make_release(Path(temporary), candidate).read_text())
+            manifest["media"].append(copy.deepcopy(manifest["media"][0]))
+            manifest["credits"].append(copy.deepcopy(manifest["credits"][0]))
+            manifest["gates"].append(copy.deepcopy(manifest["gates"][0]))
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "release")
+            self.assertTrue(any("repeats media id" in blocker for blocker in blockers), blockers)
+            self.assertTrue(any("repeats credit id" in blocker for blocker in blockers), blockers)
+            self.assertTrue(any("repeats gate id" in blocker for blocker in blockers), blockers)
 
     def test_receipts_are_deterministic_redacted_and_contain_exact_input_digests(self) -> None:
         first_document, first = RIGHTS.validate_all(phase="draft")
