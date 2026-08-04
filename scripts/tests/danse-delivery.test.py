@@ -1759,6 +1759,8 @@ class DeliveryContractTest(unittest.TestCase):
             package.mkdir()
             master = package / "master.mov"
             master.write_bytes(b"modified after packaging")
+            score = root / "passage-score.wav"
+            score.write_bytes(b"rendered score source")
             prior_digest = "0" * 64
             (package / "manifest.json").write_text(
                 json.dumps(
@@ -1783,17 +1785,22 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(
                     DELIVER,
                     "passage_sound",
-                    return_value=(root / "passage-score.wav", {"score_sha256": "score"}, False),
+                    return_value=(score, {"score_sha256": DELIVER.digest(score)}, False),
                 ),
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(DELIVER.main(), 0)
-            receipt = next(
-                item for item in json.loads((package / "manifest.json").read_text())["items"] if item["name"] == "master.mov"
-            )
+            items = json.loads((package / "manifest.json").read_text())["items"]
+            receipt = next(item for item in items if item["name"] == "master.mov")
             self.assertEqual(receipt["sha256"], prior_digest)
             self.assertNotEqual(receipt["sha256"], DELIVER.digest(master))
+            score_receipt = next(item for item in items if item["name"] == DELIVER.SCORE_SOURCE_ITEM)
+            self.assertEqual(score_receipt["sha256"], DELIVER.digest(score))
+            self.assertEqual(
+                score_receipt["sound"]["score_sha256"],
+                DELIVER.digest(score),
+            )
 
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2421,7 +2428,7 @@ class DeliveryContractTest(unittest.TestCase):
                 self.assertEqual(len(report.rows), count)
                 self.assertEqual(report.failures, count - 1)
 
-    def test_submission_phase_includes_the_redacted_exact_manifest_rights_gate(self) -> None:
+    def test_package_phase_includes_the_redacted_exact_manifest_rights_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)
             (package / "attest.yaml").write_text("{}\n")

@@ -220,6 +220,16 @@ class ProductionArtifactTest(unittest.TestCase):
         )
         self.assertEqual(verified, self.manifest)
 
+    def test_deployment_requires_public_rights_before_artifact_upload(self) -> None:
+        workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        rights = workflow.index("scripts/check-rights.py")
+        upload = workflow.index("actions/upload-pages-artifact")
+        deploy = workflow.index("actions/deploy-pages")
+        self.assertLess(rights, upload)
+        self.assertLess(upload, deploy)
+        self.assertIn("--phase public", workflow)
+        self.assertIn("--release-manifest release/manifest.json", workflow)
+
 
 class ArtifactBoundaryTest(unittest.TestCase):
     def setUp(self) -> None:

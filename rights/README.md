@@ -35,14 +35,18 @@ python3 scripts/check-rights.py --phase release \
 ```
 
 The package checker verifies every manifested byte and byte count, the declared corpus
-tier against the package builder's current source-tree identity, sound source and score
-identity, registered origin still, every copied text file's manifest row, rights-bearing
-unmanifested files, symlink boundaries, and package rights rules. The release checker
-requires the exact rights-register digest; media bytes staged at their declared
-`media/assets/` destination; clearance evidence; and credit text identical to the
-approved attribution label. Package attestations may satisfy only package, uploaded,
-and submitted gates; their registered canonical values are bound into the redacted
-phase receipt, and they never replace durable public/release receipts.
+tier against the package builder's current source-tree identity, the copied score-source
+WAV and hydrated grain-bank identity, registered origin still, every copied text file's
+manifest row, rights-bearing unmanifested files, symlink boundaries, and package rights
+rules. The release checker requires the exact rights-register digest; every media and
+public-copy byte staged at its declared `media/assets/` destination; clearance evidence;
+and credit text identical to the approved attribution label. A `satisfied` human gate
+must cite a tracked `danse.rights.decision.v1` receipt binding that exact gate, authority,
+decision, and phase scope. Package attestations may satisfy only package, uploaded, and
+submitted gates; their registered canonical values are bound into the redacted phase
+receipt, and they never replace durable public/release receipts. The Pages workflow runs
+the public phase before artifact upload, so an uncleared release cannot publish a new
+deployment.
 
 Current state is deliberately `draft`. Anthony must still approve the final cut,
 biography, submission copy, and rights declaration; settle dancer permission and credit; disposition the

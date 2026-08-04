@@ -10,9 +10,11 @@ digest may satisfy a tracked gate.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -153,6 +155,15 @@ def value_sha256(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def same_strings(value: object, expected: list[str] | tuple[str, ...]) -> bool:
+    """Compare an external sequence without sorting attacker-controlled types."""
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, str) for item in value)
+        and sorted(value) == sorted(expected)
+    )
+
+
 def _no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     value: dict[str, Any] = {}
     for key, item in pairs:
@@ -182,6 +193,39 @@ def load_yaml(path: Path, label: str, *, expose_path: bool = True) -> dict[str, 
     if not isinstance(value, dict):
         raise RightsError(f"{label} must be a mapping")
     return value
+
+
+def validate_gate_decision_receipt(path: Path, gate: dict[str, Any]) -> tuple[Any, list[str]]:
+    """Validate one public-safe receipt as the typed decision for exactly one gate."""
+    label = f"human gate {gate['id']} decision receipt"
+    try:
+        receipt = load_json(path, label, expose_path=False)
+    except RightsError as exc:
+        return None, [str(exc)]
+    expected_keys = {"schema", "gate_id", "authority", "decision", "required_for"}
+    errors: list[str] = []
+    if set(receipt) != expected_keys:
+        errors.append(f"{label} has fields outside the typed decision contract")
+    if receipt.get("schema") != "danse.rights.decision.v1":
+        errors.append(f"{label} has the wrong schema")
+    if receipt.get("gate_id") != gate["id"]:
+        errors.append(f"{label} names a different gate")
+    if receipt.get("authority") != gate["authority"]:
+        errors.append(f"{label} names a different authority")
+    required_for = receipt.get("required_for")
+    if not same_strings(required_for, gate["required_for"]):
+        errors.append(f"{label} has different phase scope")
+    decision = receipt.get("decision")
+    attestation = gate["attestation"]
+    if attestation is None:
+        valid_decision = decision is True
+    elif attestation["kind"] == "boolean":
+        valid_decision = decision is True
+    else:
+        valid_decision = isinstance(decision, str) and decision in attestation["values"]
+    if not valid_decision:
+        errors.append(f"{label} has no registered affirmative decision")
+    return decision if not errors else None, errors
 
 
 def safe_relative(value: object, label: str, *, expose_value: bool = True) -> str:
@@ -314,7 +358,10 @@ def _schema_errors(document: dict[str, Any], schema: dict[str, Any]) -> list[str
     except jsonschema.SchemaError as exc:
         return [f"rights schema is invalid: {exc.message}"]
     validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
-    errors = sorted(validator.iter_errors(document), key=lambda error: list(error.absolute_path))
+    errors = sorted(
+        validator.iter_errors(document),
+        key=lambda error: [str(part) for part in error.absolute_path],
+    )
     rendered = []
     for error in errors:
         location = ".".join(str(part) for part in error.absolute_path) or "register"
@@ -453,7 +500,7 @@ def validate_document(
             record["path"] for _, record in _source_records(document)
         }
     except RightsError as exc:
-        return errors + [str(exc)]
+        return [*errors, str(exc)]
 
     verified: dict[str, Path] = {}
     path_digests: dict[str, str] = {}
@@ -478,13 +525,22 @@ def validate_document(
     gate_ids = [row["id"] for row in gate_rows]
     if len(gate_ids) != len(set(gate_ids)):
         errors.append("human gate ids must be unique")
+    gates_by_id = {gate["id"]: gate for gate in gate_rows}
+    gate_decisions: dict[str, Any] = {}
     attestation_keys: set[str] = set()
-    for gate in gate_rows:
+    for gate_index, gate in enumerate(gate_rows):
         evidence = gate["evidence"]
         if gate["state"] == "satisfied" and evidence is None:
             errors.append(f"human gate {gate['id']} is satisfied without a redacted evidence receipt")
         if gate["state"] != "satisfied" and evidence is not None:
             errors.append(f"human gate {gate['id']} is {gate['state']} but carries completion evidence")
+        if gate["state"] == "satisfied" and evidence is not None:
+            evidence_path = verified.get(f"human_gates[{gate_index}] evidence")
+            if evidence_path is not None:
+                decision, decision_errors = validate_gate_decision_receipt(evidence_path, gate)
+                errors.extend(decision_errors)
+                if not decision_errors:
+                    gate_decisions[gate["id"]] = decision
         attestation = gate["attestation"]
         if attestation is not None:
             key = attestation["key"]
@@ -562,6 +618,21 @@ def validate_document(
             local_use_ids.add(use_id)
             uses[key] = use
             status = use["status"]
+            conditional = use.get("conditional_exclusion")
+            if conditional is not None:
+                gate = gates_by_id.get(conditional["gate"])
+                attestation = gate.get("attestation") if gate is not None else None
+                if (
+                    gate is None
+                    or attestation is None
+                    or attestation["kind"] != "choice"
+                    or conditional["value"] not in attestation["values"]
+                ):
+                    errors.append(f"asset {asset_id} use {use_id} has an invalid conditional exclusion")
+                elif not set(use["required_for"]) <= set(gate["required_for"]):
+                    errors.append(f"asset {asset_id} use {use_id} exclusion gate has insufficient phase scope")
+                if status != "blocked" or use["evidence"] is not None:
+                    errors.append(f"asset {asset_id} use {use_id} conditional exclusion must remain blocked")
             if status == "cleared":
                 if disposition not in {"owned", "licensed", "public-domain-with-provenance"}:
                     errors.append(f"asset {asset_id} use {use_id} is cleared from disposition {disposition}")
@@ -589,7 +660,6 @@ def validate_document(
             if use["term"] != "fixed" and use["expires"] is not None:
                 errors.append(f"asset {asset_id} use {use_id} has an expiry outside a fixed term")
 
-    gates_by_id = {gate["id"]: gate for gate in gate_rows}
     dancer = assets.get("dancer-performance-likeness")
     dancer_gate = gates_by_id.get("dancer-release-and-credit")
     if dancer is None:
@@ -634,12 +704,22 @@ def validate_document(
             key = (requirement["asset"], requirement["use"])
             if key not in uses:
                 errors.append(f"package rule {rule['id']} names unknown asset/use {key[0]}/{key[1]}")
+    for required_rule in ("moving-image", "origin-still", "score-source"):
+        if required_rule not in package_rule_ids:
+            errors.append(f"required package rule is missing: {required_rule}")
 
     release_media_ids: set[str] = set()
+    release_destinations: set[str] = set()
     for rule in document["release_rules"]:
         if rule["media_id"] in release_media_ids:
             errors.append(f"release media rule is duplicated: {rule['media_id']}")
         release_media_ids.add(rule["media_id"])
+        destination = rule["destination"]
+        if not destination.startswith("media/assets/"):
+            errors.append(f"release rule {rule['media_id']} destination is outside media/assets")
+        if destination in release_destinations:
+            errors.append(f"release destination is duplicated: {destination}")
+        release_destinations.add(destination)
         for requirement in rule["requirements"]:
             key = (requirement["asset"], requirement["use"])
             if key not in uses:
@@ -657,7 +737,16 @@ def validate_document(
 
     if document["status"] == "cleared":
         pending_gates = [gate["id"] for gate in gate_rows if gate["state"] != "satisfied"]
-        blocked_uses = [f"{asset}/{use}" for (asset, use), row in uses.items() if row["status"] == "blocked"]
+        blocked_uses = [
+            f"{asset}/{use}"
+            for (asset, use), row in uses.items()
+            if row["status"] == "blocked"
+            and not (
+                row.get("conditional_exclusion")
+                and gate_decisions.get(row["conditional_exclusion"]["gate"])
+                == row["conditional_exclusion"]["value"]
+            )
+        ]
         if pending_gates or blocked_uses:
             errors.append("register status cannot be cleared while gates or uses remain blocked")
     return errors
@@ -780,7 +869,9 @@ def validate_attestation(
             }
             existing = contracts.get(row["id"])
             if existing is not None and (
-                existing["kind"] != contract["kind"] or existing["values"] != contract["values"]
+                existing["kind"] != contract["kind"]
+                or {json.dumps(value, sort_keys=True) for value in existing["values"]}
+                != {json.dumps(value, sort_keys=True) for value in contract["values"]}
             ):
                 blockers.append(f"attestation contract disagrees for registered gate {row['id']}")
             contracts.setdefault(row["id"], contract)
@@ -816,6 +907,50 @@ def gate_satisfied(gate: dict[str, Any], attestation: dict[str, Any], *, allow_a
     return isinstance(value, str) and value in record["values"]
 
 
+def gate_decision(
+    gate: dict[str, Any],
+    attestation: dict[str, Any],
+    *,
+    allow_attestation: bool,
+    root: Path,
+) -> Any:
+    """Return the verified durable or phase-owned decision for one gate."""
+    if gate["state"] == "satisfied" and gate["evidence"] is not None:
+        try:
+            path = regular_file(root, gate["evidence"]["path"], f"human gate {gate['id']} evidence")
+        except RightsError:
+            return None
+        decision, errors = validate_gate_decision_receipt(path, gate)
+        return None if errors else decision
+    record = gate["attestation"]
+    if not allow_attestation or record is None:
+        return None
+    value = attestation.get(record["key"])
+    return value if gate_satisfied(gate, attestation, allow_attestation=True) else None
+
+
+def use_is_conditionally_excluded(
+    use: dict[str, Any],
+    gates: dict[str, dict[str, Any]],
+    attestation: dict[str, Any],
+    *,
+    allow_attestation: bool,
+    root: Path,
+) -> bool:
+    conditional = use.get("conditional_exclusion")
+    if not isinstance(conditional, dict):
+        return False
+    gate = gates.get(conditional.get("gate"))
+    if gate is None:
+        return False
+    return gate_decision(
+        gate,
+        attestation,
+        allow_attestation=allow_attestation,
+        root=root,
+    ) == conditional.get("value")
+
+
 def attestation_identity(document: dict[str, Any], attestation: dict[str, Any]) -> dict[str, Any]:
     """Return only registered, type-valid assertions for a redacted receipt."""
     contracts = {
@@ -839,10 +974,9 @@ def attestation_identity(document: dict[str, Any], attestation: dict[str, Any]) 
     return {"sha256": value_sha256(values), "values": values}
 
 
-def expected_delivery_source_sha256(tier: str) -> str:
-    """Query the package builder's canonical source identity for one safe tier."""
-    if not SAFE_TIER.fullmatch(tier):
-        raise RightsError("package manifest corpus tier is invalid")
+@functools.lru_cache(maxsize=1)
+def _delivery_contract() -> Any:
+    """Load the package builder once without depending on caller sys.path state."""
     try:
         path = ROOT / "render" / "deliver.py"
         spec = importlib.util.spec_from_file_location("danse_delivery_source_contract", path)
@@ -850,9 +984,39 @@ def expected_delivery_source_sha256(tier: str) -> str:
             raise ImportError("delivery source contract has no loader")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        return module.delivery_source_sha256(tier)
     except (ImportError, OSError, ValueError, AttributeError) as exc:
+        raise RightsError("cannot load the canonical delivery source contract") from exc
+    return module
+
+
+def expected_delivery_source_sha256(tier: str) -> str:
+    """Query the package builder's canonical source identity for one safe tier."""
+    if not SAFE_TIER.fullmatch(tier):
+        raise RightsError("package manifest corpus tier is invalid")
+    try:
+        return _delivery_contract().delivery_source_sha256(tier)
+    except (OSError, ValueError, AttributeError) as exc:
         raise RightsError("cannot compute the canonical delivery source identity") from exc
+
+
+def current_audio_identity() -> dict[str, Any]:
+    """Return the exact hydrated bank identity accepted by the package builder."""
+    try:
+        identity = _delivery_contract().bank_provenance()
+    except (OSError, ValueError, AttributeError) as exc:
+        raise RightsError("cannot verify package audio against the hydrated grain bank") from exc
+    if not isinstance(identity, dict):
+        raise RightsError("package audio cannot be verified without the hydrated grain bank")
+    fingerprint = identity.get("bank_fingerprint")
+    sources = identity.get("sources")
+    if (
+        not isinstance(fingerprint, str)
+        or not fingerprint
+        or not isinstance(sources, list)
+        or not all(isinstance(source, str) for source in sources)
+    ):
+        raise RightsError("canonical grain-bank identity is malformed")
+    return {"bank_fingerprint": fingerprint, "sources": list(sources)}
 
 
 def validate_package(
@@ -891,9 +1055,13 @@ def validate_package(
         items = []
 
     rules = [(rule, re.compile(rule["pattern"])) for rule in document["package_rules"]]
+    rule_ids = {rule["id"] for rule, _ in rules}
+    for required_rule in ("moving-image", "origin-still", "score-source"):
+        if required_rule not in rule_ids:
+            blockers.append(f"rights register is missing required package rule {required_rule}")
     item_names: set[str] = set()
     item_records: dict[str, dict[str, Any]] = {}
-    moving = {"master.mov", "midnight-moment.mov", "trailer.mp4", "screener.mp4", "reel.mp4"}
+    item_rule_ids: dict[str, str] = {}
     submission = load_yaml(regular_file(root, document["bindings"]["submission"]["source"]["path"], "submission binding"), "submission binding")
     expected_audio = sorted(((submission.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
     expected_origin = (((submission.get("package") or {}).get("origin_still") or {}).get("source_sha256"))
@@ -932,26 +1100,54 @@ def validate_package(
 
         if len(matched) != 1:
             blockers.append(f"package manifest item {index} matches {len(matched)} rights rules; exactly one is required")
+            rule_id = None
         else:
             blockers.extend(_requirement_blockers(matched[0]["requirements"], uses, f"package item {name}"))
+            rule_id = matched[0]["id"]
+            item_rule_ids[name] = rule_id
 
-        if name in moving:
-            sound = item.get("sound")
-            if not isinstance(sound, dict):
-                blockers.append(f"package audio item {name} has no score/source provenance")
-            else:
-                if sorted(sound.get("sources") or []) != expected_audio:
-                    blockers.append(f"package audio item {name} does not name the exact registered recordings")
-                if not isinstance(sound.get("score_sha256"), str) or not HEX64.fullmatch(sound["score_sha256"]):
-                    blockers.append(f"package audio item {name} has no exact score digest")
-                if not isinstance(sound.get("bank_fingerprint"), str) or not sound["bank_fingerprint"]:
-                    blockers.append(f"package audio item {name} has no bank fingerprint")
-        if name == "stills/origin-2017.jpg" and (
+        if rule_id == "origin-still" and (
             item.get("source_sha256") != expected_origin or item.get("copy_mode") != "byte-identical"
         ):
             blockers.append("package origin still is not bound byte-identically to its registered source")
 
-    for directory, dirnames, filenames in __import__("os").walk(package_root, topdown=True, followlinks=False):
+    moving_items = [
+        (name, item_records[name])
+        for name, rule_id in item_rule_ids.items()
+        if rule_id == "moving-image"
+    ]
+    score_items = [
+        (name, item_records[name])
+        for name, rule_id in item_rule_ids.items()
+        if rule_id == "score-source"
+    ]
+    if moving_items:
+        if len(score_items) != 1:
+            blockers.append("package moving images require exactly one manifested score source")
+            score_digest = None
+        else:
+            score_digest = score_items[0][1].get("sha256")
+        try:
+            audio_identity = current_audio_identity()
+        except RightsError as exc:
+            blockers.append(str(exc))
+            audio_identity = None
+        for name, item in moving_items:
+            sound = item.get("sound")
+            if not isinstance(sound, dict):
+                blockers.append(f"package audio item {name} has no score/source provenance")
+                continue
+            if not same_strings(sound.get("sources"), expected_audio):
+                blockers.append(f"package audio item {name} does not name the exact registered recordings")
+            if score_digest is None or sound.get("score_sha256") != score_digest:
+                blockers.append(f"package audio item {name} does not bind the manifested score source")
+            if audio_identity is not None and (
+                sound.get("bank_fingerprint") != audio_identity["bank_fingerprint"]
+                or not same_strings(sound.get("sources"), audio_identity["sources"])
+            ):
+                blockers.append(f"package audio item {name} does not bind the hydrated grain bank")
+
+    for directory, dirnames, filenames in os.walk(package_root, topdown=True, followlinks=False):
         base = Path(directory)
         for name in list(dirnames):
             candidate = base / name
@@ -1070,7 +1266,8 @@ def validate_release_manifest(
         blockers.append("release manifest has an invalid release identifier")
         release_id = None
     required_status = {"public-approved", "released"} if phase == "public" else {"released"}
-    if manifest.get("status") not in required_status:
+    release_status = manifest.get("status")
+    if not isinstance(release_status, str) or release_status not in required_status:
         blockers.append(f"release manifest status is not valid for {phase}")
 
     uses = _asset_use_index(document)
@@ -1098,7 +1295,7 @@ def validate_release_manifest(
             blockers.append(f"release media {media_id} has no rights rule")
             continue
         declared_phases = row.get("required_for")
-        if not isinstance(declared_phases, list) or sorted(declared_phases) != sorted(rule["required_for"]):
+        if not same_strings(declared_phases, rule["required_for"]):
             blockers.append(f"release media {media_id} phase scope disagrees with its rights rule")
             continue
         if phase not in rule["required_for"]:
@@ -1109,16 +1306,23 @@ def validate_release_manifest(
         clearance = row.get("clearance") if isinstance(row.get("clearance"), dict) else {}
         if clearance.get("status") != "cleared":
             blockers.append(f"release media {media_id} clearance is not cleared")
-        blockers.extend(
-            _verify_release_source(
-                root,
-                row.get("source"),
-                f"release media {media_id}",
-                tracked=tracked,
-                require_tracked=False,
-                require_artifact=True,
+        source = row.get("source")
+        if not isinstance(source, dict) or (
+            source.get("path") != rule["destination"]
+            or source.get("destination") != rule["destination"]
+        ):
+            blockers.append(f"release media {media_id} does not use its canonical destination")
+        else:
+            blockers.extend(
+                _verify_release_source(
+                    root,
+                    source,
+                    f"release media {media_id}",
+                    tracked=tracked,
+                    require_tracked=False,
+                    require_artifact=True,
+                )
             )
-        )
         blockers.extend(
             _verify_release_source(
                 root,
@@ -1200,8 +1404,7 @@ def validate_release_manifest(
     if not rights_gate or rights_gate.get("state") != "satisfied":
         blockers.append("release manifest rights-register gate is not satisfied")
     elif (
-        not isinstance(rights_gate.get("required_for"), list)
-        or sorted(rights_gate["required_for"]) != ["public", "release"]
+        not same_strings(rights_gate.get("required_for"), ["public", "release"])
     ):
         blockers.append("release manifest rights-register gate must govern public and release phases")
     else:
@@ -1261,6 +1464,7 @@ def phase_blockers(
         if not attestation_blockers:
             blockers.extend(validate_attestation(document, attestation, root=root))
     allow_attestation = phase in {"package", "uploaded", "submitted"}
+    gates = {gate["id"]: gate for gate in document["human_gates"]}
     for gate in document["human_gates"]:
         if scopes.intersection(gate["required_for"]) and not gate_satisfied(
             gate, attestation, allow_attestation=allow_attestation
@@ -1270,6 +1474,14 @@ def phase_blockers(
     for asset in document["assets"]:
         for use in asset["uses"]:
             if not scopes.intersection(use["required_for"]):
+                continue
+            if use_is_conditionally_excluded(
+                use,
+                gates,
+                attestation,
+                allow_attestation=allow_attestation,
+                root=root,
+            ):
                 continue
             if use["status"] == "cleared":
                 continue

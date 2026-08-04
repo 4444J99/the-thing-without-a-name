@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -62,10 +63,13 @@ def make_package(base: Path, document: dict) -> Path:
     package = base / "package"
     (package / "stills").mkdir(parents=True)
     (package / "text").mkdir()
+    (package / "provenance").mkdir()
     master = b"rights-test-master"
     origin = b"rights-test-origin"
+    score = b"rights-test-score-source"
     (package / "master.mov").write_bytes(master)
     (package / "stills/origin-2017.jpg").write_bytes(origin)
+    (package / "provenance/passage-score.wav").write_bytes(score)
     for binding in document["package_text"]:
         source = ROOT / binding["source"]["path"]
         (package / binding["destination"]).write_bytes(source.read_bytes())
@@ -96,7 +100,17 @@ def make_package(base: Path, document: dict) -> Path:
                 "sha256": digest_bytes(master),
                 "sound": {
                     "sources": audio_sources,
-                    "score_sha256": "b" * 64,
+                    "score_sha256": digest_bytes(score),
+                    "bank_fingerprint": "test-bank",
+                },
+            },
+            {
+                "name": "provenance/passage-score.wav",
+                "bytes": len(score),
+                "sha256": digest_bytes(score),
+                "sound": {
+                    "sources": audio_sources,
+                    "score_sha256": digest_bytes(score),
                     "bank_fingerprint": "test-bank",
                 },
             },
@@ -121,6 +135,29 @@ def make_package(base: Path, document: dict) -> Path:
     return package
 
 
+def fixture_audio_identity() -> dict:
+    submission = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+    return {
+        "bank_fingerprint": "test-bank",
+        "sources": submission["package"]["audio"]["source_recordings"],
+    }
+
+
+def validate_fixture_package(document: dict, package: Path) -> tuple[list[str], dict | None]:
+    with mock.patch.object(RIGHTS, "current_audio_identity", return_value=fixture_audio_identity()):
+        return RIGHTS.validate_package(document, package)
+
+
+def fixture_phase_blockers(
+    document: dict,
+    phase: str,
+    *,
+    package: Path,
+) -> tuple[list[str], dict]:
+    with mock.patch.object(RIGHTS, "current_audio_identity", return_value=fixture_audio_identity()):
+        return RIGHTS.phase_blockers(document, phase, package=package)
+
+
 def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
     root = base / "repository"
     root.mkdir(parents=True, exist_ok=True)
@@ -139,13 +176,13 @@ def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
         ["git", "-C", str(root), "add", "evidence.json", "rights/register.json"],
         check=True,
     )
-    artifact_path = root / "media" / "assets" / "rights-test.bin"
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_bytes(evidence_path.read_bytes())
     media = []
     for rule in document["release_rules"]:
+        artifact_path = root / rule["destination"]
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_bytes(f"exact fixture bytes for {rule['media_id']}\n".encode())
         artifact = {
-            "path": artifact_path.relative_to(root).as_posix(),
+            "path": rule["destination"],
             "sha256": RIGHTS.sha256(artifact_path),
         }
         artifact["destination"] = artifact["path"]
@@ -159,7 +196,7 @@ def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
                 "clearance": {"status": "cleared", "owner": "Rights test", "evidence": copy.deepcopy(evidence)},
             }
         )
-    credits = [
+    credit_rows = [
         {
             "id": rule["credit_id"],
             "name": next(
@@ -177,7 +214,7 @@ def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
         "release_id": "rights-test",
         "status": "released",
         "media": media,
-        "credits": credits,
+        "credits": credit_rows,
         "gates": [
             {
                 "id": "rights-register",
@@ -265,21 +302,20 @@ class RightsContractTest(unittest.TestCase):
         self.assertTrue(any("not tracked by Git" in error for error in errors), errors)
 
         with tempfile.TemporaryDirectory() as temporary:
-            outside = Path(temporary) / "outside.txt"
+            base = Path(temporary)
+            root = base / "repository"
+            root.mkdir()
+            outside = base / "outside.txt"
             outside.write_text("private")
-            link = ROOT / "rights" / "test-evidence-link"
-            try:
-                link.symlink_to(outside)
-                linked = copy.deepcopy(self.document)
-                linked["assets"][0]["provenance"][0] = {
-                    "path": "rights/test-evidence-link",
-                    "sha256": RIGHTS.sha256(outside),
-                    "summary": "Must not validate",
-                }
-                errors = RIGHTS.validate_document(linked, enforce_tracked=False)
-                self.assertTrue(any("symlink" in error for error in errors), errors)
-            finally:
-                link.unlink(missing_ok=True)
+            link = root / "evidence-link"
+            link.symlink_to(outside)
+            record = {
+                "path": "evidence-link",
+                "sha256": RIGHTS.sha256(outside),
+                "summary": "Must not validate",
+            }
+            with self.assertRaisesRegex(RIGHTS.RightsError, "symlink"):
+                RIGHTS.verify_record(root, record, "isolated evidence", {"evidence-link"})
 
     def test_completion_evidence_never_clears_the_wrong_state(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -290,6 +326,36 @@ class RightsContractTest(unittest.TestCase):
         errors = RIGHTS.validate_document(candidate)
         self.assertTrue(any("carries completion evidence" in error for error in errors), errors)
         self.assertTrue(any("private-evidence receipt" in error for error in errors), errors)
+
+    def test_satisfied_gate_requires_a_typed_gate_authority_and_decision_receipt(self) -> None:
+        gate = copy.deepcopy(self.document["human_gates"][0])
+        gate["state"] = "satisfied"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "decision.json"
+            path.write_text(json.dumps({"schema": "danse.corpus.v1"}))
+            decision, errors = RIGHTS.validate_gate_decision_receipt(path, gate)
+            self.assertIsNone(decision)
+            self.assertTrue(any("typed decision contract" in item for item in errors), errors)
+
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.rights.decision.v1",
+                        "gate_id": gate["id"],
+                        "authority": gate["authority"],
+                        "decision": True,
+                        "required_for": gate["required_for"],
+                    }
+                )
+            )
+            decision, errors = RIGHTS.validate_gate_decision_receipt(path, gate)
+            self.assertIs(decision, True)
+            self.assertEqual(errors, [])
+
+        mediapipe = next(
+            rule for rule in self.document["credit_rules"] if rule["credit_id"] == "mediapipe-credit"
+        )
+        self.assertEqual(mediapipe["gate"], "mediapipe-attribution-retained")
 
     def test_license_and_permission_layers_cannot_clear_each_other(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -316,12 +382,12 @@ class RightsContractTest(unittest.TestCase):
         clear_requirements(candidate)
         with tempfile.TemporaryDirectory() as temporary:
             package = make_package(Path(temporary), candidate)
-            blockers, identity = RIGHTS.validate_package(candidate, package)
+            blockers, identity = validate_fixture_package(candidate, package)
             self.assertEqual(blockers, [])
-            self.assertEqual(identity["items"], 2 + len(candidate["package_text"]))
+            self.assertEqual(identity["items"], 3 + len(candidate["package_text"]))
 
             (package / "master.mov").write_bytes(b"tampered")
-            blockers, _ = RIGHTS.validate_package(candidate, package)
+            blockers, _ = validate_fixture_package(candidate, package)
             self.assertTrue(any("digest does not match" in blocker for blocker in blockers), blockers)
 
     def test_package_binds_current_delivery_tree_and_every_text_manifest_row(self) -> None:
@@ -336,11 +402,31 @@ class RightsContractTest(unittest.TestCase):
             missing_text = candidate["package_text"][0]["destination"]
             manifest["items"] = [item for item in manifest["items"] if item["name"] != missing_text]
             manifest_path.write_text(json.dumps(manifest))
-            blockers, identity = RIGHTS.validate_package(candidate, package)
+            blockers, identity = validate_fixture_package(candidate, package)
             self.assertTrue(any("does not match the canonical delivery tree" in item for item in blockers), blockers)
             self.assertTrue(any("package text" in item and "absent from the manifest" in item for item in blockers), blockers)
             self.assertIsNone(identity["schema"])
             self.assertNotIn("/Users/", RIGHTS.canonical_json(identity))
+
+    def test_package_audio_binds_manifested_score_hydrated_bank_and_rule_ids(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            master = next(item for item in manifest["items"] if item["name"] == "master.mov")
+            master["sound"]["score_sha256"] = "c" * 64
+            master["sound"]["bank_fingerprint"] = "invented-bank"
+            manifest_path.write_text(json.dumps(manifest))
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(any("manifested score source" in item for item in blockers), blockers)
+            self.assertTrue(any("hydrated grain bank" in item for item in blockers), blockers)
+
+            renamed = copy.deepcopy(candidate)
+            next(rule for rule in renamed["package_rules"] if rule["id"] == "moving-image")["id"] = "film"
+            blockers, _ = validate_fixture_package(renamed, make_package(Path(temporary) / "renamed", renamed))
+            self.assertTrue(any("missing required package rule moving-image" in item for item in blockers), blockers)
 
     def test_package_rejects_unmanifested_media_unknown_rules_and_symlinks(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -359,7 +445,7 @@ class RightsContractTest(unittest.TestCase):
                 {"name": "unknown.bin", "bytes": len(unknown), "sha256": digest_bytes(unknown)}
             )
             (package / "manifest.json").write_text(json.dumps(manifest))
-            blockers, _ = RIGHTS.validate_package(candidate, package)
+            blockers, _ = validate_fixture_package(candidate, package)
             self.assertGreaterEqual(
                 sum("absent from the manifest" in blocker for blocker in blockers),
                 2,
@@ -414,6 +500,39 @@ class RightsContractTest(unittest.TestCase):
         self.assertTrue(any("1 unknown key" in blocker for blocker in blockers), blockers)
         self.assertFalse(any("nested" in blocker or "value" in blocker for blocker in blockers), blockers)
 
+    def test_archive_opt_out_excludes_only_the_conditional_archive_use(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        candidate["status"] = "reviewed"
+        gate = next(row for row in candidate["human_gates"] if row["id"] == "archive-library-choice")
+        gate["state"] = "pending"
+        gate["evidence"] = None
+        asset = next(row for row in candidate["assets"] if row["id"] == "festival-archive-copy")
+        asset["disposition"] = "blocked"
+        asset["rights_holder"] = None
+        asset["blocker"] = "The filing choice controls this conditional use."
+        use = asset["uses"][0]
+        use |= {
+            "territory": "pending",
+            "term": "pending",
+            "promotion": "not-applicable",
+            "archive": "pending",
+            "status": "blocked",
+            "evidence": None,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            attestation = yaml.safe_load((package / "attest.yaml").read_text())
+            attestation["archive-library-choice"] = "opt-out"
+            (package / "attest.yaml").write_text(yaml.safe_dump(attestation, sort_keys=True))
+            blockers, _ = fixture_phase_blockers(candidate, "submitted", package=package)
+            self.assertFalse(any("festival-archive-copy/festival-archive" in item for item in blockers), blockers)
+
+            attestation["archive-library-choice"] = "include"
+            (package / "attest.yaml").write_text(yaml.safe_dump(attestation, sort_keys=True))
+            blockers, _ = fixture_phase_blockers(candidate, "submitted", package=package)
+            self.assertTrue(any("festival-archive-copy/festival-archive" in item for item in blockers), blockers)
+
     def test_release_manifest_binds_exact_rights_register_media_and_credits(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
@@ -449,7 +568,7 @@ class RightsContractTest(unittest.TestCase):
                 candidate, release, "release", root=root, register_path=register
             )
             self.assertTrue(any("invalid release identifier" in item for item in blockers), blockers)
-            self.assertTrue(any("exact staged release destination" in item for item in blockers), blockers)
+            self.assertTrue(any("canonical destination" in item for item in blockers), blockers)
             self.assertTrue(any("byte count is missing or stale" in item for item in blockers), blockers)
             self.assertTrue(any("does not match its approved attribution" in item for item in blockers), blockers)
             self.assertIsNone(identity["release_id"])
@@ -468,6 +587,19 @@ class RightsContractTest(unittest.TestCase):
                 candidate, release, "public", root=root, register_path=register
             )
             self.assertTrue(any("phase scope disagrees" in blocker for blocker in blockers), blockers)
+
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
+            manifest["status"] = []
+            manifest["media"] = [
+                row for row in manifest["media"] if row["id"] != "project-page-copy"
+            ]
+            release.write_text(json.dumps(manifest))
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "public", root=root, register_path=register
+            )
+            self.assertTrue(any("status is not valid" in blocker for blocker in blockers), blockers)
+            self.assertTrue(any("project-page-copy" in blocker for blocker in blockers), blockers)
 
             release, root, register = make_release(Path(temporary), candidate)
             manifest = json.loads(release.read_text())
@@ -536,14 +668,14 @@ class RightsContractTest(unittest.TestCase):
             include = yaml.safe_load((package / "attest.yaml").read_text())
             include["archive-library-choice"] = "include"
             (package / "attest.yaml").write_text(yaml.safe_dump(include, sort_keys=True))
-            blockers, inputs = RIGHTS.phase_blockers(candidate, "submitted", package=package)
+            blockers, inputs = fixture_phase_blockers(candidate, "submitted", package=package)
             self.assertEqual(blockers, [])
             include_identity = inputs["attestation"]
             self.assertEqual(include_identity["values"]["archive-library-choice"], "include")
 
             include["archive-library-choice"] = "opt-out"
             (package / "attest.yaml").write_text(yaml.safe_dump(include, sort_keys=True))
-            blockers, inputs = RIGHTS.phase_blockers(candidate, "submitted", package=package)
+            blockers, inputs = fixture_phase_blockers(candidate, "submitted", package=package)
             self.assertEqual(blockers, [])
             opt_out_identity = inputs["attestation"]
             self.assertEqual(opt_out_identity["values"]["archive-library-choice"], "opt-out")

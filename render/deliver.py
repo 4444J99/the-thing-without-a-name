@@ -89,6 +89,7 @@ AUDIO_ITEMS = {
     "screener.mp4",
     "reel.mp4",
 }
+SCORE_SOURCE_ITEM = "provenance/passage-score.wav"
 PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
 FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", "reel.mp4"}
 
@@ -169,6 +170,11 @@ def delivery_source_sha256(tier: str) -> str:
         DANSE / "corpus/score-2017.json",
         DANSE / "corpus/manifest.local.json",
         DANSE / "corpus" / "tier-receipts" / f"{tier}.json",
+        DANSE / "music/compile_score.py",
+        DANSE / "music/repertoire.yaml",
+        DANSE / "music/repertoire.schema.json",
+        DANSE / "music/score.json",
+        DANSE / "music/score.schema.json",
         DANSE / "sound/control.mjs",
         DANSE / "sound/score.py",
         DANSE / "sound/rng.py",
@@ -342,7 +348,7 @@ def is_forced(force: set[str], name: str, group: str | None = None) -> bool:
 
 def recognized_package_media(package: Path) -> list[Path]:
     """Known delivery media that cannot be adopted without a manifest."""
-    paths = [package / name for name in sorted(AUDIO_ITEMS)]
+    paths = [package / name for name in sorted(AUDIO_ITEMS | {SCORE_SOURCE_ITEM})]
     stills = package / "stills"
     if stills.is_dir():
         paths.extend(stills.glob("seed-0x*.*"))
@@ -1126,6 +1132,16 @@ def main() -> int:
     need_picture = work["master"] or bool(work["derived"])
     picture = passage_picture(program, args.tier, score_forced, start=args.start) if need_picture else None
     made: list[Path] = []
+    if audio_selected:
+        assert sound is not None and sound_provenance is not None
+        score_source = PACKAGE / SCORE_SOURCE_ITEM
+        if not regular_directory_slot(score_source.parent) or score_source.is_symlink():
+            raise SystemExit("package score provenance must use a regular non-symlink destination")
+        score_source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(sound, score_source)
+        if not score_source.is_file() or score_source.is_symlink() or digest(score_source) != digest(sound):
+            raise SystemExit("package score provenance copy does not match the rendered score")
+        made.append(score_source)
 
     if "master" in only and work["master"]:
         made.append(deliver_passage(picture, sound, score_forced))
@@ -1215,6 +1231,8 @@ def main() -> int:
             ) or prior.get("sound") or previous_sound
             if item_sound:
                 item["sound"] = item_sound
+        elif name == SCORE_SOURCE_ITEM and sound_provenance:
+            item["sound"] = sound_provenance
         if name == "stills/origin-2017.jpg":
             assert origin is not None
             item |= {

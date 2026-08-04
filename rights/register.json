@@ -211,6 +211,16 @@
       "note": "Future calibration and recovery documentation must be dispositioned after it exists."
     },
     {
+      "id": "mediapipe-attribution-retained",
+      "label": "MediaPipe license and model attribution",
+      "required_for": ["public", "release"],
+      "authority": "Apache-2.0 license and exact MediaPipe vendor manifest",
+      "state": "satisfied",
+      "evidence": {"path": "rights/evidence/mediapipe-attribution.json", "sha256": "4b7fb1bf62f6d92e881bb5f983c661a7a13f93e425639b1b094c9d718a124609", "summary": "Typed public-safe decision receipt binds the exact attribution gate and authority."},
+      "attestation": null,
+      "note": "The shipped vendor manifest and Apache-2.0 notice establish the exact retained attribution."
+    },
+    {
       "id": "accepted-film-no-withdrawal",
       "label": "Accepted-film nonwithdrawal term acknowledged",
       "required_for": ["submitted"],
@@ -363,7 +373,7 @@
         {"path": "submission/screendance-2027.yaml", "sha256": "7deae288983146457bf8cd6758441ac00fb5fcb8c62d63c4b58c992e4197c6b1", "summary": "Published archive-library opt-in or opt-out choice."}
       ],
       "uses": [
-        {"id": "festival-archive", "medium": "festival-archive", "required_for": ["submitted"], "territory": "pending", "term": "pending", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "note": "No include or opt-out choice is recorded."}
+        {"id": "festival-archive", "medium": "festival-archive", "required_for": ["submitted"], "territory": "pending", "term": "pending", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "conditional_exclusion": {"gate": "archive-library-choice", "value": "opt-out"}, "note": "Include requires cleared archive scope; the registered opt-out decision excludes this use."}
       ],
       "blocker": "Anthony must choose include or opt-out at filing; the system has no default."
     },
@@ -539,6 +549,15 @@
       ]
     },
     {
+      "id": "score-source",
+      "pattern": "^provenance/passage-score\\.wav$",
+      "requirements": [
+        {"asset": "final-cut-derived-media", "use": "delivery"},
+        {"asset": "room-source-recordings", "use": "delivery-audio"},
+        {"asset": "selected-music", "use": "score-audio"}
+      ]
+    },
+    {
       "id": "generated-still",
       "pattern": "^stills/seed-0x[0-9A-Fa-f]{4,}\\.(jpg|jpeg|png)$",
       "requirements": [
@@ -566,16 +585,24 @@
     }
   ],
   "release_rules": [
-    {"media_id": "press-still-primary", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
-    {"media_id": "project-social-card", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
-    {"media_id": "accessible-trailer", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "score-driven-master", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "installation-proof", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]}
+    {"media_id": "press-still-primary", "destination": "media/assets/press-still-primary.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "project-social-card", "destination": "media/assets/project-social-card.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "accessible-trailer", "destination": "media/assets/accessible-trailer.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "score-driven-master", "destination": "media/assets/score-driven-master.mov", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "installation-proof", "destination": "media/assets/installation-proof.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]},
+    {"media_id": "project-page-copy", "destination": "media/assets/project-page.html", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "pitch-pdf-copy", "destination": "media/assets/pitch.pdf", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "accessibility-copy", "destination": "media/assets/accessibility.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "caption-track-copy", "destination": "media/assets/captions.en.vtt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "transcript-copy", "destination": "media/assets/transcript.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "press-kit-copy", "destination": "media/assets/press-kit.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "credits-copy", "destination": "media/assets/credits.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]}
   ],
   "credit_rules": [
     {"credit_id": "artist-credit", "asset": "project-software-design", "gate": "rights-declaration-approved"},
     {"credit_id": "dancer-credit", "asset": "dancer-performance-likeness", "gate": "dancer-release-and-credit"},
     {"credit_id": "music-credit", "asset": "selected-music", "gate": "music-cleared"},
-    {"credit_id": "pictured-objects-credit", "asset": "poster-wall-and-pictured-objects", "gate": "pictured-objects-reviewed"}
+    {"credit_id": "pictured-objects-credit", "asset": "poster-wall-and-pictured-objects", "gate": "pictured-objects-reviewed"},
+    {"credit_id": "mediapipe-credit", "asset": "mediapipe-pose-runtime", "gate": "mediapipe-attribution-retained"}
   ]
 }

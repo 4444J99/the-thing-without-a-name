@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+      - run: python3 -m pip install .
+      - name: Require exact public rights and release inventory
+        run: >-
+          python3 scripts/check-rights.py
+          --phase public
+          --release-manifest release/manifest.json
       - name: Build allowlisted Pages artifact
         run: >-
           python3 scripts/build-pages.py
