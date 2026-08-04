@@ -8,8 +8,9 @@ not remove, move, or rewrite the source.
 The snapshot directory is private. Its manifest contains relative filenames and
 must stay with the controlled custody media; it must never be committed or used
 as a public receipt. The restore command emits a separate redacted receipt with
-only opaque medium identities, source and remote commits, aggregate counts and
-bytes, and artifact digests.
+only hashed snapshot/medium identities, source and remote commits, aggregate
+counts and bytes, and artifact digests. Caller labels, snapshot names, branch
+names, filenames, and local paths are not serialized into that receipt.
 
 ## Snapshot and duplicate
 
@@ -30,9 +31,14 @@ Use `--remote-mode ancestor` only for a deliberately retained historical commit
 that is proven reachable from the named remote branch. `equal` is the default
 custody expectation for an archive branch. The tool refuses a dirty tracked
 tree, unsafe or unresolved remote reference, fetch/push remote mismatch,
-escaping symlink, special file, destination collision, insufficient space, or
-two destinations on the same physical device. On macOS, independence is derived
-from the parent whole disk rather than the APFS volume alone.
+escaping symlink on POSIX or Windows, special file, hidden index flags,
+destination collision, insufficient space, or two destinations on the same
+physical device. The private census and hashes are repeated after archival so a
+late writer cannot silently fall outside the snapshot. On macOS, independence
+is derived from one APFS physical store and its physical whole disk; virtual,
+image-backed, ambiguous, and same-device volumes fail closed. The tracked tool
+currently refuses to claim physical independence on platforms where that proof
+cannot be derived with macOS `diskutil`.
 
 An interrupted or failed snapshot remains under its hidden `.incomplete`
 directory for inspection. The tool never deletes or resumes it and will not
@@ -45,6 +51,7 @@ parent must already exist, and neither the restore target nor receipt may exist:
 
 ```bash
 python3 scripts/private_custody.py restore \
+  --source SOURCE_WORKTREE \
   --primary PRIMARY_CUSTODY_ROOT/PORTABLE_SNAPSHOT_ID \
   --secondary SECONDARY_CUSTODY_ROOT/PORTABLE_SNAPSHOT_ID \
   --primary-id OPAQUE_PRIMARY_MEDIUM_ID \
@@ -53,10 +60,14 @@ python3 scripts/private_custody.py restore \
   --receipt EXISTING_PRIVATE_RECEIPT_PARENT/redacted-receipt.json
 ```
 
-The restore starts from the bundled Git commit, overlays only the private
-inventory, rejects archive traversal and overwrite attempts, hashes every
-restored file, checks the exact ignored/untracked census, and requires a clean
-tracked diff. Both custody copies are re-hashed before extraction.
+Before restoring, the command re-audits the retained source, including hidden
+index flags and the full private census, against the sealed snapshot. It then
+starts from the bundled Git commit, overlays only the private inventory, rejects
+archive traversal and overwrite attempts, hashes every restored file, checks the
+exact ignored/untracked census, and requires a clean tracked diff. Both custody
+copies are re-hashed before extraction. Source, snapshots, restore target, and
+receipt must be pairwise disjoint so a successful rehearsal cannot mutate the
+evidence it just certified.
 
 The generated receipt intentionally leaves `human_acceptance.ok` false and
 `cleanup_authorized` false. A successful machine restore does not authorize

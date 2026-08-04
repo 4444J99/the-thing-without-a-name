@@ -94,15 +94,21 @@ class PrivateCustodyTest(unittest.TestCase):
     def test_snapshot_copy_and_clean_restore_are_byte_exact(self) -> None:
         primary, secondary = self.fixture.snapshot()
         restore = self.fixture.restore_parent / "clean"
+        receipt_path = self.fixture.root / "receipt.json"
         with mock.patch.object(
             CUSTODY,
-            "_physical_device_token",
-            side_effect=("a" * 64, "b" * 64),
+            "_medium_identity",
+            side_effect=(
+                CUSTODY.MediumIdentity("a" * 64, "physical-a"),
+                CUSTODY.MediumIdentity("b" * 64, "physical-b"),
+            ),
         ):
             receipt = CUSTODY.redacted_receipt(
+                self.fixture.source,
                 primary,
                 secondary,
                 restore,
+                receipt_path,
                 "archive-medium",
                 "recovery-medium",
             )
@@ -117,6 +123,10 @@ class PrivateCustodyTest(unittest.TestCase):
         rendered = json.dumps(receipt)
         self.assertNotIn("payload.bin", rendered)
         self.assertNotIn(str(self.fixture.root), rendered)
+        self.assertNotIn("fixture-snapshot", rendered)
+        self.assertNotIn("origin/main", rendered)
+        self.assertNotIn("archive-medium", rendered)
+        self.assertNotIn("recovery-medium", rendered)
 
     def test_dirty_tracked_source_fails_before_destination_bytes_are_created(self) -> None:
         (self.fixture.source / "README.md").write_text("dirty\n", encoding="utf-8")
@@ -125,6 +135,19 @@ class PrivateCustodyTest(unittest.TestCase):
                 self.fixture.source,
                 self.fixture.primary,
                 "dirty-source",
+                "origin/main",
+                "equal",
+            )
+        self.assertEqual(list(self.fixture.primary.iterdir()), [])
+
+    def test_hidden_tracked_edits_cannot_be_omitted_by_index_flags(self) -> None:
+        git(self.fixture.source, "update-index", "--assume-unchanged", "README.md")
+        (self.fixture.source / "README.md").write_text("private hidden tracked edit\n", encoding="utf-8")
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "hidden index flags"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "hidden-tracked-edit",
                 "origin/main",
                 "equal",
             )
@@ -158,9 +181,52 @@ class PrivateCustodyTest(unittest.TestCase):
             )
         self.assertEqual(list(self.fixture.primary.iterdir()), [])
 
+    def test_windows_drive_and_unc_symlink_targets_are_not_portable(self) -> None:
+        for target in (r"C:\private\outside", r"\\server\share\outside", r"folder\outside"):
+            with self.subTest(target=target), self.assertRaisesRegex(
+                CUSTODY.CustodyError, "symlink escapes"
+            ):
+                CUSTODY._safe_symlink_target(target)
+
+    def test_late_private_file_invalidates_snapshot_before_sealing(self) -> None:
+        original = CUSTODY._tar_materials
+
+        def mutate_after_archive(source, entries, output, total):
+            original(source, entries, output, total)
+            (source / ".work/late.bin").write_bytes(b"late")
+
+        with mock.patch.object(
+            CUSTODY, "_tar_materials", side_effect=mutate_after_archive
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "private census changed"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "late-material",
+                "origin/main",
+                "equal",
+            )
+        self.assertFalse((self.fixture.primary / "late-material").exists())
+        self.assertTrue((self.fixture.primary / ".late-material.incomplete").is_dir())
+
     def test_same_physical_device_cannot_count_twice(self) -> None:
-        with self.assertRaisesRegex(CUSTODY.CustodyError, "independent physical devices"):
+        same = CUSTODY.MediumIdentity("a" * 64, "one-physical-device")
+        with mock.patch.object(
+            CUSTODY, "_medium_identity", return_value=same
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "independent physical devices"):
             CUSTODY.ensure_independent(self.fixture.primary, self.fixture.secondary)
+
+    def test_equal_opaque_medium_labels_cannot_form_two_copy_rows(self) -> None:
+        primary, secondary = self.fixture.snapshot()
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "medium ids must be distinct"):
+            CUSTODY.redacted_receipt(
+                self.fixture.source,
+                primary,
+                secondary,
+                self.fixture.restore_parent / "not-created",
+                self.fixture.root / "not-created.json",
+                "same-medium",
+                "same-medium",
+            )
 
     def test_tampered_copy_fails_before_restore(self) -> None:
         _, secondary = self.fixture.snapshot()
@@ -169,6 +235,64 @@ class PrivateCustodyTest(unittest.TestCase):
         target = self.fixture.restore_parent / "blocked"
         with self.assertRaisesRegex(CUSTODY.CustodyError, "byte count changed"):
             CUSTODY.restore_snapshot(secondary, target)
+        self.assertFalse(target.exists())
+
+    def test_control_symlink_cannot_escape_the_snapshot(self) -> None:
+        primary, _ = self.fixture.snapshot()
+        control = primary / "control.json"
+        external = self.fixture.root / "external-control.json"
+        external.write_bytes(control.read_bytes())
+        control.unlink()
+        control.symlink_to(external)
+        with self.assertRaisesRegex(CUSTODY.CustodyError, "control is missing, linked"):
+            CUSTODY.verify_snapshot(primary)
+
+    def test_restore_and_receipt_paths_cannot_mutate_snapshots_or_restored_census(self) -> None:
+        primary, secondary = self.fixture.snapshot()
+        cases = (
+            (primary / "restored-tree", self.fixture.root / "receipt-a.json"),
+            (self.fixture.restore_parent / "clean-b", primary / "receipt.json"),
+            (self.fixture.restore_parent / "clean-c", self.fixture.restore_parent / "clean-c/receipt.json"),
+        )
+        for target, receipt_path in cases:
+            with self.subTest(target=target.name, receipt=receipt_path.name):
+                with self.assertRaisesRegex(CUSTODY.CustodyError, "disjoint|parent must be"):
+                    CUSTODY.redacted_receipt(
+                        self.fixture.source,
+                        primary,
+                        secondary,
+                        target,
+                        receipt_path,
+                        "archive-medium",
+                        "recovery-medium",
+                    )
+                self.assertFalse(target.exists())
+        self.assertEqual(
+            {item.name for item in primary.iterdir()},
+            {"control.json", "private-manifest.json", "materials.tar", "source.bundle"},
+        )
+
+    def test_source_census_drift_blocks_receipt_and_restore(self) -> None:
+        primary, secondary = self.fixture.snapshot()
+        (self.fixture.source / ".work/late-after-snapshot.bin").write_bytes(b"late")
+        target = self.fixture.restore_parent / "blocked-source-drift"
+        with mock.patch.object(
+            CUSTODY,
+            "_medium_identity",
+            side_effect=(
+                CUSTODY.MediumIdentity("a" * 64, "physical-a"),
+                CUSTODY.MediumIdentity("b" * 64, "physical-b"),
+            ),
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "retained private census"):
+            CUSTODY.redacted_receipt(
+                self.fixture.source,
+                primary,
+                secondary,
+                target,
+                self.fixture.root / "blocked-source-drift.json",
+                "archive-medium",
+                "recovery-medium",
+            )
         self.assertFalse(target.exists())
 
     def test_unsafe_remote_reference_is_rejected_without_git_option_injection(self) -> None:

@@ -21,7 +21,7 @@ import subprocess
 import sys
 import tarfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
 
 SCHEMA = "danse.private-custody.snapshot.v1"
@@ -121,6 +121,14 @@ class Progress:
             self.next_report += PROGRESS_INTERVAL
 
 
+@dataclass(frozen=True)
+class MediumIdentity:
+    """A durable store digest plus an in-process physical-device boundary."""
+
+    durable_sha256: str
+    physical_device: str
+
+
 class _ProgressReader:
     def __init__(self, handle: BinaryIO, progress: Progress):
         self.handle = handle
@@ -161,6 +169,22 @@ def _safe_relative(value: object, label: str = "material path") -> str:
     return pure.as_posix()
 
 
+def _safe_symlink_target(value: object) -> str:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise CustodyError("a material symlink escapes the portable snapshot")
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or bool(windows.drive)
+        or bool(windows.root)
+        or any(part == ".." for part in posix.parts)
+    ):
+        raise CustodyError("a material symlink escapes the portable snapshot")
+    return value
+
+
 def _contained_path(root: Path, relative: str, label: str) -> Path:
     current = root
     for part in PurePosixPath(relative).parts:
@@ -199,6 +223,33 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _canonical_candidate(path: Path) -> Path:
+    try:
+        if _lexists(path):
+            return path.resolve(strict=True)
+        return path.parent.resolve(strict=True) / path.name
+    except OSError as exc:
+        raise CustodyError("output boundary could not be resolved") from exc
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    return first == second or first.is_relative_to(second) or second.is_relative_to(first)
+
+
+def _require_disjoint(*paths: Path) -> None:
+    resolved = [_canonical_candidate(path) for path in paths]
+    for index, first in enumerate(resolved):
+        if any(_paths_overlap(first, second) for second in resolved[index + 1 :]):
+            raise CustodyError("source, snapshots, restore target, and receipt must be disjoint")
+
+
+def _require_new_path(path: Path, label: str) -> None:
+    if _lexists(path):
+        raise CustodyError(f"{label} already exists")
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise CustodyError(f"{label} parent must be an existing regular directory")
+
+
 def _safe_remote_ref(value: str) -> str:
     if (
         not value.startswith("origin/")
@@ -219,7 +270,7 @@ def _safe_remote_ref(value: str) -> str:
     return value
 
 
-def _material_inventory(source: Path) -> tuple[list[dict], int]:
+def _material_paths(source: Path) -> tuple[set[str], set[str]]:
     ignored_raw = _git(
         source,
         "ls-files",
@@ -250,8 +301,11 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
             values.add(_safe_relative(value))
         return values
 
-    ignored = decode(ignored_raw, "ignored inventory")
-    untracked = decode(untracked_raw, "untracked inventory")
+    return decode(ignored_raw, "ignored inventory"), decode(untracked_raw, "untracked inventory")
+
+
+def _material_inventory(source: Path) -> tuple[list[dict], int]:
+    ignored, untracked = _material_paths(source)
     paths = sorted(ignored | untracked)
     entries: list[dict] = []
     total = 0
@@ -279,10 +333,7 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
             )
             total += before.st_size
         elif stat.S_ISLNK(before.st_mode):
-            target = os.readlink(path)
-            target_pure = PurePosixPath(target)
-            if target_pure.is_absolute() or any(part == ".." for part in target_pure.parts):
-                raise CustodyError("a material symlink escapes the portable snapshot")
+            target = _safe_symlink_target(os.readlink(path))
             entries.append(
                 {
                     "path": relative,
@@ -294,6 +345,9 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
             )
         else:
             raise CustodyError("the material inventory contains an unsupported special file")
+    final_ignored, final_untracked = _material_paths(source)
+    if (final_ignored, final_untracked) != (ignored, untracked):
+        raise CustodyError("the private material census changed while it was being hashed")
     return entries, total
 
 
@@ -311,6 +365,9 @@ def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dic
     status = str(_git(resolved, "status", "--porcelain=v1", "--untracked-files=no").stdout)
     if status:
         raise CustodyError("source has tracked modifications")
+    flags = _git(resolved, "ls-files", "-v", "-z", text=False).stdout
+    if any(not record.startswith(b"H ") for record in flags.split(b"\0") if record):
+        raise CustodyError("source uses hidden index flags such as assume-unchanged or skip-worktree")
     shallow = str(_git(resolved, "rev-parse", "--is-shallow-repository").stdout).strip()
     if shallow != "false":
         raise CustodyError("source must contain complete Git history, not a shallow checkout")
@@ -457,10 +514,10 @@ def create_snapshot(
     bundle_heads = str(_git(source, "bundle", "list-heads", str(bundle_path)).stdout).splitlines()
     if not any(line.split(maxsplit=1)[0] == identity["head"] for line in bundle_heads if line.strip()):
         raise CustodyError("source bundle does not advertise the admitted source head")
-    final_head = str(_git(source, "rev-parse", "HEAD").stdout).strip()
-    final_status = str(_git(source, "status", "--porcelain=v1", "--untracked-files=no").stdout)
-    if final_head != identity["head"] or final_status:
-        raise CustodyError("source repository changed during snapshot creation")
+    final_identity = _repository_identity(source, remote_ref, remote_mode)
+    final_entries, final_total = _material_inventory(source)
+    if final_identity != identity or final_total != total or final_entries != entries:
+        raise CustodyError("source repository or private census changed during snapshot creation")
 
     artifacts = {
         "private-manifest.json": _artifact(manifest_path, "private manifest"),
@@ -489,25 +546,65 @@ def create_snapshot(
     return final
 
 
-def _physical_device_token(path: Path) -> str:
-    device_identity: str | None = None
-    if sys.platform == "darwin" and DISKUTIL is not None:
-        result = subprocess.run(
-            [DISKUTIL, "info", "-plist", str(path)],
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            try:
-                info = plistlib.loads(result.stdout)
-            except plistlib.InvalidFileException:
-                info = {}
-            candidate = info.get("ParentWholeDisk") or info.get("DeviceIdentifier")
-            if isinstance(candidate, str) and candidate:
-                device_identity = f"darwin:{candidate}"
-    if device_identity is None:
-        device_identity = f"st_dev:{path.stat().st_dev}"
-    return hashlib.sha256(device_identity.encode("utf-8")).hexdigest()
+def _mount_point(path: Path) -> Path:
+    try:
+        current = path.resolve(strict=True)
+        device = current.stat().st_dev
+        while current.parent != current and current.parent.stat().st_dev == device:
+            current = current.parent
+    except OSError as exc:
+        raise CustodyError("custody medium could not be resolved") from exc
+    return current
+
+
+def _diskutil_info(value: str | Path) -> dict:
+    if sys.platform != "darwin" or DISKUTIL is None:
+        raise CustodyError("physical-medium proof requires macOS diskutil")
+    result = _run([DISKUTIL, "info", "-plist", str(value)], text=False)
+    try:
+        info = plistlib.loads(result.stdout)
+    except (plistlib.InvalidFileException, ValueError) as exc:
+        raise CustodyError("physical-medium metadata is invalid") from exc
+    if not isinstance(info, dict):
+        raise CustodyError("physical-medium metadata is invalid")
+    return info
+
+
+def _medium_identity(path: Path) -> MediumIdentity:
+    mount = _mount_point(path)
+    mount_info = _diskutil_info(mount)
+    declared_mount = mount_info.get("MountPoint")
+    if not isinstance(declared_mount, str) or Path(declared_mount).resolve() != mount:
+        raise CustodyError("custody path does not bind one mounted filesystem")
+
+    physical_stores = mount_info.get("APFSPhysicalStores")
+    if isinstance(physical_stores, list):
+        identifiers = [
+            row.get("APFSPhysicalStore")
+            for row in physical_stores
+            if isinstance(row, dict) and isinstance(row.get("APFSPhysicalStore"), str)
+        ]
+        if len(identifiers) != 1:
+            raise CustodyError("custody APFS volume does not bind exactly one physical store")
+        store_info = _diskutil_info(identifiers[0])
+    else:
+        store_info = mount_info
+
+    whole = store_info.get("ParentWholeDisk")
+    if not isinstance(whole, str) or not whole:
+        if store_info.get("WholeDisk") is True and isinstance(store_info.get("DeviceIdentifier"), str):
+            whole = store_info["DeviceIdentifier"]
+        else:
+            raise CustodyError("custody filesystem has no physical whole-disk parent")
+    whole_info = _diskutil_info(whole)
+    if whole_info.get("VirtualOrPhysical") != "Physical" or whole_info.get("SystemImage") is not False:
+        raise CustodyError("custody target is virtual, image-backed, or not provably physical")
+
+    durable = store_info.get("DiskUUID") or mount_info.get("VolumeUUID")
+    if not isinstance(durable, str) or not durable:
+        raise CustodyError("custody physical store has no durable UUID")
+    durable_sha256 = hashlib.sha256(f"darwin-store-v1:{durable}".encode()).hexdigest()
+    return MediumIdentity(durable_sha256=durable_sha256, physical_device=whole)
 
 
 def ensure_independent(primary_root: Path, secondary_root: Path) -> tuple[str, str]:
@@ -518,17 +615,23 @@ def ensure_independent(primary_root: Path, secondary_root: Path) -> tuple[str, s
         or not secondary_root.is_dir()
     ):
         raise CustodyError("custody roots must be existing regular directories")
-    primary = _physical_device_token(primary_root)
-    secondary = _physical_device_token(secondary_root)
-    if primary == secondary:
+    primary = _medium_identity(primary_root)
+    secondary = _medium_identity(secondary_root)
+    if (
+        primary.physical_device == secondary.physical_device
+        or primary.durable_sha256 == secondary.durable_sha256
+    ):
         raise CustodyError("custody targets do not resolve to independent physical devices")
-    return primary, secondary
+    return primary.durable_sha256, secondary.durable_sha256
 
 
 def verify_snapshot(snapshot: Path) -> dict:
     if snapshot.is_symlink() or not snapshot.is_dir():
         raise CustodyError("snapshot is not a regular directory")
-    control = _load_json(snapshot / "control.json", "snapshot control")
+    control_path = snapshot / "control.json"
+    if control_path.is_symlink() or not control_path.is_file():
+        raise CustodyError("snapshot control is missing, linked, or not a regular file")
+    control = _load_json(control_path, "snapshot control")
     expected_control_keys = {
         "schema",
         "snapshot_id",
@@ -714,12 +817,34 @@ def _manifest_entries(snapshot: Path, control: dict) -> list[dict]:
         ):
             raise CustodyError("private manifest contains an invalid symlink record")
         else:
-            target = PurePosixPath(entry["target"])
-            if target.is_absolute() or any(part == ".." for part in target.parts):
-                raise CustodyError("private manifest contains an escaping symlink")
+            _safe_symlink_target(entry["target"])
     if observed_bytes != control["inventory_bytes"]:
         raise CustodyError("private manifest byte count disagrees with snapshot control")
     return entries
+
+
+def audit_source_snapshot(source: Path, snapshot: Path, control: dict | None = None) -> dict:
+    """Prove the retained source still matches the exact private snapshot."""
+    control = verify_snapshot(snapshot) if control is None else control
+    manifest = _load_json(snapshot / "private-manifest.json", "private manifest")
+    entries = _manifest_entries(snapshot, control)
+    recorded_source = manifest["source"]
+    current_source = _repository_identity(source, control["remote_ref"], control["remote_mode"])
+    stable_keys = {
+        "head",
+        "branch",
+        "tracked_clean",
+        "remote_ref",
+        "remote_mode",
+        "remote_fetch_push_parity",
+    }
+    if any(current_source[key] != recorded_source[key] for key in stable_keys):
+        raise CustodyError("retained source identity no longer matches the private snapshot")
+    current_entries, current_total = _material_inventory(source)
+    if current_total != control["inventory_bytes"] or current_entries != entries:
+        raise CustodyError("retained private census no longer matches the private snapshot")
+    print("custody: retained source census matches the sealed snapshot", flush=True)
+    return current_source
 
 
 def _extract_materials(snapshot: Path, target: Path, entries: list[dict], total: int) -> None:
@@ -809,13 +934,13 @@ def _verify_restored_inventory(target: Path, entries: list[dict]) -> None:
 
 
 def restore_snapshot(snapshot: Path, target: Path) -> dict:
+    _require_new_path(target, "restore target")
+    _require_disjoint(snapshot, target)
     control = verify_snapshot(snapshot)
-    if _lexists(target):
-        raise CustodyError("restore target already exists")
-    if target.parent.is_symlink() or not target.parent.is_dir():
-        raise CustodyError("restore target parent must be an existing regular directory")
     target.mkdir(mode=0o700)
-    _run(["git", "init", "--quiet", str(target)])
+    if GIT is None:
+        raise CustodyError("required command is unavailable: git")
+    _run([GIT, "init", "--quiet", str(target)])
     _git(target, "fetch", "--quiet", str(snapshot / "source.bundle"), "HEAD")
     _git(target, "checkout", "--quiet", "--detach", "FETCH_HEAD")
     restored_head = str(_git(target, "rev-parse", "HEAD").stdout).strip()
@@ -832,34 +957,50 @@ def restore_snapshot(snapshot: Path, target: Path) -> dict:
 
 
 def redacted_receipt(
+    source: Path,
     primary: Path,
     secondary: Path,
     target: Path,
+    receipt_path: Path,
     primary_id: str,
     secondary_id: str,
 ) -> dict:
     for value, label in ((primary_id, "primary medium id"), (secondary_id, "secondary medium id")):
         if not ID.fullmatch(value):
             raise CustodyError(f"{label} must be a portable lowercase identifier")
+    if primary_id == secondary_id:
+        raise CustodyError("custody medium ids must be distinct")
+    _require_new_path(target, "restore target")
+    _require_new_path(receipt_path, "receipt target")
+    _require_disjoint(source, primary, secondary, target, receipt_path)
     primary_root = primary.parent
     secondary_root = secondary.parent
-    primary_token, secondary_token = ensure_independent(primary_root, secondary_root)
+    primary_device, secondary_device = ensure_independent(primary_root, secondary_root)
     first = verify_snapshot(primary)
     second = verify_snapshot(secondary)
-    if _json_bytes(first) != _json_bytes(second):
+    if (
+        _json_bytes(first) != _json_bytes(second)
+        or _sha256(primary / "control.json") != _sha256(secondary / "control.json")
+    ):
         raise CustodyError("independent snapshot controls are not byte-identical")
+    audit_source_snapshot(source, primary, first)
     restored = restore_snapshot(secondary, target)
     if restored != first:
         raise CustodyError("restore control disagrees with the verified copies")
     artifacts = first["artifacts"]
     manifest_digest = artifacts["private-manifest.json"]["sha256"]
+    primary_medium = hashlib.sha256(
+        f"danse-medium-v1:{primary_id}:{primary_device}".encode()
+    ).hexdigest()
+    secondary_medium = hashlib.sha256(
+        f"danse-medium-v1:{secondary_id}:{secondary_device}".encode()
+    ).hexdigest()
     return {
         "schema": RECEIPT_SCHEMA,
-        "snapshot_id": first["snapshot_id"],
+        "snapshot_identity_sha256": _sha256(primary / "control.json"),
         "source": {
             "head": first["source_head"],
-            "remote_ref": first["remote_ref"],
-            "remote_head": first["remote_head"],
+            "remote_head_at_snapshot": first["remote_head"],
             "remote_mode": first["remote_mode"],
             "tracked_clean": first["tracked_clean"],
             "remote_fetch_push_parity": True,
@@ -873,21 +1014,21 @@ def redacted_receipt(
         },
         "independent_verified_copies": [
             {
-                "medium_id": primary_id,
-                "device_identity_sha256": primary_token,
+                "medium_id": primary_medium,
+                "device_identity_sha256": primary_device,
                 "manifest_sha256": manifest_digest,
                 "verified": True,
             },
             {
-                "medium_id": secondary_id,
-                "device_identity_sha256": secondary_token,
+                "medium_id": secondary_medium,
+                "device_identity_sha256": secondary_device,
                 "manifest_sha256": manifest_digest,
                 "verified": True,
             },
         ],
         "restore_rehearsal": {
             "ok": True,
-            "restored_from": secondary_id,
+            "restored_from": secondary_medium,
             "source_head": first["source_head"],
             "inventory_verified": True,
             "tracked_clean": True,
@@ -909,6 +1050,7 @@ def _parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--remote-mode", choices=("equal", "ancestor"), required=True)
 
     restore = subparsers.add_parser("restore", help="verify both copies and rehearse a clean restore")
+    restore.add_argument("--source", type=Path, required=True)
     restore.add_argument("--primary", type=Path, required=True)
     restore.add_argument("--secondary", type=Path, required=True)
     restore.add_argument("--primary-id", required=True)
@@ -933,16 +1075,14 @@ def main(argv: list[str] | None = None) -> int:
             copy_snapshot(primary, args.secondary_root)
         else:
             receipt = redacted_receipt(
+                args.source,
                 args.primary,
                 args.secondary,
                 args.target,
+                args.receipt,
                 args.primary_id,
                 args.secondary_id,
             )
-            if _lexists(args.receipt):
-                raise CustodyError("receipt target already exists")
-            if args.receipt.parent.is_symlink() or not args.receipt.parent.is_dir():
-                raise CustodyError("receipt parent must be an existing regular directory")
             _write_new(args.receipt, _json_bytes(receipt))
             print("custody: wrote one redacted restore receipt", flush=True)
     except CustodyError as exc:
