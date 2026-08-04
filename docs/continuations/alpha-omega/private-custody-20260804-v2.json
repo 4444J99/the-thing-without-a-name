@@ -1,0 +1,78 @@
+{
+  "schema": "danse.private-custody.v2",
+  "recorded_at": "2026-08-04T09:56:00Z",
+  "supersedes": {
+    "path": "docs/continuations/alpha-omega/private-custody-20260804.json",
+    "canonical_json_sha256": "65e57686802132b2781fceef06688aee97d07bb2ab910400b758050afb3fd48e",
+    "policy": "The v1 receipt remains immutable; no copy or restore evidence is promoted by this additive observation."
+  },
+  "policy": {
+    "required_independent_verified_copies": 2,
+    "clean_restore_required": true,
+    "human_acceptance_required": true,
+    "tracked_receipt_is_redacted": true,
+    "private_or_personal_paths_forbidden": true
+  },
+  "tooling_receipt": {
+    "status": "merged",
+    "pull_request": "https://github.com/organvm/the-thing-without-a-name/pull/32",
+    "reviewed_head": "ac50e3ed8bf87681559db712177b4f0870c7222b",
+    "merge": "7c6bf8b105e57b0f8dc91164a7e4af1e0c083730",
+    "claim": "Snapshot and restore-verification tooling exists; this receipt does not claim that external copies or a restore were performed."
+  },
+  "roots": [
+    {
+      "id": "canonical-closeout-material-custody",
+      "repository": "organvm/the-thing-without-a-name",
+      "branch": null,
+      "head": "aa8afef941410c0790f60ea79b1eb04deb3baa43",
+      "status": "blocked",
+      "location_class": "ignored detached canonical worktree storage",
+      "observed_kib": 59154600,
+      "approximate_bytes_label": "56.4 GiB",
+      "observed_ignored_items": 1203,
+      "tracked_tree_clean": true,
+      "contents": [
+        {"class": "render", "custody": "private-derived"},
+        {"class": "submission-package-at-967cf2d", "custody": "generated-package"},
+        {"class": "submission-package-at-aa8afef", "custody": "generated-package"},
+        {"class": "submission-state", "custody": "private-generated-state"},
+        {"class": "reel-mode-proof", "custody": "generated-proof"},
+        {"class": "local-film-corpus", "custody": "private-source-and-derived"},
+        {"class": "recording-source-register", "custody": "private-source"}
+      ],
+      "independent_verified_copies": [],
+      "restore_rehearsal": {"ok": false, "receipt": null},
+      "human_acceptance": {"ok": false, "receipt": null},
+      "cleanup_authorized": false,
+      "issue_receipt": "https://github.com/organvm/the-thing-without-a-name/issues/21",
+      "next_action": "Mount two independent custody targets, create and verify identical redacted manifests, restore one copy into a clean temporary root, verify exact package and source-boundary bytes, then record explicit owner acceptance."
+    },
+    {
+      "id": "limen-predecessor-experiment-custody",
+      "repository": "organvm/limen",
+      "branch": "archive/danse-predecessor-experiments-20260802",
+      "head": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+      "status": "blocked",
+      "location_class": "ignored predecessor worktree storage",
+      "observed_kib": 1648364,
+      "approximate_bytes_label": "1.57 GiB",
+      "observed_ignored_items": 561,
+      "tracked_tree_clean": true,
+      "contents": [
+        {"class": "generated-public-corpus", "custody": "derived"},
+        {"class": "derived-grain-bank", "custody": "private-derived"},
+        {"class": "sound-renders", "custody": "private-derived"},
+        {"class": "generated-work-and-submission-state", "custody": "private-generated-state"},
+        {"class": "recording-source-register", "custody": "private-source"},
+        {"class": "awaited-pull-request-log", "custody": "internal-log"}
+      ],
+      "independent_verified_copies": [],
+      "restore_rehearsal": {"ok": false, "receipt": null},
+      "human_acceptance": {"ok": false, "receipt": null},
+      "cleanup_authorized": false,
+      "issue_receipt": "https://github.com/organvm/the-thing-without-a-name/issues/21",
+      "next_action": "Never merge the archive wholesale. Copy and checksum the ignored custody to two independent targets, restore one copy, preserve deliberate issue #3 dispositions, and obtain owner acceptance before reclamation."
+    }
+  ]
+}

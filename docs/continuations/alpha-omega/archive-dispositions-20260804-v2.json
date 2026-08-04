@@ -1,0 +1,84 @@
+{
+  "schema": "danse.archive-dispositions.v2",
+  "recorded_at": "2026-08-04T09:56:00Z",
+  "supersedes": {
+    "path": "docs/continuations/alpha-omega/archive-dispositions-20260804.json",
+    "canonical_json_sha256": "40265b59e750cd4fb6695be8e241e5508886d71ac6b5eff26eb9c6d0f2a9ec88",
+    "policy": "The v1 decision record remains immutable. V2 records the deliberate ports that subsequently reached canonical main."
+  },
+  "source": {
+    "repository": "organvm/limen",
+    "branch": "archive/danse-predecessor-experiments-20260802",
+    "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+    "remote_parity": true,
+    "merge_wholesale": false
+  },
+  "artifacts": [
+    {
+      "id": "visitor-pose-prototype",
+      "paths": ["apps/danse/join.html", "apps/danse/index.html"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/28",
+      "disposition": "The body-derived modulation concept was deliberately reimplemented as reproducible local pose input with permission-denied, dropout, privacy, accessibility, and no-camera fallbacks.",
+      "rejected": "The CDN-dependent archive implementation and any impurity inside the canonical engine were not ported."
+    },
+    {
+      "id": "stateful-spatial-score-prototype",
+      "paths": ["apps/danse/engine/score.js", "apps/danse/sound/score.py"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/25 and https://github.com/organvm/the-thing-without-a-name/pull/30",
+      "disposition": "Typed score and spatial-event ideas were deliberately reimplemented as immutable absolute-time score queries and a deterministic room-event bus shared across canonical renderers.",
+      "rejected": "Accumulated WebAudio scheduling, timer state, and stateful engine behavior remain superseded.",
+      "remaining_predicate": "Issue #11 retains real-room, multichannel, restart, and presentation evidence."
+    },
+    {
+      "id": "browser-audio-harness",
+      "paths": ["apps/danse/test-audio.html"],
+      "status": "archived",
+      "receipt": "docs/continuations/alpha-omega/archive-dispositions-20260804.json",
+      "disposition": "Retain as historical internal test material. It is not an artwork route and is excluded from Pages and release artifacts."
+    },
+    {
+      "id": "cloudflare-deployment-experiment",
+      "paths": [".github/workflows/deploy-danse.yml"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/24",
+      "disposition": "The experiment is superseded by the deterministic staged GitHub Pages allowlist and was not ported."
+    },
+    {
+      "id": "theoretical-framework",
+      "paths": ["docs/plans/2026-07-31-danse-theoretical-framework.md"],
+      "status": "archived",
+      "receipt": "docs/continuations/alpha-omega/archive-dispositions-20260804.json",
+      "disposition": "Preserve as historical working theory. Its unapproved claims are not public release copy; any future use requires deliberate editing and release-manifest evidence."
+    },
+    {
+      "id": "installation-proposal",
+      "paths": ["docs/plans/danse-installation-spec.md", "organs/artist/chambers/danse.yaml"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/33",
+      "disposition": "Useful room, routing, calibration, and recovery ideas were deliberately reworked into the evidence-bound canonical installation twin.",
+      "rejected": "Archive prose is not treated as venue approval or physical proof.",
+      "remaining_predicate": "Issue #14 retains all eight venue, hardware, calibration, wall-plug recovery, and owner-acceptance gates."
+    },
+    {
+      "id": "submission-attestation",
+      "paths": ["apps/danse/.work/submission/attest.yaml"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/issues/2",
+      "disposition": "The unsupported archive attestation remains rejected. Upload and filing can be recorded only by the canonical account-owned phase predicates."
+    },
+    {
+      "id": "private-brainstorm-history",
+      "paths": [],
+      "status": "not recorded",
+      "receipt": "docs/session-closeout.md",
+      "disposition": "No additional Danse-specific durable artifact was found in configured Claude, Agy, or Codex history surfaces. Unrecorded conversations cannot be reconstructed; no creative, legal, or technical claim is inferred from their absence."
+    }
+  ],
+  "issue_state": {
+    "id": 3,
+    "status": "blocked",
+    "reason": "The disposition matrix is complete, but the accepted spatial port explicitly inherits the real-room terminal predicate owned by issue #11."
+  }
+}
