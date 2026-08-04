@@ -81,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 51
+FLOOR = 52
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -1038,6 +1038,7 @@ def check_purity() -> None:
 
 CONVERGENCE_CHECK = APP / "scripts" / "check-convergence.py"
 CONVERGENCE_TEST = APP / "scripts" / "tests" / "convergence.test.py"
+PRIVATE_CUSTODY_TEST = APP / "scripts" / "tests" / "private-custody.test.py"
 PRIVATE_CUSTODY = APP / "docs" / "continuations" / "alpha-omega" / "private-custody-20260804.json"
 
 
@@ -1107,6 +1108,21 @@ def check_convergence_receipts() -> None:
             False,
             str(exc),
         )
+
+    snapshot_regressions = subprocess.run(
+        [sys.executable, str(PRIVATE_CUSTODY_TEST)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    snapshot_detail = (snapshot_regressions.stderr or snapshot_regressions.stdout).strip().splitlines()
+    check(
+        "private custody snapshots duplicate and restore exact source and material bytes",
+        snapshot_regressions.returncode == 0,
+        snapshot_detail[-1]
+        if snapshot_detail
+        else "clean tracked source, private manifest, two-copy identity, and restore",
+    )
 
 
 # ── 4. every frame the score names is deliverable ──────────────────────────────
