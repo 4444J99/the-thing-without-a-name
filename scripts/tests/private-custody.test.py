@@ -208,6 +208,173 @@ class PrivateCustodyTest(unittest.TestCase):
         self.assertFalse((self.fixture.primary / "late-material").exists())
         self.assertTrue((self.fixture.primary / ".late-material.incomplete").is_dir())
 
+    def test_earlier_material_mutation_during_later_hash_blocks_receipt(self) -> None:
+        earlier = self.fixture.source / ".work/aaa.bin"
+        earlier.write_bytes(b"a" * 4096)
+        primary, secondary = self.fixture.snapshot()
+        original = CUSTODY._sha256
+        mutated = False
+
+        def mutate_earlier_after_later(path, progress=None):
+            nonlocal mutated
+            digest = original(path, progress)
+            if path.name == "payload.bin" and not mutated:
+                earlier.write_bytes(b"b" * 4096)
+                mutated = True
+            return digest
+
+        target = self.fixture.restore_parent / "blocked-mid-census-mutation"
+        with mock.patch.object(
+            CUSTODY,
+            "_medium_identity",
+            side_effect=(
+                CUSTODY.MediumIdentity("a" * 64, "physical-a"),
+                CUSTODY.MediumIdentity("b" * 64, "physical-b"),
+            ),
+        ), mock.patch.object(
+            CUSTODY, "_sha256", side_effect=mutate_earlier_after_later
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "after its completed scan"):
+            CUSTODY.redacted_receipt(
+                self.fixture.source,
+                primary,
+                secondary,
+                target,
+                self.fixture.root / "blocked-mid-census-mutation.json",
+                "archive-medium",
+                "recovery-medium",
+            )
+        self.assertTrue(mutated)
+        self.assertFalse(target.exists())
+
+    def test_source_mutation_during_artifact_hashing_blocks_publication(self) -> None:
+        material = self.fixture.source / ".work/nested/payload.bin"
+        original_payload = material.read_bytes()
+        original = CUSTODY._artifact
+        mutated = False
+
+        def mutate_after_artifact(path, label):
+            nonlocal mutated
+            artifact = original(path, label)
+            if label == "source bundle" and not mutated:
+                material.write_bytes(b"x" * len(original_payload))
+                mutated = True
+            return artifact
+
+        with mock.patch.object(
+            CUSTODY, "_artifact", side_effect=mutate_after_artifact
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "during artifact hashing"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "artifact-race",
+                "origin/main",
+                "equal",
+            )
+        self.assertTrue(mutated)
+        self.assertFalse((self.fixture.primary / "artifact-race").exists())
+        self.assertTrue((self.fixture.primary / ".artifact-race.incomplete").is_dir())
+
+    def test_late_final_directories_cannot_be_replaced_on_create_or_copy(self) -> None:
+        original = CUSTODY._publish_directory_exclusive
+
+        def create_late_target(staging, final):
+            final.mkdir()
+            original(staging, final)
+
+        with mock.patch.object(
+            CUSTODY,
+            "_publish_directory_exclusive",
+            side_effect=create_late_target,
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "appeared during publication"):
+            CUSTODY.create_snapshot(
+                self.fixture.source,
+                self.fixture.primary,
+                "late-primary",
+                "origin/main",
+                "equal",
+            )
+        self.assertEqual(list((self.fixture.primary / "late-primary").iterdir()), [])
+        self.assertTrue((self.fixture.primary / ".late-primary.incomplete").is_dir())
+
+        primary = CUSTODY.create_snapshot(
+            self.fixture.source,
+            self.fixture.primary,
+            "late-secondary",
+            "origin/main",
+            "equal",
+        )
+        with mock.patch.object(
+            CUSTODY,
+            "_publish_directory_exclusive",
+            side_effect=create_late_target,
+        ), self.assertRaisesRegex(CUSTODY.CustodyError, "appeared during publication"):
+            CUSTODY.copy_snapshot(primary, self.fixture.secondary)
+        self.assertEqual(list((self.fixture.secondary / "late-secondary").iterdir()), [])
+        self.assertTrue((self.fixture.secondary / ".late-secondary.incomplete").is_dir())
+
+    def test_durable_publication_flushes_every_file_and_directory_boundary(self) -> None:
+        parent = self.fixture.root / "durable-publication"
+        staging = parent / ".snapshot.incomplete"
+        final = parent / "snapshot"
+        staging.mkdir(parents=True)
+        names = ("private-manifest.json", "materials.tar", "source.bundle", "control.json")
+        for name in names:
+            (staging / name).write_bytes(name.encode())
+
+        events = []
+
+        def sync_file(path):
+            events.append(("file", path.name))
+
+        def sync_directory(path):
+            events.append(("directory", path.name))
+
+        def publish(source, destination):
+            events.append(("publish", source.name, destination.name))
+            os.rename(source, destination)
+
+        with mock.patch.object(CUSTODY, "_fsync_file", side_effect=sync_file), mock.patch.object(
+            CUSTODY, "_fsync_directory", side_effect=sync_directory
+        ), mock.patch.object(
+            CUSTODY, "_publish_directory_exclusive", side_effect=publish
+        ):
+            CUSTODY._durable_publish_directory(staging, final)
+
+        self.assertEqual(
+            events,
+            [
+                *(("file", name) for name in sorted(names)),
+                ("directory", ".snapshot.incomplete"),
+                ("directory", "durable-publication"),
+                ("publish", ".snapshot.incomplete", "snapshot"),
+                ("directory", "snapshot"),
+                ("directory", "durable-publication"),
+            ],
+        )
+
+        probe = self.fixture.root / "fsync-probe.bin"
+        probe.write_bytes(b"durable")
+        real_fsync = os.fsync
+        with mock.patch.object(CUSTODY.os, "fsync", wraps=real_fsync) as fsync:
+            CUSTODY._fsync_file(probe)
+            CUSTODY._fsync_directory(self.fixture.root)
+        self.assertEqual(fsync.call_count, 2)
+
+        blocked_staging = parent / ".blocked.incomplete"
+        blocked_final = parent / "blocked"
+        blocked_staging.mkdir()
+        (blocked_staging / "control.json").write_bytes(b"control")
+        with mock.patch.object(
+            CUSTODY,
+            "_fsync_file",
+            side_effect=CUSTODY.CustodyError("injected fsync failure"),
+        ), mock.patch.object(CUSTODY, "_publish_directory_exclusive") as publish:
+            with self.assertRaisesRegex(CUSTODY.CustodyError, "injected fsync failure"):
+                CUSTODY._durable_publish_directory(blocked_staging, blocked_final)
+        publish.assert_not_called()
+        self.assertTrue(blocked_staging.is_dir())
+        self.assertFalse(blocked_final.exists())
+
     def test_same_physical_device_cannot_count_twice(self) -> None:
         same = CUSTODY.MediumIdentity("a" * 64, "one-physical-device")
         with mock.patch.object(

@@ -33,16 +33,22 @@ custody expectation for an archive branch. The tool refuses a dirty tracked
 tree, unsafe or unresolved remote reference, fetch/push remote mismatch,
 escaping symlink on POSIX or Windows, special file, hidden index flags,
 destination collision, insufficient space, or two destinations on the same
-physical device. The private census and hashes are repeated after archival so a
-late writer cannot silently fall outside the snapshot. On macOS, independence
-is derived from one APFS physical store and its physical whole disk; virtual,
+physical device. Every private inventory pass closes with a second whole-census
+metadata and digest proof, and that complete proof runs again after the snapshot
+artifacts are hashed. A writer that changes an earlier file while a later file
+is being read therefore invalidates the snapshot. On macOS, independence is
+derived from one APFS physical store and its physical whole disk; virtual,
 image-backed, ambiguous, and same-device volumes fail closed. The tracked tool
 currently refuses to claim physical independence on platforms where that proof
 cannot be derived with macOS `diskutil`.
 
 An interrupted or failed snapshot remains under its hidden `.incomplete`
 directory for inspection. The tool never deletes or resumes it and will not
-overwrite it on a later invocation.
+overwrite it on a later invocation. Before publication, every staged file, the
+staging directory, and its parent are `fsync`ed. Publication uses a kernel-level
+exclusive rename (`RENAME_EXCL` on macOS), so even an empty destination created
+after the preflight is preserved rather than replaced. The published directory
+and its parent are `fsync`ed again after the rename.
 
 ## Restore rehearsal
 

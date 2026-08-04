@@ -10,6 +10,8 @@ partial snapshot, or restored tree, and it refuses to overwrite any target.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -129,6 +131,17 @@ class MediumIdentity:
     physical_device: str
 
 
+@dataclass
+class _MaterialProof:
+    """One complete private census plus non-portable stability metadata."""
+
+    entries: list[dict]
+    total: int
+    ignored: frozenset[str]
+    untracked: frozenset[str]
+    metadata: dict[str, tuple[object, ...]]
+
+
 class _ProgressReader:
     def __init__(self, handle: BinaryIO, progress: Progress):
         self.handle = handle
@@ -215,12 +228,92 @@ def _lexists(path: Path) -> bool:
     return os.path.lexists(path)
 
 
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
+def _fsync_file(path: Path) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise CustodyError("staged snapshot contains a linked or non-regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        descriptor = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise CustodyError("staged snapshot contains a non-regular file")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise CustodyError("staged snapshot file could not be durably synchronized") from exc
+
+
+def _fsync_directory(path: Path) -> None:
+    if path.is_symlink() or not path.is_dir():
+        raise CustodyError("snapshot durability boundary is not a regular directory")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise CustodyError("snapshot directory could not be durably synchronized") from exc
+
+
+def _publish_directory_exclusive(staging: Path, final: Path) -> None:
+    """Atomically publish one directory without replacing a late destination."""
+    if staging.is_symlink() or not staging.is_dir() or staging.parent != final.parent:
+        raise CustodyError("snapshot publication boundary is invalid")
+    libc = ctypes.CDLL(None, use_errno=True)
+    old = os.fsencode(staging)
+    new = os.fsencode(final)
+    ctypes.set_errno(0)
+    if sys.platform == "darwin":
+        rename = getattr(libc, "renamex_np", None)
+        if rename is None:
+            raise CustodyError("exclusive snapshot publication is unavailable")
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(old, new, 0x00000004)  # RENAME_EXCL
+    elif sys.platform.startswith("linux"):
+        rename = getattr(libc, "renameat2", None)
+        if rename is None:
+            raise CustodyError("exclusive snapshot publication is unavailable")
+        rename.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename.restype = ctypes.c_int
+        result = rename(-100, old, -100, new, 0x00000001)  # AT_FDCWD, RENAME_NOREPLACE
+    elif os.name == "nt":
+        try:
+            os.rename(staging, final)
+        except FileExistsError as exc:
+            raise CustodyError("snapshot target appeared during publication") from exc
+        return
+    else:
+        raise CustodyError("exclusive snapshot publication is unavailable")
+    if result == 0:
+        return
+    error = ctypes.get_errno()
+    if error in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise CustodyError("snapshot target appeared during publication")
+    raise CustodyError(f"exclusive snapshot publication failed: {os.strerror(error)}")
+
+
+def _durable_publish_directory(staging: Path, final: Path) -> None:
+    """Flush a flat snapshot directory, publish it exclusively, and flush the rename."""
+    staged = sorted(staging.iterdir(), key=lambda item: item.name)
+    for path in staged:
+        _fsync_file(path)
+    if sorted(staging.iterdir(), key=lambda item: item.name) != staged:
+        raise CustodyError("staged snapshot changed during durability synchronization")
+    _fsync_directory(staging)
+    _fsync_directory(staging.parent)
+    _publish_directory_exclusive(staging, final)
+    _fsync_directory(final)
+    _fsync_directory(final.parent)
 
 
 def _canonical_candidate(path: Path) -> Path:
@@ -304,10 +397,58 @@ def _material_paths(source: Path) -> tuple[set[str], set[str]]:
     return decode(ignored_raw, "ignored inventory"), decode(untracked_raw, "untracked inventory")
 
 
-def _material_inventory(source: Path) -> tuple[list[dict], int]:
-    ignored, untracked = _material_paths(source)
+def _stat_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _material_metadata(
+    source: Path,
+) -> tuple[frozenset[str], frozenset[str], dict[str, tuple[object, ...]]]:
+    ignored_set, untracked_set = _material_paths(source)
+    ignored = frozenset(ignored_set)
+    untracked = frozenset(untracked_set)
+    metadata: dict[str, tuple[object, ...]] = {}
+    for relative in sorted(ignored | untracked):
+        path = _contained_path(source, relative, "material path")
+        before = path.lstat()
+        if stat.S_ISREG(before.st_mode):
+            kind = "file"
+            target = None
+        elif stat.S_ISLNK(before.st_mode):
+            kind = "symlink"
+            target = _safe_symlink_target(os.readlink(path))
+        else:
+            raise CustodyError("the material inventory contains an unsupported special file")
+        after = path.lstat()
+        if _stat_identity(before) != _stat_identity(after):
+            raise CustodyError("the private material metadata changed during a census")
+        metadata[relative] = (
+            kind,
+            relative in ignored,
+            _stat_identity(after),
+            target,
+        )
+    final_ignored, final_untracked = _material_paths(source)
+    if (frozenset(final_ignored), frozenset(final_untracked)) != (ignored, untracked):
+        raise CustodyError("the private material census changed during a metadata pass")
+    return ignored, untracked, metadata
+
+
+def _scan_material_inventory(source: Path) -> _MaterialProof:
+    ignored_set, untracked_set = _material_paths(source)
+    ignored = frozenset(ignored_set)
+    untracked = frozenset(untracked_set)
     paths = sorted(ignored | untracked)
     entries: list[dict] = []
+    metadata: dict[str, tuple[object, ...]] = {}
     total = 0
     progress = Progress("hashing private inventory", sum((source / path).lstat().st_size for path in paths))
     for relative in paths:
@@ -317,9 +458,7 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
         if stat.S_ISREG(before.st_mode):
             digest = _sha256(path, progress)
             after = path.lstat()
-            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            if identity_before != identity_after:
+            if _stat_identity(before) != _stat_identity(after):
                 raise CustodyError("a material file changed while it was being hashed")
             entries.append(
                 {
@@ -331,9 +470,18 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
                     "ignored": relative in ignored,
                 }
             )
+            metadata[relative] = (
+                "file",
+                relative in ignored,
+                _stat_identity(after),
+                None,
+            )
             total += before.st_size
         elif stat.S_ISLNK(before.st_mode):
             target = _safe_symlink_target(os.readlink(path))
+            after = path.lstat()
+            if _stat_identity(before) != _stat_identity(after):
+                raise CustodyError("a material symlink changed while it was inventoried")
             entries.append(
                 {
                     "path": relative,
@@ -343,12 +491,58 @@ def _material_inventory(source: Path) -> tuple[list[dict], int]:
                     "ignored": relative in ignored,
                 }
             )
+            metadata[relative] = (
+                "symlink",
+                relative in ignored,
+                _stat_identity(after),
+                target,
+            )
         else:
             raise CustodyError("the material inventory contains an unsupported special file")
     final_ignored, final_untracked = _material_paths(source)
-    if (final_ignored, final_untracked) != (ignored, untracked):
+    if (frozenset(final_ignored), frozenset(final_untracked)) != (ignored, untracked):
         raise CustodyError("the private material census changed while it was being hashed")
-    return entries, total
+    return _MaterialProof(entries, total, ignored, untracked, metadata)
+
+
+def _assert_material_metadata(source: Path, proof: _MaterialProof, when: str) -> None:
+    ignored, untracked, metadata = _material_metadata(source)
+    if ignored != proof.ignored or untracked != proof.untracked or metadata != proof.metadata:
+        raise CustodyError(f"the private material proof changed {when}")
+
+
+def _verify_material_proof(source: Path, proof: _MaterialProof, when: str) -> None:
+    _assert_material_metadata(source, proof, when)
+
+    progress = Progress("verifying private inventory", proof.total)
+    for entry in proof.entries:
+        path = _contained_path(source, entry["path"], "material path")
+        before = path.lstat()
+        if entry["type"] == "file":
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_size != entry["bytes"]
+                or stat.S_IMODE(before.st_mode) != entry["mode"]
+                or _sha256(path, progress) != entry["sha256"]
+            ):
+                raise CustodyError(f"the private material proof changed {when}")
+        elif (
+            not stat.S_ISLNK(before.st_mode)
+            or stat.S_IMODE(before.st_mode) != entry["mode"]
+            or os.readlink(path) != entry["target"]
+        ):
+            raise CustodyError(f"the private material proof changed {when}")
+        after = path.lstat()
+        if _stat_identity(before) != _stat_identity(after):
+            raise CustodyError(f"the private material proof changed {when}")
+
+    _assert_material_metadata(source, proof, when)
+
+
+def _material_inventory(source: Path) -> _MaterialProof:
+    proof = _scan_material_inventory(source)
+    _verify_material_proof(source, proof, "after its completed scan")
+    return proof
 
 
 def _repository_identity(source: Path, remote_ref: str, remote_mode: str) -> dict:
@@ -486,7 +680,9 @@ def create_snapshot(
         raise CustodyError("primary snapshot target already exists")
 
     identity = _repository_identity(source, remote_ref, remote_mode)
-    entries, total = _material_inventory(source)
+    inventory = _material_inventory(source)
+    entries = inventory.entries
+    total = inventory.total
     required_free = total + max(1 << 30, total // 20)
     if shutil.disk_usage(primary_root).free <= required_free:
         raise CustodyError("primary custody target has insufficient free space")
@@ -515,8 +711,8 @@ def create_snapshot(
     if not any(line.split(maxsplit=1)[0] == identity["head"] for line in bundle_heads if line.strip()):
         raise CustodyError("source bundle does not advertise the admitted source head")
     final_identity = _repository_identity(source, remote_ref, remote_mode)
-    final_entries, final_total = _material_inventory(source)
-    if final_identity != identity or final_total != total or final_entries != entries:
+    final_inventory = _material_inventory(source)
+    if final_identity != identity or final_inventory != inventory:
         raise CustodyError("source repository or private census changed during snapshot creation")
 
     artifacts = {
@@ -524,6 +720,11 @@ def create_snapshot(
         "materials.tar": _artifact(materials_path, "materials archive"),
         "source.bundle": _artifact(bundle_path, "source bundle"),
     }
+    _verify_material_proof(source, final_inventory, "during artifact hashing")
+    sealed_identity = _repository_identity(source, remote_ref, remote_mode)
+    _assert_material_metadata(source, final_inventory, "during the final source identity check")
+    if sealed_identity != identity:
+        raise CustodyError("source repository changed during artifact hashing")
     control = {
         "schema": SCHEMA,
         "snapshot_id": snapshot_id,
@@ -537,8 +738,7 @@ def create_snapshot(
         "artifacts": artifacts,
     }
     _write_new(staging / "control.json", _json_bytes(control))
-    os.rename(staging, final)
-    _fsync_directory(primary_root)
+    _durable_publish_directory(staging, final)
     print(
         f"custody: created {snapshot_id} ({len(entries)} private entries, {total} bytes)",
         flush=True,
@@ -727,8 +927,7 @@ def copy_snapshot(primary: Path, secondary_root: Path) -> Path:
     staging.mkdir(mode=0o700)
     for name in ("private-manifest.json", "materials.tar", "source.bundle", "control.json"):
         _copy_file(primary / name, staging / name, f"copying {name}")
-    os.rename(staging, final)
-    _fsync_directory(secondary_root)
+    _durable_publish_directory(staging, final)
     secondary_control = verify_snapshot(final)
     if _json_bytes(secondary_control) != _json_bytes(control):
         raise CustodyError("secondary snapshot control differs from primary")
@@ -840,9 +1039,14 @@ def audit_source_snapshot(source: Path, snapshot: Path, control: dict | None = N
     }
     if any(current_source[key] != recorded_source[key] for key in stable_keys):
         raise CustodyError("retained source identity no longer matches the private snapshot")
-    current_entries, current_total = _material_inventory(source)
-    if current_total != control["inventory_bytes"] or current_entries != entries:
+    current_inventory = _material_inventory(source)
+    if current_inventory.total != control["inventory_bytes"] or current_inventory.entries != entries:
         raise CustodyError("retained private census no longer matches the private snapshot")
+    _verify_material_proof(source, current_inventory, "during the retained-source audit")
+    final_source = _repository_identity(source, control["remote_ref"], control["remote_mode"])
+    _assert_material_metadata(source, current_inventory, "during the final retained-source check")
+    if any(final_source[key] != recorded_source[key] for key in stable_keys):
+        raise CustodyError("retained source identity changed during the private census audit")
     print("custody: retained source census matches the sealed snapshot", flush=True)
     return current_source
 
