@@ -21,9 +21,9 @@ schema: danse.submission.v2
 opportunity_snapshot:
   snapshot_id: omega-20260804
   path: opportunities/omega-20260804.json
-  sha256: "0b187cb8f5eec05e827d5ac92b14c119c7c3dcdc2bac24565f96d084f02b905b"
+  sha256: "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e"
   receipt: opportunities/omega-20260804.receipt.json
-  frozen_at: "2026-08-04T01:44:00Z"
+  frozen_at: "2026-08-04T02:32:44Z"
   opportunity_id: screendance-miami-2027
 call: ScreenDance Miami Festival 2027
 presenter: Miami Light Project

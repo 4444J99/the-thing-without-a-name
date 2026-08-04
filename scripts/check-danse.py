@@ -655,7 +655,7 @@ def check_opportunities() -> None:
     check(
         "every named opportunity has a source-verified disposition",
         len(snapshot["opportunities"]) == 17,
-        f"{len(snapshot['opportunities'])} targets · {len(snapshot['ranked_actions'])} current actions",
+        f"{len(snapshot['opportunities'])} targets · {len(snapshot['ranked_actions'])} freeze-time actions",
     )
     try:
         receipt = checker.validate_binding(snapshot)

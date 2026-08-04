@@ -11,6 +11,8 @@
     "owner_issue",
     "successor_issue",
     "policy",
+    "source_evidence",
+    "operational_queue",
     "release_consumers",
     "ranked_actions",
     "opportunities"
@@ -50,6 +52,26 @@
           "items": false
         },
         "external_actions": { "const": "human-gated" }
+      }
+    },
+    "source_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": { "const": "opportunities/source-evidence-20260804.json" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "operational_queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "expires_at", "successor_issue"],
+      "properties": {
+        "basis": { "const": "frozen_at" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "successor_issue": { "const": 22 }
       }
     },
     "release_consumers": {

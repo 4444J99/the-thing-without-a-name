@@ -1,7 +1,7 @@
 {
   "schema": "danse.opportunities.v1",
   "snapshot_id": "omega-20260804",
-  "frozen_at": "2026-08-04T01:44:00Z",
+  "frozen_at": "2026-08-04T02:32:44Z",
   "owner_issue": 15,
   "successor_issue": 22,
   "policy": {
@@ -21,6 +21,16 @@
       "historical"
     ],
     "external_actions": "human-gated"
+  },
+  "source_evidence": {
+    "path": "opportunities/source-evidence-20260804.json",
+    "sha256": "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37",
+    "bytes": 8488
+  },
+  "operational_queue": {
+    "basis": "frozen_at",
+    "expires_at": "2026-08-03T23:59:00-04:00",
+    "successor_issue": 22
   },
   "release_consumers": [
     {
@@ -129,7 +139,7 @@
       "disposition": "active",
       "fit": "film",
       "owner_issue": 2,
-      "deadline_at": "2027-06-30T23:59:00+02:00",
+      "deadline_at": "2027-06-30T00:00:00+02:00",
       "sources": [
         {
           "url": "https://cinedans.nl/p/welcome_entries",
@@ -146,7 +156,7 @@
         {
           "id": "deadline",
           "status": "verified",
-          "value": "30 June 2027; the source does not publish a cutoff time, so the encoded 23:59 Europe/Amsterdam time is only a conservative scheduling boundary.",
+          "value": "30 June 2027; the source does not publish a cutoff time, so the fail-closed internal boundary is the start of that date in Europe/Amsterdam.",
           "source": "https://cinedans.nl/p/welcome_entries"
         },
         {
@@ -233,7 +243,7 @@
       "disposition": "active",
       "fit": "installation",
       "owner_issue": 14,
-      "deadline_at": "2026-09-15T23:59:00+02:00",
+      "deadline_at": "2026-09-15T00:00:00+02:00",
       "sources": [
         {
           "url": "https://cinedans.nl/p/welcome_entries",
@@ -250,7 +260,7 @@
         {
           "id": "deadline",
           "status": "verified",
-          "value": "15 September 2026; no cutoff time is published, so 23:59 Europe/Amsterdam is a conservative internal scheduling boundary.",
+          "value": "15 September 2026; no cutoff time is published, so the fail-closed internal boundary is the start of that date in Europe/Amsterdam.",
           "source": "https://cinedans.nl/p/welcome_entries"
         },
         {

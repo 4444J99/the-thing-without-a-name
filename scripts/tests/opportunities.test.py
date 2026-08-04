@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,11 +36,13 @@ class RegistryFixture:
         self.snapshot = self.root / "opportunities/omega-20260804.json"
         self.schema = self.root / "opportunities/opportunity.schema.json"
         self.receipt = self.root / "opportunities/omega-20260804.receipt.json"
+        self.evidence = self.root / "opportunities/source-evidence-20260804.json"
         self.consumer = self.root / "submission/screendance-2027.yaml"
         for source, target in (
             (CHECK.SNAPSHOT, self.snapshot),
             (CHECK.SCHEMA, self.schema),
             (CHECK.RECEIPT, self.receipt),
+            (CHECK.EVIDENCE, self.evidence),
             (CHECK.CONSUMER, self.consumer),
         ):
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +84,18 @@ class ProductionRegistryTest(unittest.TestCase):
             self.assertTrue(entry["human_gates"])
             self.assertTrue(all(gate["status"] == "required" for gate in entry["human_gates"]))
 
+    def test_date_only_cinedans_calls_use_start_of_day_boundaries(self) -> None:
+        snapshot = CHECK.validate_registry()
+        by_id = {entry["id"]: entry for entry in snapshot["opportunities"]}
+        self.assertEqual(
+            by_id["cinedans-fest-2027-installation"]["deadline_at"],
+            "2026-09-15T00:00:00+02:00",
+        )
+        self.assertEqual(
+            by_id["cinedans-2028-international-short"]["deadline_at"],
+            "2027-06-30T00:00:00+02:00",
+        )
+
     def test_ranked_view_contains_no_closed_watch_or_historical_target(self) -> None:
         snapshot = CHECK.validate_registry()
         by_id = {entry["id"]: entry for entry in snapshot["opportunities"]}
@@ -96,7 +111,12 @@ class RegistryFailureTest(unittest.TestCase):
         self.fixture.close()
 
     def validate_registry(self) -> dict:
-        return CHECK.validate_registry(self.fixture.snapshot, self.fixture.schema)
+        return CHECK.validate_registry(
+            self.fixture.snapshot,
+            self.fixture.schema,
+            root=self.fixture.root,
+            evidence_path=self.fixture.evidence,
+        )
 
     def validate_all(self):
         return CHECK.validate_all(
@@ -104,6 +124,7 @@ class RegistryFailureTest(unittest.TestCase):
             schema_path=self.fixture.schema,
             receipt_path=self.fixture.receipt,
             consumer_path=self.fixture.consumer,
+            evidence_path=self.fixture.evidence,
             root=self.fixture.root,
         )
 
@@ -189,6 +210,8 @@ class RegistryFailureTest(unittest.TestCase):
             r"\\server\share\private-source",
             "~/private-source",
             "file:///private-source",
+            "source=/home/artist/private-source",
+            r"path:C:\Users\artist\private-source",
         )
         for marker in markers:
             with self.subTest(marker=marker):
@@ -197,6 +220,19 @@ class RegistryFailureTest(unittest.TestCase):
                 self.fixture.write(data)
                 with self.assertRaisesRegex(CHECK.RegistryError, "private/local path marker"):
                     self.validate_registry()
+
+    def test_source_response_evidence_is_digest_bound(self) -> None:
+        evidence = json.loads(self.fixture.evidence.read_text(encoding="utf-8"))
+        evidence["responses"][0]["sha256"] = "0" * 64
+        self.fixture.evidence.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(CHECK.RegistryError, "source-evidence manifest digest"):
+            self.validate_registry()
+
+    def test_live_queue_expires_without_mutating_frozen_snapshot(self) -> None:
+        snapshot = self.validate_registry()
+        CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-08-04T03:58:00+00:00"))
+        with self.assertRaisesRegex(CHECK.RegistryError, "issue #22 must publish a successor"):
+            CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-08-04T04:00:00+00:00"))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_receipt_path_cannot_follow_a_symlink(self) -> None:

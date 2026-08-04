@@ -14,7 +14,7 @@ import json
 import re
 import sys
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT = ROOT / "opportunities" / "omega-20260804.json"
 SCHEMA = ROOT / "opportunities" / "opportunity.schema.json"
 RECEIPT = ROOT / "opportunities" / "omega-20260804.receipt.json"
+EVIDENCE = ROOT / "opportunities" / "source-evidence-20260804.json"
 CONSUMER = ROOT / "submission" / "screendance-2027.yaml"
 
 FACT_STATUSES = ("verified", "unstated", "not-applicable", "conflicted")
@@ -63,11 +64,24 @@ EXPECTED_TARGETS = {
 }
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 PRIVATE_PATH = re.compile(
-    r"(?:^|[\s'\"`(\[])"
+    r"(?:^|[\s'\"`(\[=])"
     r"(?:/(?!/)[^\s'\"`)]*|//[^/\s]+/[^\s'\"`)]*|"
     r"[A-Za-z]:[\\/][^\s'\"`)]*|\\\\[^\\/\s]+[\\/][^\s'\"`)]*|"
     r"~[\\/][^\s'\"`)]*|file://[^\s'\"`)]*)"
 )
+ASSIGNED_PRIVATE_PATH = re.compile(
+    r"(?:^|[\s;,])(?:[A-Za-z_][A-Za-z0-9_-]*[:=])"
+    r"(?:/(?!/)[^\s'\"`)]*|[A-Za-z]:[\\/][^\s'\"`)]*|"
+    r"\\\\[^\\/\s]+[\\/][^\s'\"`)]*|~[\\/][^\s'\"`)]*|file://[^\s'\"`)]*)"
+)
+EVIDENCE_CONTRACT = {
+    "transport": "HTTPS GET",
+    "redirects": "followed",
+    "content_encoding": "decoded",
+    "user_agent": "Danse source-evidence capture/1.0",
+    "digest": "SHA-256 of response body bytes after HTTP content decoding",
+    "retention": "Digest-only public-response receipt; response bodies are not vendored.",
+}
 
 
 class RegistryError(ValueError):
@@ -85,7 +99,7 @@ def digest(path: Path) -> str:
 def parse_time(value: str, label: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise RegistryError(f"{label} is not an ISO-8601 timestamp: {value!r}") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise RegistryError(f"{label} must carry an explicit time zone")
@@ -113,6 +127,15 @@ def string_values(value: Any) -> Iterator[str]:
     elif isinstance(value, list):
         for item in value:
             yield from string_values(item)
+
+
+def private_path_marker(value: Any) -> str | None:
+    for text in string_values(value):
+        for pattern in (PRIVATE_PATH, ASSIGNED_PRIVATE_PATH):
+            match = pattern.search(text)
+            if match:
+                return match.group(0).strip()
+    return None
 
 
 def normalize_json(value: Any) -> Any:
@@ -169,7 +192,93 @@ def safe_file(root: Path, relative: str, label: str) -> Path:
     return resolved
 
 
-def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA) -> dict[str, Any]:
+def validate_source_evidence(
+    snapshot: dict[str, Any],
+    *,
+    root: Path,
+    evidence_path: Path,
+    frozen: datetime,
+) -> dict[str, Any]:
+    """Validate the digest-only receipts for every checked public response."""
+    record = snapshot.get("source_evidence")
+    if not isinstance(record, dict) or set(record) != {"path", "sha256", "bytes"}:
+        raise RegistryError("source-evidence binding has an unknown shape")
+    bound_evidence = safe_file(root, record["path"], "source-evidence path")
+    if bound_evidence != evidence_path.resolve():
+        raise RegistryError("snapshot points at a different source-evidence manifest")
+    if not HEX64.fullmatch(str(record["sha256"])) or record["sha256"] != digest(bound_evidence):
+        raise RegistryError("source-evidence manifest digest is missing or stale")
+    if record["bytes"] != bound_evidence.stat().st_size:
+        raise RegistryError("source-evidence manifest byte count is stale")
+
+    evidence = load_json(bound_evidence, "source-evidence manifest")
+    if set(evidence) != {
+        "schema",
+        "capture_started_at",
+        "capture_completed_at",
+        "capture_contract",
+        "responses",
+    } or evidence.get("schema") != "danse.source-evidence.v1":
+        raise RegistryError("source-evidence manifest has an unknown shape or schema")
+    if evidence.get("capture_contract") != EVIDENCE_CONTRACT:
+        raise RegistryError("source-evidence capture contract drifted")
+    leaked = private_path_marker(evidence)
+    if leaked:
+        raise RegistryError(f"source-evidence manifest exposes a private/local path marker: {leaked}")
+    started = parse_time(evidence["capture_started_at"], "source evidence capture_started_at")
+    completed = parse_time(evidence["capture_completed_at"], "source evidence capture_completed_at")
+    if not started <= completed <= frozen:
+        raise RegistryError("source-evidence capture interval falls outside the frozen snapshot")
+
+    source_checked: dict[str, list[datetime]] = {}
+    for entry in snapshot["opportunities"]:
+        for source in entry["sources"]:
+            source_checked.setdefault(source["url"], []).append(
+                parse_time(source["checked_at"], f"{entry['id']} source checked_at")
+            )
+    responses = evidence.get("responses")
+    if not isinstance(responses, list) or any(not isinstance(row, dict) for row in responses):
+        raise RegistryError("source-evidence responses must be an object list")
+    response_urls = [row.get("url") for row in responses]
+    if len(response_urls) != len(set(response_urls)) or set(response_urls) != set(source_checked):
+        raise RegistryError("source-evidence response census disagrees with checked URLs")
+    expected_keys = {
+        "url",
+        "final_url",
+        "captured_at",
+        "http_status",
+        "content_type",
+        "bytes",
+        "sha256",
+    }
+    for row in responses:
+        url = row.get("url")
+        if set(row) != expected_keys:
+            raise RegistryError(f"source evidence for {url!r} has an unknown shape")
+        captured = parse_time(row.get("captured_at"), f"source evidence for {url}")
+        if not started <= captured <= completed or any(checked > captured for checked in source_checked[url]):
+            raise RegistryError(f"source evidence for {url} predates its check or falls outside capture")
+        if row.get("http_status") != 200:
+            raise RegistryError(f"source evidence for {url} did not capture a successful response")
+        if not isinstance(row.get("final_url"), str) or not row["final_url"].startswith("https://"):
+            raise RegistryError(f"source evidence for {url} lacks a secure final URL")
+        if not isinstance(row.get("content_type"), str) or not row["content_type"].strip():
+            raise RegistryError(f"source evidence for {url} lacks a content type")
+        byte_count = row.get("bytes")
+        if not isinstance(byte_count, int) or isinstance(byte_count, bool) or byte_count <= 0:
+            raise RegistryError(f"source evidence for {url} has an invalid byte count")
+        if not HEX64.fullmatch(str(row.get("sha256", ""))):
+            raise RegistryError(f"source evidence for {url} lacks a response digest")
+    return evidence
+
+
+def validate_registry(
+    snapshot_path: Path = SNAPSHOT,
+    schema_path: Path = SCHEMA,
+    *,
+    root: Path = ROOT,
+    evidence_path: Path = EVIDENCE,
+) -> dict[str, Any]:
     snapshot = load_json(snapshot_path, "opportunity snapshot")
     schema = load_json(schema_path, "opportunity schema")
     try:
@@ -183,10 +292,7 @@ def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA
         location = "/".join(str(part) for part in exc.absolute_path) or "<root>"
         raise RegistryError(f"snapshot schema failure at {location}: {exc.message}") from exc
 
-    leaked = next(
-        (match.group(0).strip() for value in string_values(snapshot) if (match := PRIVATE_PATH.search(value))),
-        None,
-    )
+    leaked = private_path_marker(snapshot)
     if leaked:
         raise RegistryError(f"snapshot exposes a private/local path marker: {leaked}")
 
@@ -261,6 +367,8 @@ def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA
             if gate["status"] != "required":
                 raise RegistryError(f"{entry_id}/{gate['id']}: external action was falsely marked complete")
 
+    validate_source_evidence(snapshot, root=root, evidence_path=evidence_path, frozen=frozen)
+
     ranks = snapshot["ranked_actions"]
     if [action["rank"] for action in ranks] != list(range(1, len(ranks) + 1)):
         raise RegistryError("ranked actions must be contiguous and ordered from one")
@@ -270,6 +378,19 @@ def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA
     expected_ranked = {entry["id"] for entry in opportunities if entry["disposition"] in ACTIVE_DISPOSITIONS}
     if set(ranked_ids) != expected_ranked:
         raise RegistryError("ranked actions must be exactly the active, blocked, and conflicted targets")
+    ranked_deadlines = [
+        parse_time(by_id[entry_id]["deadline_at"], f"{entry_id} deadline_at")
+        for entry_id in ranked_ids
+        if by_id[entry_id]["deadline_at"] is not None
+    ]
+    queue = snapshot.get("operational_queue")
+    expected_queue = {
+        "basis": "frozen_at",
+        "expires_at": min(ranked_deadlines).isoformat().replace("+00:00", "Z"),
+        "successor_issue": 22,
+    }
+    if queue != expected_queue:
+        raise RegistryError("operational queue expiry must bind the earliest ranked deadline")
 
     consumers = {row["issue"]: row for row in snapshot["release_consumers"]}
     if set(consumers) != {2, 12} or consumers[2]["status"] != "bound" or consumers[12]["status"] != "pending":
@@ -295,6 +416,28 @@ def validate_registry(snapshot_path: Path = SNAPSHOT, schema_path: Path = SCHEMA
     return snapshot
 
 
+def validate_operational(snapshot: dict[str, Any], as_of: datetime) -> None:
+    """Fail a live queue once any freeze-time ranked deadline has elapsed."""
+    frozen = parse_time(snapshot["frozen_at"], "frozen_at")
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise RegistryError("operational as-of time must carry an explicit time zone")
+    if as_of < frozen:
+        raise RegistryError("operational as-of time cannot predate the frozen snapshot")
+    by_id = {entry["id"]: entry for entry in snapshot["opportunities"]}
+    expired = []
+    for action in snapshot["ranked_actions"]:
+        entry = by_id[action["opportunity_id"]]
+        if entry["deadline_at"] is not None and parse_time(
+            entry["deadline_at"], f"{entry['id']} deadline_at"
+        ) <= as_of:
+            expired.append(entry["id"])
+    if expired:
+        raise RegistryError(
+            "operational queue has elapsed ranked deadlines; issue #22 must publish a successor: "
+            + ", ".join(expired)
+        )
+
+
 def validate_binding(
     snapshot: dict[str, Any],
     *,
@@ -314,7 +457,9 @@ def validate_binding(
         "consumers",
     } or receipt.get("schema") != "danse.opportunity-receipt.v1":
         raise RegistryError("opportunity receipt has an unknown shape or schema")
-    parse_time(receipt["issued_at"], "receipt issued_at")
+    issued_at = parse_time(receipt["issued_at"], "receipt issued_at")
+    if issued_at < parse_time(snapshot["frozen_at"], "frozen_at"):
+        raise RegistryError("opportunity receipt predates its frozen snapshot")
 
     record = receipt.get("snapshot")
     if not isinstance(record, dict) or set(record) != {"path", "sha256", "bytes", "snapshot_id", "frozen_at"}:
@@ -391,9 +536,15 @@ def validate_all(
     schema_path: Path = SCHEMA,
     receipt_path: Path = RECEIPT,
     consumer_path: Path = CONSUMER,
+    evidence_path: Path = EVIDENCE,
     root: Path = ROOT,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    snapshot = validate_registry(snapshot_path, schema_path)
+    snapshot = validate_registry(
+        snapshot_path,
+        schema_path,
+        root=root,
+        evidence_path=evidence_path,
+    )
     receipt = validate_binding(
         snapshot,
         root=root,
@@ -410,13 +561,30 @@ def main() -> int:
     parser.add_argument("--snapshot", type=Path, default=SNAPSHOT)
     parser.add_argument("--schema", type=Path, default=SCHEMA)
     parser.add_argument("--receipt", type=Path, default=RECEIPT)
+    parser.add_argument("--evidence", type=Path, default=EVIDENCE)
     parser.add_argument("--consumer", type=Path, default=CONSUMER)
     parser.add_argument("--registry-only", action="store_true")
+    parser.add_argument(
+        "--operational-as-of",
+        help="validate the live ranked queue at an ISO-8601 time, or use 'now'",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
     try:
-        snapshot = validate_registry(args.snapshot, args.schema)
+        snapshot = validate_registry(
+            args.snapshot,
+            args.schema,
+            root=args.root,
+            evidence_path=args.evidence,
+        )
+        if args.operational_as_of:
+            as_of = (
+                datetime.now(timezone.utc)
+                if args.operational_as_of == "now"
+                else parse_time(args.operational_as_of, "operational as-of")
+            )
+            validate_operational(snapshot, as_of)
         receipt = None
         if not args.registry_only:
             receipt = validate_binding(
