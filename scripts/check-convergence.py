@@ -31,7 +31,7 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 PRIVATE_PATH = re.compile(r"(?:^|[\s'\"`])(?:/Users/|~/|file://)")
 EXPECTED_ISSUES = {2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 21, 22}
-EXPECTED_PRS = {1, 4, 5, 6, 18, 19, 23, 24, 25}
+EXPECTED_PRS = {1, 4, 5, 6, 18, 19, 23, 24, 25, 26}
 
 
 def load(path: Path) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 {
   "schema": "danse.convergence.v1",
-  "recorded_at": "2026-08-04T01:27:26Z",
+  "recorded_at": "2026-08-04T01:32:39Z",
   "status_vocabulary": [
     "merged",
     "active",
@@ -50,9 +50,9 @@
     },
     {
       "id": "docs/convergence-custody-receipt-20260803",
-      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "head": "096cb8470870cf1bea6fb810071492ed99568b1a",
       "status": "active",
-      "receipt": "This snapshot branch; a pushed commit and PR are required at closeout."
+      "receipt": "Danse PR #26; first pushed exact head 096cb8470870cf1bea6fb810071492ed99568b1a."
     },
     {
       "id": "feat/canonical-import-20260802",
@@ -149,9 +149,9 @@
     {
       "id": "convergence-custody",
       "branch": "docs/convergence-custody-receipt-20260803",
-      "head": "697f74ceb4ee11fe3cce380d85913afa86313d0b",
+      "head": "096cb8470870cf1bea6fb810071492ed99568b1a",
       "status": "active",
-      "tracked_clean": false,
+      "tracked_clean": true,
       "cleanup_authorized": false,
       "reason": "Current receipt implementation."
     },
@@ -227,7 +227,8 @@
     {"id": 19, "status": "merged", "head": "6717882f0e9de5385f3a4776b638e7bb5b598b25", "merge": "519573e427bdf376e9ad03cdd2c7ab8871211398"},
     {"id": 23, "status": "merged", "head": "c0689f6febb4f8462dbd7896a6f10a3c9df8895d", "merge": "abf0ba5f517f3b96a32b0afa78f5f0b58d354116"},
     {"id": 24, "status": "merged", "head": "00c891b21747d498230a29ae03d10ddbe45f5983", "merge": "697f74ceb4ee11fe3cce380d85913afa86313d0b"},
-    {"id": 25, "status": "active", "head": "cbfd89634770df47d14a0dcb55779abb73877e28", "merge": null}
+    {"id": 25, "status": "active", "head": "cbfd89634770df47d14a0dcb55779abb73877e28", "merge": null},
+    {"id": 26, "status": "active", "head": "096cb8470870cf1bea6fb810071492ed99568b1a", "merge": null}
   ],
   "issues": [
     {"id": 2, "status": "active", "receipt": "Submission and account-owned filing gate."},
@@ -255,6 +256,7 @@
     {"id": "limen-successor-interface", "status": "active", "receipt": "Limen PR #1799"},
     {"id": "music-score-fixtures", "status": "active", "receipt": "Danse PR #25 at exact head cbfd89634770df47d14a0dcb55779abb73877e28; platform checks green"},
     {"id": "local-pose-input", "status": "active", "receipt": "Issue #13 session; no commit existed at recorded_at"},
+    {"id": "convergence-custody", "status": "active", "receipt": "Danse PR #26; first pushed exact head 096cb8470870cf1bea6fb810071492ed99568b1a"},
     {"id": "configured-claude-history-search", "status": "not recorded", "receipt": "No Danse-specific durable artifact was found in configured local history stores."},
     {"id": "configured-agy-history-search", "status": "not recorded", "receipt": "No Danse-specific durable artifact was found in configured local history stores."},
     {"id": "unrecorded-conversations", "status": "not recorded", "receipt": "Conversation content without an existing durable receipt cannot be reconstructed and is not represented as recovered work."}
