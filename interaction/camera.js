@@ -130,7 +130,7 @@ export class LocalPoseCamera {
     }
 
     if (!this.desired || generation !== this.generation) {
-      for (const track of stream.getTracks?.() ?? []) track.stop?.();
+      this.disposeAttempt(stream);
       return false;
     }
 
@@ -139,25 +139,30 @@ export class LocalPoseCamera {
     this.video.muted = true;
     this.video.playsInline = true;
     for (const track of stream.getVideoTracks?.() ?? []) {
-      track.addEventListener?.("ended", () => this.dropout(this.lastAt));
-      track.addEventListener?.("mute", () => this.dropout(this.lastAt));
+      const lost = () => {
+        if (generation === this.generation && this.stream === stream) this.dropout(this.lastAt);
+      };
+      track.addEventListener?.("ended", lost);
+      track.addEventListener?.("mute", lost);
     }
     try {
       await this.video.play?.();
       if (!this.desired || generation !== this.generation) {
-        this.disposeMedia();
+        this.disposeAttempt(stream);
         return false;
       }
       this.emit(at, "loading", [], "Camera stays on this device. Loading the local pose model…");
       const detector = await this.detectorFactory({ maxVisitors: this.maxVisitors });
       if (!this.desired || generation !== this.generation) {
-        detector.close?.();
-        this.disposeMedia();
+        this.disposeAttempt(stream, detector);
         return false;
       }
       this.detector = detector;
     } catch (error) {
-      if (!this.desired || generation !== this.generation) return false;
+      if (!this.desired || generation !== this.generation) {
+        this.disposeAttempt(stream);
+        return false;
+      }
       const failure = cameraFailure(error);
       this.desired = false;
       this.disposeMedia();
@@ -244,5 +249,13 @@ export class LocalPoseCamera {
     for (const track of this.stream?.getTracks?.() ?? []) track.stop?.();
     this.stream = null;
     if (this.video) this.video.srcObject = null;
+  }
+
+  disposeAttempt(stream, detector = null) {
+    try { detector?.close?.(); } catch { /* the superseded attempt is still retired */ }
+    for (const track of stream?.getTracks?.() ?? []) track.stop?.();
+    if (this.detector === detector) this.detector = null;
+    if (this.stream === stream) this.stream = null;
+    if (this.video?.srcObject === stream) this.video.srcObject = null;
   }
 }

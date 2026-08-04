@@ -21,6 +21,7 @@ export class InteractionController {
       ...camera,
       onSample: (sample) => this.record(sample),
       onMessage: ({ status, message }) => {
+        if (this.mode === "limit" || (this.camera && this.camera.phase !== status)) return;
         this.mode = ["active", "no-person", "requesting", "loading", "dropout", "reconnecting"].includes(status)
           ? "camera"
           : status;
@@ -57,6 +58,13 @@ export class InteractionController {
   }
 
   record(sample) {
+    // A shared river can begin a fraction of a second in the future on a
+    // visitor whose wall clock is behind. The base work already handles that
+    // pre-epoch interval; interaction simply waits for its first valid sample.
+    if (Number.isFinite(sample?.at) && sample.at < 0) {
+      this.notify();
+      return false;
+    }
     const kept = this.session.record(sample);
     if (!kept && this.session.full) {
       const cameraWasLive = this.mode === "camera";
@@ -75,11 +83,17 @@ export class InteractionController {
 
   tick(at, river, { motion = true } = {}) {
     const rewound = at < this.lastAt;
+    const replaying = this.mode === "replay";
     this.lastAt = at;
     const reset = this.session.sync(river, at);
     if (reset || rewound) {
       this.lastFallbackTick = -1;
       this.camera.resetPollingCursor(at);
+    }
+    if (reset && replaying) {
+      this.mode = "off";
+      this.message = "Receipt replay ended because a different river arrived. Interaction is off.";
+      this.notify();
     }
     if (this.session.replay || !motion) return;
     if (this.mode === "camera") this.camera.poll(at);

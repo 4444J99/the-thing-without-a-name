@@ -339,6 +339,49 @@ await test("an explicit restart supersedes a stopped permission request", async 
   camera.stop(40.3);
 });
 
+await test("stale model completion cannot dispose a replacement camera", async () => {
+  const streams = [fakeStream(), fakeStream()];
+  const detectors = [
+    { closed: false, detectForVideo() { return { landmarks: [] }; }, close() { this.closed = true; } },
+    { closed: false, detectForVideo() { return { landmarks: [] }; }, close() { this.closed = true; } },
+  ];
+  const resolveDetector = [];
+  let mediaCalls = 0;
+  let detectorCalls = 0;
+  const video = fakeVideo();
+  const camera = new LocalPoseCamera({
+    video,
+    onSample: () => {},
+    mediaDevices: { getUserMedia: async () => streams[mediaCalls++] },
+    detectorFactory: () => {
+      const index = detectorCalls++;
+      return new Promise((resolve) => { resolveDetector[index] = () => resolve(detectors[index]); });
+    },
+  });
+
+  const first = camera.start(50);
+  while (detectorCalls < 1) await Promise.resolve();
+  camera.stop(50.1);
+  const second = camera.start(50.2);
+  while (detectorCalls < 2) await Promise.resolve();
+
+  resolveDetector[1]();
+  assert.equal(await second, true);
+  assert.strictEqual(camera.stream, streams[1]);
+  assert.strictEqual(camera.detector, detectors[1]);
+  assert.strictEqual(video.srcObject, streams[1]);
+
+  resolveDetector[0]();
+  assert.equal(await first, false);
+  assert.equal(detectors[0].closed, true);
+  assert.equal(detectors[1].closed, false);
+  assert.equal(streams[1].track.stopped, false);
+  assert.strictEqual(camera.stream, streams[1]);
+  assert.strictEqual(camera.detector, detectors[1]);
+  assert.strictEqual(video.srcObject, streams[1]);
+  camera.stop(50.3);
+});
+
 await test("keyboard/touch fallback records and replays the same derived controls", () => {
   const controller = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
   controller.startFallback(20);
@@ -369,6 +412,58 @@ await test("camera retry exits replay and discards future live history after a s
   assert.deepEqual(controller.receipt().samples.map(({ at, status }) => ({ at, status })), [
     { at: 5, status: "unavailable" },
   ]);
+});
+
+await test("a new river exits replay instead of leaving stale replay controls", () => {
+  const controller = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
+  controller.startFallback(1);
+  controller.loadReceipt(controller.receipt());
+  assert.equal(controller.mode, "replay");
+  controller.tick(0, { seed: river.seed + 1, stream: 0 });
+  assert.equal(controller.mode, "off");
+  assert.equal(controller.session.snapshot().mode, "live");
+  assert.equal(controller.receipt().samples.length, 0);
+  assert.match(controller.message, /different river/);
+});
+
+await test("a full camera receipt remains in terminal limit mode", () => {
+  const controller = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
+  controller.mode = "camera";
+  controller.camera.phase = "active";
+  controller.session.record(sample(0, "active", [visitor()], "camera"));
+  controller.lastAt = 601;
+  controller.camera.emit(601, "active", [visitor()], "A visitor is present.");
+  assert.equal(controller.mode, "limit");
+  assert.equal(controller.camera.phase, "stopped");
+  assert.equal(controller.session.full, true);
+  assert.match(controller.message, /ten-minute/);
+});
+
+await test("pre-epoch clock skew defers camera and fallback samples until zero", async () => {
+  let mediaCalls = 0;
+  const camera = new InteractionController({
+    river,
+    video: fakeVideo(),
+    camera: {
+      mediaDevices: { getUserMedia: async () => { mediaCalls++; return fakeStream(); } },
+      detectorFactory: async () => ({ detectForVideo() { return { landmarks: [] }; }, close() {} }),
+    },
+  });
+  assert.equal(await camera.startCamera(-0.25), true);
+  assert.equal(mediaCalls, 1);
+  assert.equal(camera.receipt().samples.length, 0);
+  camera.tick(0, river);
+  assert.deepEqual(camera.receipt().samples.map(({ at, status }) => ({ at, status })), [
+    { at: 0, status: "no-person" },
+  ]);
+  camera.stop(0.1);
+
+  const fallback = new InteractionController({ river, video: fakeVideo(), camera: { mediaDevices: {} } });
+  assert.doesNotThrow(() => fallback.startFallback(-0.25));
+  assert.equal(fallback.receipt().samples.length, 0);
+  fallback.tick(0, river);
+  assert.equal(fallback.receipt().samples[0].at, 0);
+  assert.equal(fallback.mode, "fallback");
 });
 
 await test("the receipt duration bound stops influence without recursive shutdown", () => {
