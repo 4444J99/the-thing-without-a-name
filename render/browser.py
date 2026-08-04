@@ -18,6 +18,7 @@ Two facts this encodes, both measured rather than assumed:
     render/browser.py --verify         # run verify.html, print the verdict
     render/browser.py --arrival        # two visitors, two rivers, in a real browser
     render/browser.py --probe          # projection continuity, numerically
+    render/browser.py --interaction    # local pose privacy, fallback, replay, model
 """
 
 from __future__ import annotations
@@ -281,18 +282,52 @@ def run_probe(page, base: str) -> int:
     return 1
 
 
+def run_interaction(page, base: str) -> int:
+    """Exercise the browser-side adapter and instantiate only vendored pose bytes."""
+    external: list[str] = []
+
+    def observe(request) -> None:
+        if not request.url.startswith((base, "data:", "blob:")):
+            external.append(request.url)
+
+    page.on("request", observe)
+    page.goto(f"{base}/interaction-test.html", wait_until="load")
+    page.wait_for_function(
+        "() => window.danseInteractionVerify !== undefined", timeout=180_000
+    )
+    result = page.evaluate("() => window.danseInteractionVerify")
+    page.remove_listener("request", observe)
+    print(f"\n  renderer   {page.gl_renderer}")
+    for run in result["runs"]:
+        mark = "PASS" if run["pass"] else "FAIL"
+        print(f"  {mark:4}       {run['label']}")
+        if run.get("detail"):
+            print(f"             {run['detail']}")
+    if external:
+        print("  FAIL       external request(s):")
+        for url in external:
+            print(f"             {url}")
+    print()
+    if result["pass"] and not external:
+        print("INTERACTION HOLDS — local pose, fallback, dropout, and replay share one bounded adapter")
+        return 0
+    print("INTERACTION BROKEN — the local interaction contract did not hold")
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="print the GL renderer and exit")
     ap.add_argument("--verify", action="store_true", help="run verify.html and report the verdict")
     ap.add_argument("--arrival", action="store_true", help="run the live page and check every visitor's river")
     ap.add_argument("--probe", action="store_true", help="run probe.html's projection-continuity self-test")
+    ap.add_argument("--interaction", action="store_true", help="run local pose/fallback/privacy verification")
     ap.add_argument("--headed", action="store_true", help="show the window (debugging)")
     ap.add_argument("--base", help="use an already-running server instead of starting one")
     args = ap.parse_args()
 
-    if not args.check and not args.verify and not args.arrival and not args.probe:
-        ap.error("nothing to do — pass --check, --verify, --arrival or --probe")
+    if not args.check and not args.verify and not args.arrival and not args.probe and not args.interaction:
+        ap.error("nothing to do — pass --check, --verify, --arrival, --probe or --interaction")
 
     with contextlib.ExitStack() as stack:
         if args.base:
@@ -306,13 +341,15 @@ def main() -> int:
         if args.check:
             gpu = page.evaluate(READ_RENDERER)
             print(json.dumps({**gpu, "serving": base}, indent=1))
-            if not args.verify and not args.arrival and not args.probe:
+            if not args.verify and not args.arrival and not args.probe and not args.interaction:
                 return 0
         rc = run_verify(page, base) if args.verify else 0
         if args.arrival:
             rc = run_arrival(page, base) or rc
         if args.probe:
             rc = run_probe(page, base) or rc
+        if args.interaction:
+            rc = run_interaction(page, base) or rc
         return rc
 
 

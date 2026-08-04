@@ -34,6 +34,7 @@ Two things this deliberately does NOT do:
     sound/score.py                       # one complete passage
     sound/score.py --window trailer
     sound/score.py --seed 0x5F1E --window reel
+    sound/score.py --music-score music/score.json  # fails closed until cleared stems exist
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -59,12 +61,17 @@ else:
     DEPENDENCY_ERROR = None
 
 HERE = Path(__file__).resolve().parent
+DANSE = HERE.parent
+DANSE_REAL = DANSE.resolve()
 sys.path.insert(0, str(HERE))
 from bank_contract import audit_bank  # noqa: E402
+from room_events import load_room_layouts  # noqa: E402
+from room_render import plan_control, validate_control_room  # noqa: E402
 
 BANK = HERE / "bank"
 CONTROL = HERE / "control.mjs"
 OUT = HERE / "out"
+ROOM_LAYOUTS = HERE / "room-layout.json"
 
 SR = 48_000
 
@@ -105,7 +112,6 @@ SWELL_DB = -14.0
 # implementations to identical values on every run.
 
 from rng import pick, rand  # noqa: E402
-
 
 # ── the bank ───────────────────────────────────────────────────────────────────
 
@@ -275,12 +281,71 @@ def local_time(control: dict, absolute_time: float) -> float:
     return max(0.0, float(absolute_time) - float(control.get("t0", 0.0)))
 
 
+def music_event_plan(control: dict) -> list[dict]:
+    """The compiled MIDI note/cue starts the JS engine mapped onto this capture."""
+    music = control.get("music") if isinstance(control.get("music"), dict) else {}
+    events = music.get("events") if isinstance(music.get("events"), list) else []
+    return sorted(events, key=lambda event: (float(event["at"]), event["type"], int(event["index"])))
+
+
+def _control_room_layouts(control: dict) -> Path:
+    """Resolve a receipt-declared registry without escaping repository custody."""
+    declared = control["room"].get("layout_registry_path")
+    if declared is None:
+        return ROOM_LAYOUTS
+    if not isinstance(declared, str) or not declared or Path(declared).is_absolute():
+        raise ValueError("control room layout registry path must be repository-relative")
+    lexical = DANSE / declared
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(DANSE_REAL)
+    except ValueError as exc:
+        raise ValueError("control room layout registry resolves outside the Danse repository") from exc
+    try:
+        metadata = lexical.lstat()
+    except OSError as exc:
+        raise ValueError(f"control room layout registry is unavailable: {declared}") from exc
+    if lexical.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("control room layout registry must be a regular file, not a symlink")
+    return resolved
+
+
+def _control_room_registry(control: dict) -> dict | None:
+    if not control.get("room"):
+        return None
+    return load_room_layouts(_control_room_layouts(control))
+
+
+def validate_room_event_control(control: dict) -> list[dict] | None:
+    """Validate receipt/layout/bus identities without computing discarded taps."""
+    registry = _control_room_registry(control)
+    return None if registry is None else validate_control_room(control, registry)
+
+
+def room_event_plan(control: dict, layout: str | None = None, output: str = "stereo") -> dict | None:
+    """Validate and route immutable room buses into explicit render instructions."""
+    registry = _control_room_registry(control)
+    if registry is None:
+        return None
+    return plan_control(control, registry, layout, output)
+
+
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
     seed = int(control["seed"])
     rate = float(control["rate"])
     frames = control["frames"]
     total = int(round(control["duration"] * SR))
     buf = np.zeros((2, total), dtype=np.float64)
+    validate_room_event_control(control)
+    if control.get("music"):
+        stems = control["music"].get("stems") or []
+        missing = [stem["id"] for stem in stems if not stem.get("audio_source_sha256")]
+        if missing:
+            raise ValueError(
+                "score-driven audio is not renderable until Anthony selects repertoire and every stem/sample "
+                f"has cleared source bytes; missing {', '.join(missing)}"
+            )
+        raise ValueError("score-driven stem rendering is gated until the selected stem-to-bank mapping is registered")
     counts = {"bed": 0, "voice": 0, "event": 0, "swell": 0}
 
     # ── bed ────────────────────────────────────────────────────────────────────
@@ -465,7 +530,14 @@ def normalise(raw: np.ndarray, quiet: bool = False) -> np.ndarray:
     return out
 
 
-def control_track(window: str, seed: int | None, rate: int, start: float = 0.0, stream: int = 0) -> dict:
+def control_track(
+    window: str,
+    seed: int | None,
+    rate: int,
+    start: float = 0.0,
+    stream: int = 0,
+    music_score: Path | None = None,
+) -> dict:
     """Read the picture's absolute control span for the requested capture."""
     cmd = [
         "node",
@@ -481,6 +553,8 @@ def control_track(window: str, seed: int | None, rate: int, start: float = 0.0, 
     ]
     if seed is not None:
         cmd += ["--seed", str(seed)]
+    if music_score is not None:
+        cmd += ["--score", str(music_score)]
     done = subprocess.run(cmd, capture_output=True, text=True)
     if done.returncode != 0:
         sys.exit(f"control track failed:\n{done.stderr.strip()}")
@@ -502,6 +576,12 @@ def main() -> int:
         help="absolute seconds into the river where recording begins",
     )
     ap.add_argument("--bank", type=Path, default=BANK)
+    ap.add_argument(
+        "--music-score",
+        type=Path,
+        default=None,
+        help="opt into a compiled score contract; fixture audio fails closed until cleared stems are registered",
+    )
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     if args.start < 0:
@@ -515,7 +595,7 @@ def main() -> int:
 
     seed = int(args.seed, 0) if args.seed else None
     bank = Bank(args.bank)
-    control = control_track(args.window, seed, args.rate, args.start, args.stream)
+    control = control_track(args.window, seed, args.rate, args.start, args.stream, args.music_score)
 
     print(
         f"{control['title']} · {control['capture']} · seed 0x{control['seed']:X} · "

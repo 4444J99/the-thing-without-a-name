@@ -1,0 +1,29 @@
+# Frozen opportunity registry
+
+`omega-20260804.json` is the immutable source snapshot for the Alpha → Omega
+release. It dispositions every target named in the tracked plan, records facts as
+`verified`, `unstated`, `not-applicable`, or `conflicted`, and keeps every account
+action, fee, agreement, and public send behind an explicit human gate.
+
+The snapshot does not contact live sites during a build. The raw public responses
+were hashed in `source-evidence-20260804.json`; the snapshot binds that manifest,
+and `omega-20260804.receipt.json` binds the snapshot. Response bodies are not
+vendored. `submission/screendance-2027.yaml` consumes that exact SHA-256 identity
+for issue #2, and issue #12 must cite the same identity from the future release
+manifest. Its snapshot-binding block also names the IANA shipping timezone; the
+checker requires that zone to agree with the frozen offset-bearing deadline without
+changing the immutable snapshot bytes. Run:
+
+```bash
+python3 scripts/check-opportunities.py
+python3 scripts/tests/opportunities.test.py
+python3 scripts/check-opportunities.py --operational-as-of now
+```
+
+The first two commands are reproducible release checks. The explicitly clocked
+third command is the live-queue check: once any ranked deadline elapses it fails and
+names issue #22 as the successor owner. Do not edit this frozen snapshot merely to
+make a later queue current. Issue #22 owns a newly dated snapshot, new source checks,
+and a new digest. A `deadline_at` on a source that publishes only a date is a
+fail-closed start-of-day scheduling boundary; a human still confirms the portal
+cutoff before sending.

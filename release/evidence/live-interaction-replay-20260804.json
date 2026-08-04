@@ -1,0 +1,59 @@
+{
+  "checks": [
+    {
+      "id": "initial-hidden-state",
+      "observation": "The HUD was absent from the accessibility snapshot; hidden and aria-hidden were true, while the touch control exposed aria-expanded false and the accessible name Show Danse controls.",
+      "result": "passed"
+    },
+    {
+      "id": "touch-disclosure",
+      "observation": "The accessible touch control revealed the full controls; hidden and aria-hidden became false, aria-expanded became true, and its accessible name became Hide Danse controls.",
+      "result": "passed"
+    },
+    {
+      "id": "escape-close",
+      "observation": "Escape restored the real hidden state, synchronized ARIA state, and the original accessible name while the disclosure control held focus.",
+      "result": "passed"
+    },
+    {
+      "id": "keyboard-h-toggle",
+      "observation": "H opened and closed the controls with hidden, aria-hidden, aria-expanded, and the accessible name synchronized on both transitions.",
+      "result": "passed"
+    },
+    {
+      "id": "feedback-separation",
+      "observation": "The independent feedback region retained aria-live polite throughout the replay.",
+      "result": "passed"
+    },
+    {
+      "id": "console-clean",
+      "observation": "The browser recorded zero console errors during the replay.",
+      "result": "passed"
+    }
+  ],
+  "deployment": {
+    "pages_file_count": 680,
+    "pages_manifest_schema": "danse.pages.v1",
+    "source_commit": "f19244afbce94015e78b7f746b07d267ed9e67ae",
+    "url": "https://organvm.github.io/the-thing-without-a-name/"
+  },
+  "gate_id": "live-interaction-replay",
+  "non_actions": [
+    "No camera permission was requested.",
+    "No interaction receipt was saved.",
+    "No public or account action was performed by this evidence record."
+  ],
+  "observed_at": "2026-08-04T08:58:18Z",
+  "result": "satisfied",
+  "schema": "danse.live-interaction-replay.v1",
+  "source": {
+    "comment_author": "4444J99",
+    "comment_body_sha256": "4cc41f9ed353c92c27b172907800b123c7b4e85ef4ba7165ed210133f40952bf",
+    "comment_created_at": "2026-08-04T08:58:19Z",
+    "comment_id": 5176789674,
+    "comment_updated_at": "2026-08-04T08:58:19Z",
+    "comment_url": "https://github.com/organvm/the-thing-without-a-name/issues/17#issuecomment-5176789674",
+    "issue": 17,
+    "repository": "organvm/the-thing-without-a-name"
+  }
+}

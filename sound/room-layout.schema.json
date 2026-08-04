@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://danse.example/schemas/room-layouts.v1.json",
+  "title": "Danse reference room and speaker layouts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "identity", "coordinate_system", "safety", "default_layout", "layouts"],
+  "properties": {
+    "schema": {"const": "danse.room.layouts.v1"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "contract_sha256"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["reference-simulation"]},
+        "contract_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "coordinate_system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["units", "axes", "listener", "meters_per_unit"],
+      "properties": {
+        "units": {"const": "normalized-room"},
+        "axes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": {"const": "left-to-right"},
+            "y": {"const": "floor-to-ceiling"},
+            "z": {"const": "far-to-near"}
+          }
+        },
+        "listener": {
+          "description": "Absolute normalized-room anchor added to each listener-relative event position before routing to room-coordinate speakers.",
+          "$ref": "#/$defs/position"
+        },
+        "meters_per_unit": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_event_gain", "limiter_ceiling_dbfs", "latency_budget_ms", "speed_of_sound_mps"],
+      "properties": {
+        "max_event_gain": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "limiter_ceiling_dbfs": {"type": "number", "maximum": 0},
+        "latency_budget_ms": {"type": "number", "minimum": 0, "maximum": 100},
+        "speed_of_sound_mps": {"type": "number", "minimum": 300, "maximum": 400}
+      }
+    },
+    "default_layout": {"type": "string", "minLength": 1},
+    "layouts": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/layout"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "position": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number", "minimum": -1, "maximum": 1},
+        {"type": "number", "minimum": -1, "maximum": 1},
+        {"type": "number", "minimum": -1, "maximum": 1}
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "speaker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "channel", "position"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "channel": {"type": "integer", "minimum": 0},
+        "position": {
+          "description": "Absolute position in the declared normalized-room coordinate system.",
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "speakers", "stereo_fold_down"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["portable-fallback", "reference-simulation"]},
+        "speakers": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/speaker"}},
+        "stereo_fold_down": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outputs", "matrix"],
+          "properties": {
+            "outputs": {"const": ["left", "right"]},
+            "matrix": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "array",
+                "description": "Equal-energy per-speaker fold row; runtime validation also enforces Euclidean norm <= 1.",
+                "prefixItems": [
+                  {"type": "number", "minimum": -1, "maximum": 1},
+                  {"type": "number", "minimum": -1, "maximum": 1}
+                ],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

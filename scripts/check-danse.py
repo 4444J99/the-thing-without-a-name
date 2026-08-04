@@ -42,12 +42,13 @@ camera must be withheld from generated cuts.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import os
 import re
 import subprocess
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +81,7 @@ RUN: list[tuple[str, str | None]] = []
 # So conditional checks are declared, counted separately, and named when they are
 # absent. Raise FLOOR when you add a portable check; raise the group's count when
 # you add a conditional one. Never lower either to make a machine agree.
-FLOOR = 42
+FLOOR = 52
 CONDITIONAL = {"grain bank": 3}
 
 GROUP: str | None = None
@@ -110,6 +111,90 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def load(path: Path):
     return json.loads(path.read_text())
+
+
+def check_music_contract() -> None:
+    """Run the fixture score's cross-language, provenance, and seek regressions."""
+    test = ROOT / "scripts/tests/music-score.test.py"
+    done = subprocess.run([sys.executable, str(test)], cwd=ROOT, capture_output=True, text=True, check=False)
+    detail = "fixture register, compiler, JS/Python/WebAudio parity, receipts, and human gate"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("the musical score is one immutable absolute-time contract", done.returncode == 0, detail)
+
+
+def check_rights_contract() -> None:
+    """Run the redacted rights inventory and fail-closed phase regressions."""
+    test = ROOT / "scripts/tests/rights.test.py"
+    done = subprocess.run([sys.executable, str(test)], cwd=ROOT, capture_output=True, text=True, check=False)
+    detail = "redacted exact-source inventory, human gates, package/release binding, and private-custody boundary"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("rights and attribution fail closed on every uncleared use", done.returncode == 0, detail)
+
+
+def check_room_event_contract() -> None:
+    """Run the typed room bus, routing, safety, provenance, and parity regressions."""
+    test = ROOT / "scripts/tests/room-events.test.py"
+    try:
+        done = subprocess.run(
+            [sys.executable, str(test)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        check("one room-event bus serves every sound renderer", False, "room-event regressions exceeded 120s")
+        return
+    detail = "typed passage buses, bucket seeks, JS/Python parity, fold-down, safety, and source gates"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("one room-event bus serves every sound renderer", done.returncode == 0, detail)
+
+
+def check_installation_contract() -> None:
+    """Prove the reference twin and the fail-closed physical boundary together."""
+    test = ROOT / "scripts/tests/installation.test.py"
+    checker = ROOT / "scripts/check-installation.py"
+    try:
+        done = subprocess.run(
+            [sys.executable, str(test)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        check("one deterministic twin binds every installation subsystem", False, "installation regressions exceeded 120s")
+        check("physical installation claims require venue-owned evidence", False, "installation regressions unavailable")
+        return
+    detail = "reference geometry, frame tickets, calibration, runtime, recovery, restore, and archive disposition"
+    if done.returncode != 0:
+        lines = [line for line in (done.stdout + done.stderr).splitlines() if line.strip()]
+        detail = lines[-1] if lines else f"exit {done.returncode}"
+    check("one deterministic twin binds every installation subsystem", done.returncode == 0, detail)
+
+    blocked = subprocess.run(
+        [sys.executable, str(checker), "--phase", "complete"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    fail_closed = blocked.returncode != 0 and "BLOCKED: physical phase complete requires" in blocked.stderr
+    check(
+        "physical installation claims require venue-owned evidence",
+        fail_closed,
+        "8 gates blocked · venue/hardware/calibration/3 wall-plug/restore receipts absent"
+        if fail_closed
+        else "the terminal installation phase did not fail closed",
+    )
 
 
 # ── 1. the score partitions the frame exactly ──────────────────────────────────
@@ -612,6 +697,95 @@ def check_arrival() -> None:
 # ── 5b. the film is filable ────────────────────────────────────────────────────
 
 REGISTER = APP / "submission" / "screendance-2027.yaml"
+OPPORTUNITY_CHECKER = APP / "scripts" / "check-opportunities.py"
+OPPORTUNITY_TEST = APP / "scripts" / "tests" / "opportunities.test.py"
+RELEASE_CHECKER = APP / "scripts" / "release_contract.py"
+
+
+def check_opportunities() -> None:
+    """The release and urgent filing must share one frozen call registry."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "danse_opportunity_invariant", OPPORTUNITY_CHECKER
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("checker module could not be loaded")
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        snapshot = checker.validate_registry()
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry unavailable")
+        return
+    except Exception as exc:
+        check("every named opportunity has a source-verified disposition", False, str(exc))
+        check("filing consumes the exact frozen opportunity digest", False, "registry invalid")
+        return
+
+    tests = subprocess.run(
+        [sys.executable, str(OPPORTUNITY_TEST)],
+        cwd=APP,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tests.returncode:
+        output = (tests.stderr or tests.stdout).strip()
+        detail = output.splitlines()[-1] if output else f"test process exited {tests.returncode}"
+        check("every named opportunity has a source-verified disposition", False, detail)
+        check("filing consumes the exact frozen opportunity digest", False, "registry regressions failed")
+        return
+
+    check(
+        "every named opportunity has a source-verified disposition",
+        len(snapshot["opportunities"]) == 17,
+        f"{len(snapshot['opportunities'])} targets · {len(snapshot['ranked_actions'])} freeze-time actions",
+    )
+    try:
+        receipt = checker.validate_binding(snapshot)
+    except Exception as exc:
+        check("filing consumes the exact frozen opportunity digest", False, str(exc))
+        return
+    check(
+        "filing consumes the exact frozen opportunity digest",
+        True,
+        f"{snapshot['snapshot_id']} · {receipt['snapshot']['sha256'][:16]}…",
+    )
+
+
+def check_release_contract() -> None:
+    """The public face has one manifest, and incomplete evidence cannot ship."""
+    try:
+        spec = importlib.util.spec_from_file_location("danse_release_invariant", RELEASE_CHECKER)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("release checker module could not be loaded")
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        manifest = release.validate_release(APP, phase="draft")
+        public = release.phase_blockers(manifest, "public")
+        omega = release.phase_blockers(manifest, "release")
+    except ModuleNotFoundError as exc:
+        detail = f"missing Python dependency {exc.name!r}; install project dependencies"
+        check("one manifest owns every public and institutional artifact", False, detail)
+        check("public and release phases fail closed on missing evidence", False, "release contract unavailable")
+        return
+    except Exception as exc:
+        check("one manifest owns every public and institutional artifact", False, str(exc))
+        check("public and release phases fail closed on missing evidence", False, "release contract invalid")
+        return
+
+    check(
+        "one manifest owns every public and institutional artifact",
+        manifest["schema"] == "danse.release.v1"
+        and manifest["opportunity_snapshot"]["sha256"] == release.EXPECTED_OPPORTUNITY_SHA256,
+        f"{manifest['release_id']} {manifest['version']} · {manifest['opportunity_snapshot']['sha256'][:16]}…",
+    )
+    check(
+        "public and release phases fail closed on missing evidence",
+        manifest["status"] == "draft" and bool(public) and len(omega) > len(public),
+        f"{len(public)} public blocker(s), {len(omega) - len(public)} release-only blocker(s)",
+    )
 
 
 def check_submission(program: dict, river: dict) -> None:
@@ -895,6 +1069,97 @@ def check_purity() -> None:
     )
 
 
+# ── 3b. convergence and private custody stay fail-closed ──────────────────────
+
+CONVERGENCE_CHECK = APP / "scripts" / "check-convergence.py"
+CONVERGENCE_TEST = APP / "scripts" / "tests" / "convergence.test.py"
+PRIVATE_CUSTODY_TEST = APP / "scripts" / "tests" / "private-custody.test.py"
+PRIVATE_CUSTODY = APP / "docs" / "continuations" / "alpha-omega" / "private-custody-20260804.json"
+
+
+def check_convergence_receipts() -> None:
+    """Keep repository cleanup subordinate to durable, redacted custody proof."""
+    result = subprocess.run(
+        [sys.executable, str(CONVERGENCE_CHECK), "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    regressions = subprocess.run(
+        [sys.executable, str(CONVERGENCE_TEST)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    detail = (result.stderr or result.stdout or regressions.stderr or regressions.stdout).strip().splitlines()
+    check(
+        "the convergence, archive, and session receipts validate adversarially",
+        result.returncode == 0 and regressions.returncode == 0,
+        detail[-1] if detail else "danse.convergence.v1 plus fail-closed regression suite",
+    )
+
+    try:
+        custody = load(PRIVATE_CUSTODY)
+        required = custody["policy"]["required_independent_verified_copies"]
+        violations = []
+        for root in custody["roots"]:
+            copies = root.get("independent_verified_copies") or []
+            valid = [
+                copy
+                for copy in copies
+                if copy.get("verified") is True
+                and isinstance(copy.get("medium_id"), str)
+                and bool(copy["medium_id"].strip())
+                and isinstance(copy.get("manifest_sha256"), str)
+                and bool(re.fullmatch(r"[0-9a-f]{64}", copy["manifest_sha256"]))
+            ]
+            media = {copy["medium_id"].strip() for copy in valid}
+            manifests = {copy["manifest_sha256"] for copy in valid}
+            restore = root.get("restore_rehearsal") or {}
+            acceptance = root.get("human_acceptance") or {}
+            eligible = (
+                result.returncode == 0
+                and len(media) >= required
+                and len(manifests) == 1
+                and restore.get("ok") is True
+                and isinstance(restore.get("receipt"), str)
+                and bool(restore["receipt"].strip())
+                and acceptance.get("ok") is True
+                and isinstance(acceptance.get("receipt"), str)
+                and bool(acceptance["receipt"].strip())
+                and root.get("tracked_tree_clean") is True
+            )
+            cleanup_authorized = root.get("cleanup_authorized")
+            if not isinstance(cleanup_authorized, bool) or (cleanup_authorized is True and not eligible):
+                violations.append(root.get("id", "unnamed"))
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            not violations,
+            ", ".join(violations) if violations else f"{len(custody['roots'])} material roots remain fail-closed",
+        )
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        check(
+            "private custody cannot be reclaimed before copy, restore, and acceptance proof",
+            False,
+            str(exc),
+        )
+
+    snapshot_regressions = subprocess.run(
+        [sys.executable, str(PRIVATE_CUSTODY_TEST)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    snapshot_detail = (snapshot_regressions.stderr or snapshot_regressions.stdout).strip().splitlines()
+    check(
+        "private custody snapshots duplicate and restore exact source and material bytes",
+        snapshot_regressions.returncode == 0,
+        snapshot_detail[-1]
+        if snapshot_detail
+        else "clean tracked source, private manifest, two-copy identity, and restore",
+    )
+
+
 # ── 4. every frame the score names is deliverable ──────────────────────────────
 
 
@@ -967,10 +1232,24 @@ def main() -> int:
         check_arrival()
     else:
         NOTE.append(f"no film program at {PROGRAM.relative_to(ROOT)} — the piece runs free, nothing is cut")
+    print("\n repository convergence retains private custody")
+    check_convergence_receipts()
+    print("\n the release follows one frozen opportunity registry")
+    check_opportunities()
+    print("\n the public face is phase-gated from one release manifest")
+    check_release_contract()
     print("\n the corpus is deliverable")
     check_delivery(score, manifest)
     print("\n the sound is the same film")
     check_sound()
+    print("\n the score clock is shared by sound and image")
+    check_music_contract()
+    print("\n rights and attribution bind the exact work")
+    check_rights_contract()
+    print("\n sound and image occupy one deterministic room")
+    check_room_event_contract()
+    print("\n the reference room can become an evidence-bound installation")
+    check_installation_contract()
 
     # Counted BEFORE these checks run, so the floor never counts itself and the
     # numbers below stay the number of real invariants.

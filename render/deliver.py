@@ -59,6 +59,7 @@ PACKAGE = DEFAULT_OUT / "package"
 SCORE = DANSE / "sound" / "score.py"
 RENDER = HERE / "render.py"
 REGISTER = DANSE / "submission" / "screendance-2027.yaml"
+RIGHTS_REGISTER = DANSE / "rights" / "register.json"
 RAW = DANSE / "pipeline" / ".work" / "raw"
 BANK = DANSE / "sound" / "bank" / "bank.json"
 sys.path.insert(0, str(DANSE / "sound"))
@@ -81,15 +82,19 @@ STILL_FRACTIONS = (0.08, 0.22, 0.38, 0.54, 0.70, 0.88)
 
 SELECTORS = ("master", "derived", "reel", "stills", "origin", "text")
 FORCE_ITEMS = (*SELECTORS, *DERIVED)
+REEL_ITEM = "reel.mp4"
 AUDIO_ITEMS = {
     "master.mov",
     "midnight-moment.mov",
     "trailer.mp4",
     "screener.mp4",
-    "reel.mp4",
+    REEL_ITEM,
 }
+SCORE_SOURCE_ITEM = "provenance/passage-score.wav"
+PRODUCTION_RECEIPT = "provenance/production.json"
+PRODUCER_RECEIPTS = "provenance/producer-receipts"
 PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
-FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", "reel.mp4"}
+FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", REEL_ITEM}
 
 
 def sh(cmd: list, **kw) -> subprocess.CompletedProcess:
@@ -168,6 +173,11 @@ def delivery_source_sha256(tier: str) -> str:
         DANSE / "corpus/score-2017.json",
         DANSE / "corpus/manifest.local.json",
         DANSE / "corpus" / "tier-receipts" / f"{tier}.json",
+        DANSE / "music/compile_score.py",
+        DANSE / "music/repertoire.yaml",
+        DANSE / "music/repertoire.schema.json",
+        DANSE / "music/score.json",
+        DANSE / "music/score.schema.json",
         DANSE / "sound/control.mjs",
         DANSE / "sound/score.py",
         DANSE / "sound/rng.py",
@@ -183,6 +193,23 @@ def delivery_source_sha256(tier: str) -> str:
             h.update(str(path.relative_to(DANSE)).encode())
             h.update(bytes.fromhex(digest(path)))
     return h.hexdigest()
+
+
+@functools.lru_cache(maxsize=None)
+def renderer_source_sha256(tier: str) -> str:
+    """Canonical visual source identity embedded in offline segment receipts."""
+    spec = importlib.util.spec_from_file_location("danse_delivery_renderer_contract", RENDER)
+    if spec is None or spec.loader is None:
+        raise SystemExit("cannot load the canonical renderer source contract")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Args:
+        score = None
+
+    args = Args()
+    args.tier = tier
+    return module.source_tree_sha256(args)
 
 
 def captures(program: dict) -> dict:
@@ -329,6 +356,229 @@ def write_score_receipt(score: Path, span: dict, provenance: dict) -> None:
     score_receipt_path(score).write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _production_targets(manifest: dict) -> dict[str, dict]:
+    """Rendered outputs that require an independent producer-receipt chain."""
+    targets = {}
+    for item in manifest.get("items") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        name = item["name"]
+        if (
+            name in AUDIO_ITEMS
+            or name == SCORE_SOURCE_ITEM
+            or re.fullmatch(r"stills/seed-0x[0-9A-Fa-f]{4,}\.(?:jpg|jpeg|png)", name)
+        ):
+            targets[name] = item
+    return targets
+
+
+def _passage_identity(manifest: dict) -> dict:
+    keys = (
+        "seed",
+        "passage_seed",
+        "passage",
+        "start",
+        "t0",
+        "t1",
+        "duration",
+        "corpus_tier",
+    )
+    missing = [key for key in keys if key not in manifest]
+    if missing:
+        raise SystemExit("rendered package has no complete passage identity")
+    return {key: manifest[key] for key in keys}
+
+
+def _prior_production_matches(package: Path, manifest: dict, previous: dict) -> dict | None:
+    reference = previous.get("production")
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        return None
+    if reference.get("path") != PRODUCTION_RECEIPT:
+        return None
+    path = package / PRODUCTION_RECEIPT
+    if path.is_symlink() or not path.is_file() or digest(path) != reference.get("sha256"):
+        return None
+    try:
+        production = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(production, dict):
+        return None
+    if (
+        production.get("schema") != "danse.delivery.production.v1"
+        or production.get("source_tree_sha256") != manifest.get("source_tree_sha256")
+        or production.get("passage") != _passage_identity(manifest)
+    ):
+        return None
+    outputs = {
+        row.get("name"): row
+        for row in production.get("outputs") or []
+        if isinstance(row, dict) and isinstance(row.get("name"), str)
+    }
+    targets = _production_targets(manifest)
+    if set(outputs) != set(targets):
+        return None
+    for name, item in targets.items():
+        output = outputs[name]
+        if output.get("sha256") != item.get("sha256") or output.get("bytes") != item.get(
+            "bytes"
+        ):
+            return None
+    return reference
+
+
+def _read_producer_receipt(path: Path, expected_schema: str) -> tuple[dict, str]:
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"producer receipt is missing or unsafe: {path.name}")
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"producer receipt is invalid: {path.name}") from exc
+    if not isinstance(value, dict) or value.get("schema") != expected_schema:
+        raise SystemExit(f"producer receipt has the wrong schema: {path.name}")
+    return value, digest(path)
+
+
+def write_production_receipt(
+    package: Path,
+    render_root: Path,
+    manifest: dict,
+    previous: dict,
+) -> dict | None:
+    """Bind package bytes to the render/score receipts that produced their inputs."""
+    targets = _production_targets(manifest)
+    if not targets:
+        return None
+    passage = _passage_identity(manifest)
+    source_tree = manifest.get("source_tree_sha256")
+    if not isinstance(source_tree, str) or not re.fullmatch(r"[0-9a-f]{64}", source_tree):
+        raise SystemExit("rendered package has no complete source-tree identity")
+    path = package / PRODUCTION_RECEIPT
+    if path.parent.is_symlink() or (
+        path.parent.exists() and not path.parent.is_dir()
+    ):
+        raise SystemExit("package production receipt parent is not a regular directory")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise SystemExit("package production receipt destination is not a regular file")
+    prior = _prior_production_matches(package, manifest, previous)
+    if prior is not None:
+        return prior
+
+    receipt_root = package / PRODUCER_RECEIPTS
+    if receipt_root.is_symlink() or (receipt_root.exists() and not receipt_root.is_dir()):
+        raise SystemExit("package producer-receipt boundary is not a regular directory")
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    for old in receipt_root.iterdir():
+        if old.is_symlink() or not old.is_file():
+            raise SystemExit("package producer-receipt boundary contains an unsafe entry")
+        old.unlink()
+
+    producers: dict[str, dict] = {}
+
+    def add_receipt(path: Path, kind: str) -> str:
+        schema = {
+            "render-segment": "danse.render.segment.v1",
+            "render-concat": "danse.render.concat.v1",
+            "score": "danse.score.receipt.v1",
+        }[kind]
+        value, receipt_sha = _read_producer_receipt(path, schema)
+        if kind == "render-segment":
+            inputs = value.get("inputs") if isinstance(value.get("inputs"), dict) else {}
+            if (
+                inputs.get("source_tree_sha256")
+                != renderer_source_sha256(manifest["corpus_tier"])
+                or inputs.get("tier") != manifest["corpus_tier"]
+            ):
+                raise SystemExit(f"render segment receipt source identity is stale: {path.name}")
+        producer_id = f"{kind}-{receipt_sha[:20]}"
+        if producer_id in producers:
+            return producer_id
+        components: list[str] = []
+        if kind == "render-concat":
+            segments = value.get("segments")
+            if not isinstance(segments, list) or not segments:
+                raise SystemExit(f"render concat receipt has no segment chain: {path.name}")
+            for segment in segments:
+                name = segment.get("name") if isinstance(segment, dict) else None
+                if not isinstance(name, str) or Path(name).name != name:
+                    raise SystemExit(f"render concat receipt has an unsafe segment: {path.name}")
+                segment_path = path.parent / f"{name}.receipt.json"
+                component = add_receipt(segment_path, "render-segment")
+                if producers[component]["receipt"]["sha256"] != segment.get("receipt_sha256"):
+                    raise SystemExit(f"render concat receipt segment digest is stale: {path.name}")
+                components.append(component)
+        output_sha = value.get("sha256") if kind == "score" else value.get("file_sha256")
+        if not isinstance(output_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", output_sha):
+            raise SystemExit(f"producer receipt has no output digest: {path.name}")
+        destination = receipt_root / f"{producer_id}.json"
+        shutil.copy2(path, destination)
+        if digest(destination) != receipt_sha:
+            raise SystemExit(f"producer receipt copy changed bytes: {path.name}")
+        producers[producer_id] = {
+            "id": producer_id,
+            "kind": kind,
+            "receipt": {
+                "path": destination.relative_to(package).as_posix(),
+                "sha256": receipt_sha,
+            },
+            "output_sha256": output_sha,
+            "components": components,
+        }
+        return producer_id
+
+    score_id = None
+    if SCORE_SOURCE_ITEM in targets or any(name in AUDIO_ITEMS for name in targets):
+        score_id = add_receipt(score_receipt_path(render_root / "passage-score.wav"), "score")
+    picture_id = None
+    if any(name in AUDIO_ITEMS - {REEL_ITEM} for name in targets):
+        picture_id = add_receipt(
+            render_root / "passage-default.mov.receipt.json",
+            "render-concat",
+        )
+    reel_id = None
+    if REEL_ITEM in targets:
+        reel_id = add_receipt(
+            render_root / "reel-provenance/reel-default.mp4.receipt.json",
+            "render-concat",
+        )
+
+    outputs = []
+    for name, item in sorted(targets.items()):
+        if name == SCORE_SOURCE_ITEM:
+            producer_ids = [score_id]
+        elif name == REEL_ITEM:
+            producer_ids = [reel_id, score_id]
+        elif name in AUDIO_ITEMS:
+            producer_ids = [picture_id, score_id]
+        else:
+            seed = int(Path(name).stem.removeprefix("seed-"), 0)
+            matches = sorted(render_root.glob(f"passage-{seed}-seg-*.mov.receipt.json"))
+            if len(matches) != 1:
+                raise SystemExit(f"generated still has no unique render receipt: {name}")
+            producer_ids = [add_receipt(matches[0], "render-segment")]
+        if any(value is None for value in producer_ids):
+            raise SystemExit(f"rendered package output has incomplete producer evidence: {name}")
+        outputs.append(
+            {
+                "name": name,
+                "bytes": item["bytes"],
+                "sha256": item["sha256"],
+                "producers": producer_ids,
+            }
+        )
+
+    production = {
+        "schema": "danse.delivery.production.v1",
+        "source_tree_sha256": source_tree,
+        "passage": passage,
+        "producers": [producers[key] for key in sorted(producers)],
+        "outputs": outputs,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(production, indent=2) + "\n")
+    return {"path": PRODUCTION_RECEIPT, "sha256": digest(path)}
+
+
 def capture_root(root: Path, span: dict, start: float) -> Path:
     """Keep restartable intermediates for different absolute spans disjoint."""
     offset = f"{start:.3f}".rstrip("0").rstrip(".").replace("-", "m").replace(".", "p") or "0"
@@ -341,7 +591,7 @@ def is_forced(force: set[str], name: str, group: str | None = None) -> bool:
 
 def recognized_package_media(package: Path) -> list[Path]:
     """Known delivery media that cannot be adopted without a manifest."""
-    paths = [package / name for name in sorted(AUDIO_ITEMS)]
+    paths = [package / name for name in sorted(AUDIO_ITEMS | {SCORE_SOURCE_ITEM})]
     stills = package / "stills"
     if stills.is_dir():
         paths.extend(stills.glob("seed-0x*.*"))
@@ -428,7 +678,7 @@ def pending(program: dict, only: set[str], force: set[str], package: Path) -> di
         "master": "master" in only and (is_forced(force, "master") or not (package / "master.mov").is_file()),
         "derived": derived,
         "reel": "reel" in only
-        and (score_forced or is_forced(force, "reel") or not (package / "reel.mp4").is_file()),
+        and (score_forced or is_forced(force, "reel") or not (package / REEL_ITEM).is_file()),
         "stills": "stills" in only and (is_forced(force, "stills") or not all(path.is_file() for path in stills)),
     }
 
@@ -799,7 +1049,7 @@ def deliver_derived(
 
 def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: float = 0.0) -> Path:
     """The one capture preset that must be rendered — vertical aspect is a different field of view."""
-    dest = PACKAGE / "reel.mp4"
+    dest = PACKAGE / REEL_ITEM
     if dest.is_file() and not force:
         return dest
     span = query_capture_span("reel", start=start)
@@ -810,7 +1060,7 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
     rel_t0 = max(0.0, span["t0"] - passage_span["t0"])
     seconds = span["duration"]
 
-    print("  reel.mp4 · rendering (vertical is a different field of view, not a crop)")
+    print(f"  {REEL_ITEM} · rendering (vertical is a different field of view, not a crop)")
     with tempfile.TemporaryDirectory(prefix=".reel-", dir=OUT) as render_tmp:
         render_out = Path(render_tmp)
         stem = render_out / "reel-default"
@@ -838,6 +1088,27 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             done = subprocess.run([*render_command, "--concat"], check=False)
         if done.returncode != 0 or not picture.is_file():
             raise SystemExit("the reel would not render")
+        provenance = OUT / "reel-provenance"
+        if provenance.is_symlink() or (provenance.exists() and not provenance.is_dir()):
+            raise SystemExit("reel provenance boundary is not a regular directory")
+        provenance.mkdir(parents=True, exist_ok=True)
+        for old in provenance.iterdir():
+            if old.is_symlink() or not old.is_file():
+                raise SystemExit("reel provenance boundary contains an unsafe entry")
+            old.unlink()
+        concat_receipt = picture.with_name(picture.name + ".receipt.json")
+        concat_value, _ = _read_producer_receipt(
+            concat_receipt,
+            "danse.render.concat.v1",
+        )
+        shutil.copy2(concat_receipt, provenance / concat_receipt.name)
+        for segment in concat_value.get("segments") or []:
+            name = segment.get("name") if isinstance(segment, dict) else None
+            if not isinstance(name, str) or Path(name).name != name:
+                raise SystemExit("reel concat receipt has an unsafe segment")
+            receipt = render_out / f"{name}.receipt.json"
+            _read_producer_receipt(receipt, "danse.render.segment.v1")
+            shutil.copy2(receipt, provenance / receipt.name)
         tmp_a = render_out / "reel-a.wav"
         cut_audio(sound, rel_t0, seconds, tmp_a)
         with tempfile.TemporaryDirectory(prefix=".reel-publish-", dir=PACKAGE) as publish_tmp:
@@ -849,7 +1120,7 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             have = int(round(got["seconds"] * got.get("fps", fps))) if got else -1
             if not got or abs(have - want_frames) > 1:
                 raise SystemExit(
-                    f"reel.mp4 is {have} frames, the capture declares {want_frames} — the render is wrong"
+                    f"{REEL_ITEM} is {have} frames, the capture declares {want_frames} — the render is wrong"
                 )
             staged.replace(dest)
             print(f"      {got['seconds']:.3f}s · {have} frames (declared {want_frames})")
@@ -974,15 +1245,68 @@ def attestation_template() -> str:
         for item in reg.get(section, [])
         if item.get("check") == "manual"
     ]
+    entries = [
+        {
+            "key": item["id"],
+            "phase": item.get("phase", "UNOWNED"),
+            "rule": item.get("rule", ""),
+            "kind": "boolean",
+            "values": [True],
+        }
+        for item in requirements
+        if item.get("id")
+    ]
+    seen = {entry["key"] for entry in entries}
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("rights register contains a duplicate JSON key")
+            value[key] = item
+        return value
+
+    try:
+        if not RIGHTS_REGISTER.is_file():
+            raise OSError("rights register is missing")
+        rights = json.loads(RIGHTS_REGISTER.read_text(), object_pairs_hook=unique_object)
+        if not isinstance(rights, dict):
+            raise ValueError("rights register is not a JSON object")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit("rights register is invalid or unreadable JSON") from exc
+    for gate in rights.get("human_gates", []):
+        attestation = gate.get("attestation") if isinstance(gate, dict) else None
+        if not isinstance(attestation, dict) or attestation.get("key") in seen:
+            continue
+        key = attestation.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", key):
+            continue
+        phases = [
+            phase
+            for phase in (gate.get("required_for") or [])
+            if phase in {"public", "package", "uploaded", "submitted", "release"}
+        ]
+        note = " ".join(str(gate.get("note", "")).split())
+        entries.append(
+            {
+                "key": key,
+                "phase": ",".join(phases) if phases else "UNOWNED",
+                "rule": note,
+                "kind": attestation.get("kind"),
+                "values": attestation.get("values") or [],
+            }
+        )
+        seen.add(key)
+
     lines = [
         "# Human assertions. The package build creates nulls; only a human who",
         "# performed or verified an act may set its value to true.",
-        "# check.py reads only the cumulative requirements owned by --phase.",
+        "# check.py and check-rights.py read only the cumulative gates owned by --phase.",
     ]
-    requirements = [item for item in requirements if item.get("id")]
-    for item in requirements:
-        lines.append(f"#   {item['id']:<30} [{item.get('phase', 'UNOWNED')}] {item.get('rule', '')}")
-    lines.extend(f"{item['id']}: null" for item in requirements)
+    for entry in entries:
+        choice = f" choose one of {json.dumps(entry['values'])}" if entry["kind"] == "choice" else ""
+        lines.append(f"#   {entry['key']:<34} [{entry['phase']}] {entry['rule']}{choice}")
+    lines.extend(f"{entry['key']}: null" for entry in entries)
     return "\n".join(lines) + "\n"
 
 
@@ -1072,6 +1396,16 @@ def main() -> int:
     need_picture = work["master"] or bool(work["derived"])
     picture = passage_picture(program, args.tier, score_forced, start=args.start) if need_picture else None
     made: list[Path] = []
+    if audio_selected:
+        assert sound is not None and sound_provenance is not None
+        score_source = PACKAGE / SCORE_SOURCE_ITEM
+        if not regular_directory_slot(score_source.parent) or score_source.is_symlink():
+            raise SystemExit("package score provenance must use a regular non-symlink destination")
+        score_source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(sound, score_source)
+        if not score_source.is_file() or score_source.is_symlink() or digest(score_source) != digest(sound):
+            raise SystemExit("package score provenance copy does not match the rendered score")
+        made.append(score_source)
 
     if "master" in only and work["master"]:
         made.append(deliver_passage(picture, sound, score_forced))
@@ -1118,7 +1452,7 @@ def main() -> int:
     rebuilt_audio = {
         *({"master.mov"} if work["master"] else set()),
         *(f"{name}{DERIVED[name]['suffix']}" for name in work["derived"]),
-        *({"reel.mp4"} if work["reel"] else set()),
+        *({REEL_ITEM} if work["reel"] else set()),
     }
     manifest = {
         "schema": "danse.delivery.manifest.v1",
@@ -1135,10 +1469,15 @@ def main() -> int:
             "t0": span["t0"],
             "t1": span["t1"],
             "duration": span["duration"],
+            "corpus_tier": args.tier,
             "source_tree_sha256": source_tree,
         }
     else:
-        manifest |= {key: previous[key] for key in (*passage_fields, "source_tree_sha256") if key in previous}
+        manifest |= {
+            key: previous[key]
+            for key in (*passage_fields, "corpus_tier", "source_tree_sha256")
+            if key in previous
+        }
     for path in made:
         if not path.is_file():
             continue
@@ -1156,6 +1495,8 @@ def main() -> int:
             ) or prior.get("sound") or previous_sound
             if item_sound:
                 item["sound"] = item_sound
+        elif name == SCORE_SOURCE_ITEM and sound_provenance:
+            item["sound"] = sound_provenance
         if name == "stills/origin-2017.jpg":
             assert origin is not None
             item |= {
@@ -1175,6 +1516,9 @@ def main() -> int:
         manifest["sound"] = master_sound
     elif previous_sound:
         manifest["sound"] = previous_sound
+    production = write_production_receipt(PACKAGE, OUT, manifest, previous)
+    if production is not None:
+        manifest["production"] = production
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     total = sum(i["bytes"] for i in manifest["items"])
     print(f"\n  {len(manifest['items'])} items · {total / 1e9:.2f} GB · {PACKAGE}")
