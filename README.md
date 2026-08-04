@@ -236,6 +236,7 @@ animating it toward `0` is literally its undoing.
   corpus/      score-2017.json · manifest.json · plates/ · masks/
   pipeline/    corpus preparation (local only, never deployed)
   render/      deterministic offline renderer (local only, never deployed)
+  release/     one phase-gated manifest for project, pitch, access, press, and media
 ```
 
 ## Pipeline
@@ -292,6 +293,25 @@ photograph without creating output directories.
 The score-clock implementation is fixture-only until repertoire and its exact
 source layers are selected and cleared. See [`music/README.md`](music/README.md)
 for the opt-in query/render paths and the explicit remaining artistic gate.
+
+## Public and institutional artifacts
+
+The live artwork remains at `/`. The reserved `/project/` page, deterministic pitch
+PDF, accessibility and caption/transcript materials, press/credits kit, posting plan,
+and release-media inventory all build from `release/manifest.json`. The manifest
+consumes the frozen Omega opportunity digest and represents incomplete human/external
+evidence as named gates instead of placeholders that can accidentally ship.
+
+```bash
+python3 scripts/check-release.py --phase draft --list-gates
+python3 scripts/tests/release-manifest.test.py
+```
+
+Draft output is visibly marked and `noindex`. Public and release phases fail closed
+until the exact cut, room, rights, accessibility, identity, custody, restore, and real
+presentation receipts exist. The Pages allowlist does not include `release/` or
+`project/`; building these files neither deploys nor sends anything. See
+[`release/README.md`](release/README.md) for the phase and evidence contract.
 
 ## Provenance
 

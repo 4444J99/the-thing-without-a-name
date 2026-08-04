@@ -1,0 +1,468 @@
+{
+  "schema": "danse.release.v1",
+  "release_id": "danse-alpha-omega-20260804",
+  "version": "0.1.0-draft",
+  "status": "draft",
+  "opportunity_snapshot": {
+    "path": "opportunities/omega-20260804.json",
+    "snapshot_id": "omega-20260804",
+    "frozen_at": "2026-08-04T02:32:44Z",
+    "sha256": "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e",
+    "receipt_path": "opportunities/omega-20260804.receipt.json",
+    "receipt_sha256": "3a2d3b9eaed6f14f869fc08fa2e0baf02b868116ec0e1b206f23c1ec3e2a94ee",
+    "source_evidence_path": "opportunities/source-evidence-20260804.json",
+    "source_evidence_sha256": "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37"
+  },
+  "identity": {
+    "canonical_title": "THE THING WITHOUT A NAME",
+    "public_title": "Danse - a room that never repeats",
+    "artist": "Anthony J. Padavano",
+    "origin_year": 2017,
+    "canonical_url": "https://organvm.github.io/the-thing-without-a-name/",
+    "project_path": "project/"
+  },
+  "copy": {
+    "eyebrow": "A living photographic work begun in 2017",
+    "logline": "A room reconstructed from one afternoon of photographs becomes a seeded, unbounded choreography that can be revisited but never rewound.",
+    "concept": "In June 2017, a locked camera watched a dancer move through a South Florida apartment. The surviving photographs share one viewpoint and one architecture. Danse treats those records as spatial material: fragments from different instants can occupy depth while a single projector model keeps the room continuous. The work is not one fixed film. Each visit enters a deterministic river whose exact state can be cited by seed and time.",
+    "installation_concept": "The installation returns photographic fragments to physical space. Projected planes or scrim surfaces carry views from the same camera position, allowing a flat composite to open into a room as viewpoint, depth, and visitor input diverge. Venue geometry, projection, sound, recovery, and safety remain proposals until issue 14 supplies validated evidence.",
+    "technical_summary": "The visual engine is a pure function of a 32-bit seed and absolute river time. It can seek directly to any state without replaying earlier frames. Entropy and wall-clock access remain isolated in the visitor-arrival boundary; release claims about final score, room synchronization, recovery, and capture quality remain gated by their exact receipts."
+  },
+  "installation": {
+    "system_flow": [
+      {
+        "id": "arrival",
+        "label": "Arrival",
+        "detail": "A visitor receives a 32-bit river identity outside the pure engine.",
+        "feeds": ["engine"]
+      },
+      {
+        "id": "engine",
+        "label": "Pure engine",
+        "detail": "Seed and absolute time resolve visual state without accumulated history.",
+        "feeds": ["renderers", "sound"]
+      },
+      {
+        "id": "renderers",
+        "label": "Image outputs",
+        "detail": "The same projector and corpus contracts feed browser, capture, and room renderers.",
+        "feeds": ["room"]
+      },
+      {
+        "id": "sound",
+        "label": "Score and sound",
+        "detail": "The final shared-score and spatial event contracts remain gated by issues 9 and 11.",
+        "feeds": ["room"]
+      },
+      {
+        "id": "room",
+        "label": "Exhibition room",
+        "detail": "Venue-calibrated projection, surfaces, speakers, interaction, and recovery require issue 14 evidence.",
+        "feeds": []
+      }
+    ],
+    "spatial_requirements": [
+      {
+        "item": "Room and viewing zone",
+        "detail": "Blackout, circulation, throw distance, surface geometry, audience capacity, and an accessible route must be measured for the host venue.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      },
+      {
+        "item": "Projection surfaces",
+        "detail": "Quantity, material, suspension, fire rating, sightlines, and edge behavior remain venue-specific.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      },
+      {
+        "item": "Sound field",
+        "detail": "Speaker count, placement, calibration, level limits, and silent operating mode await the spatial-sound and venue receipts.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      }
+    ],
+    "interaction_model": [
+      "The river remains complete when embodied input is unavailable or declined.",
+      "Any camera-based input must be local, permissioned, discard raw frames and landmarks, and expose no biometric recording path.",
+      "Keyboard and touch controls provide a no-camera, reduced-compute, and accessibility fallback.",
+      "The merged issue 13 receipt must bind the final interaction implementation before this model is described as shipped."
+    ],
+    "technical_rider": [
+      {
+        "item": "Playback computer",
+        "detail": "Apple Metal and browser runtime targets are established for development; venue hardware and a release-only runtime remain to be qualified.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      },
+      {
+        "item": "Projection",
+        "detail": "Projector count, resolution, lensing, brightness, mounts, signal transport, and calibration tolerances await the digital twin.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      },
+      {
+        "item": "Audio",
+        "detail": "Interface, channel count, speaker map, loudness, latency, and venue limits await the deterministic room-event bus and spatial proof.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      },
+      {
+        "item": "Recovery and operation",
+        "detail": "Operator-free start, health reporting, three wall-plug recoveries, setup, strike, and restore must be proven without a LaunchAgent on the development Mac.",
+        "status": "proposed",
+        "evidence_gate": "installation-evidence"
+      }
+    ]
+  },
+  "accessibility": {
+    "alt_text": "Translucent photographic fragments of a dancer and an apartment overlap in a continuous room, moving between a flat collage and suspended planes in depth.",
+    "canvas_description": "A generative WebGL composition draws registered fragments from 162 photographs made in one apartment session. The same seed and time reproduce the same arrangement.",
+    "motion_note": "The default artwork contains continuous drift, changes in depth, and camera divergence. Some passages may include faster reseeding transitions.",
+    "audio_note": "Final score, sound design, spatial behavior, loudness, and captionable sound events remain pending; no release claim is made from the provisional soundtrack text.",
+    "reduced_motion": "The live root honors the device reduced-motion preference by holding a reproducible frame. The project page uses no essential animation.",
+    "silent_fallback": "The visual work and all navigation remain intelligible with audio unavailable. Final release media must document any meaning otherwise conveyed only by sound.",
+    "captions": {
+      "status": "pending",
+      "language": "en",
+      "label": "English captions",
+      "reason": "Timing and sound-event language require the artist-approved final cut from issue 10.",
+      "cues": []
+    },
+    "transcript": {
+      "status": "pending",
+      "text": "Draft transcript ledger: the work has no spoken dialogue in the current design; final score and sound-event description await the approved cut.",
+      "reason": "Issue 10 has not supplied the final score-driven media and issue 17 accessibility review is pending."
+    },
+    "review_gate": "accessibility-review"
+  },
+  "press": {
+    "synopsis_short": "In 2017 a dancer moved through a Florida apartment while the camera stood still. One hundred sixty-two photographs now feed a generative room that can reproduce any cited instant without repeating the river around it.",
+    "synopsis_long": "On 20 June 2017, a locked camera recorded a dancer moving through a one-bedroom apartment in South Florida. Because every exposure shares one viewpoint, fragments from different instants can align to the same architecture. A hand-cut composite made that summer lay dormant for nine years. Danse returns to it as a living system: a pure seeded engine reconstructs the flat work, opens its fragments into depth, and lets each visitor enter a river with a durable identity. The final score-driven film, spatial sound, and physical installation remain separate evidence-gated forms of that same engine.",
+    "artist_bio": "Anthony J. Padavano is a photographer and programmer working between South Florida and New York. His work treats a photograph as a record of where a camera stood and software as part of the photographic object. Final identity and biography wording require the artist's approval before publication.",
+    "artist_statement": "The original collage was cut by feeling. The generative work asks what those fragments become when they are treated as views through one camera instead of flat pieces of paper. Nothing in the image needs to be invented: each fragment comes from the same afternoon and remains accountable to its source. The release statement will be artist-approved only after the score-driven cut, room behavior, and rights register are complete.",
+    "contact": {
+      "status": "pending",
+      "label": "Project contact",
+      "url": null
+    },
+    "canonical_links": [
+      {
+        "label": "Live artwork",
+        "url": "https://organvm.github.io/the-thing-without-a-name/"
+      },
+      {
+        "label": "Project page",
+        "url": "https://organvm.github.io/the-thing-without-a-name/project/"
+      },
+      {
+        "label": "Source repository",
+        "url": "https://github.com/organvm/the-thing-without-a-name"
+      }
+    ],
+    "seed_sharing": {
+      "archival_seed": 20170620,
+      "example_url": "https://organvm.github.io/the-thing-without-a-name/#s=20170620",
+      "note": "A seed names a river; seed plus time cites one reproducible instant. Public sharing remains owner-initiated and never runs as a build side effect."
+    },
+    "posting_calendar": [
+      {
+        "sequence": 1,
+        "channel": "Owner-selected announcement channel",
+        "timing": "After public artifact and deployment receipts pass",
+        "asset_id": "project-social-card",
+        "state": "planned",
+        "owner": "Anthony"
+      },
+      {
+        "sequence": 2,
+        "channel": "Press and venue outreach",
+        "timing": "After rights-compatible still clearance and contact approval",
+        "asset_id": "press-still-primary",
+        "state": "planned",
+        "owner": "Anthony"
+      },
+      {
+        "sequence": 3,
+        "channel": "Festival or exhibition account",
+        "timing": "Only within the selected opportunity's account-owned filing lifecycle",
+        "asset_id": "accessible-trailer",
+        "state": "planned",
+        "owner": "Anthony"
+      }
+    ]
+  },
+  "claims": [
+    {
+      "id": "corpus-session",
+      "text": "The publishable corpus records a 20 June 2017 session and 162 registered source-frame records.",
+      "publish": true,
+      "status": "verified",
+      "evidence": {
+        "path": "corpus/manifest.json",
+        "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371",
+        "summary": "Tracked publishable corpus manifest: shot date and complete frame inventory."
+      }
+    },
+    {
+      "id": "pure-engine-check",
+      "text": "The portable checker enforces the pure seed/time engine and isolates clock and entropy to arrival.js.",
+      "publish": true,
+      "status": "verified",
+      "evidence": {
+        "path": "scripts/check-danse.py",
+        "sha256": "74a4c9a9d0941bf4c55f5ab9e14b1d38e890a21991f9bf29d28d3913c19ba6f8",
+        "summary": "Executable invariant source bound by digest; the release receipt must record its passing run."
+      }
+    },
+    {
+      "id": "opportunity-freeze",
+      "text": "Release opportunity facts are frozen at snapshot omega-20260804 rather than fetched or rewritten during a build.",
+      "publish": true,
+      "status": "verified",
+      "evidence": {
+        "path": "opportunities/omega-20260804.json",
+        "sha256": "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e",
+        "summary": "Immutable source-verified opportunity snapshot consumed by this release manifest."
+      }
+    },
+    {
+      "id": "final-cut-evidence",
+      "text": "The artist-approved score-driven cut reproduces its declared image and audio outputs from the exact release tree.",
+      "publish": true,
+      "status": "pending",
+      "evidence": null
+    },
+    {
+      "id": "installation-recovery-evidence",
+      "text": "The venue runtime restores the calibrated projection and spatial sound after three wall-plug interruptions.",
+      "publish": true,
+      "status": "pending",
+      "evidence": null
+    }
+  ],
+  "credits": [
+    {
+      "id": "artist-credit",
+      "role": "Concept, photography, and software",
+      "name": "Anthony J. Padavano",
+      "status": "pending",
+      "note": "Public identity and final role wording require the issue 16 redacted rights register and artist approval.",
+      "evidence": null
+    },
+    {
+      "id": "dancer-credit",
+      "role": "Dance and performance",
+      "name": null,
+      "status": "pending",
+      "note": "Identity, credit wording, release, and promotional-use scope remain private human/external gates in issue 16.",
+      "evidence": null
+    },
+    {
+      "id": "music-credit",
+      "role": "Composition, edition, arrangement, performance, recording, and samples",
+      "name": null,
+      "status": "pending",
+      "note": "Issue 8 repertoire selection and issue 16 release integration are not complete.",
+      "evidence": null
+    },
+    {
+      "id": "pictured-objects-credit",
+      "role": "Poster and pictured-object rights",
+      "name": null,
+      "status": "pending",
+      "note": "Every public still and release frame must be dispositioned through issue 16 before use.",
+      "evidence": null
+    }
+  ],
+  "media": [
+    {
+      "id": "press-still-primary",
+      "kind": "still",
+      "label": "Primary rights-compatible press still",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issue 16 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "project-social-card",
+      "kind": "social-card",
+      "label": "Project-page social preview",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issue 16 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "accessible-trailer",
+      "kind": "film",
+      "label": "Captioned public trailer or excerpt",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 10 and 16 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "score-driven-master",
+      "kind": "film",
+      "label": "Artist-approved score-driven master",
+      "required_for": ["release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 10 and 16 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "installation-proof",
+      "kind": "installation-evidence",
+      "label": "Calibrated room and recovery evidence",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 14 and 16, Anthony, and venue",
+        "evidence": null
+      },
+      "alt_text": null
+    }
+  ],
+  "gates": [
+    {
+      "id": "final-artistic-approval",
+      "owner": "Anthony",
+      "issue": 10,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Approve the exact score-driven cut and release copy after A/B review.",
+      "evidence": null
+    },
+    {
+      "id": "final-cut-evidence-gate",
+      "owner": "Issue 10 and Anthony",
+      "issue": 10,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Supply the exact package manifest, deterministic checks, and final-cut attestation.",
+      "evidence": null
+    },
+    {
+      "id": "installation-evidence",
+      "owner": "Issue 14, Anthony, and venue",
+      "issue": 14,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Validate the digital twin, technical rider, calibration, recovery, setup, strike, and venue evidence.",
+      "evidence": null
+    },
+    {
+      "id": "rights-register",
+      "owner": "Issue 16, Anthony, and contributors",
+      "issue": 16,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Clear every included person, image, object, music, recording, still, and promotional use in the exact manifest.",
+      "evidence": null
+    },
+    {
+      "id": "press-stills-clearance",
+      "owner": "Issue 16 and Anthony",
+      "issue": 16,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Approve the selected still set for site, press, festival promotion, and any archive scope.",
+      "evidence": null
+    },
+    {
+      "id": "accessibility-review",
+      "owner": "Issue 17 and Anthony",
+      "issue": 17,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Review alt text, motion and audio notes, captions, transcript, reduced-motion behavior, and silent fallback against final media.",
+      "evidence": null
+    },
+    {
+      "id": "contact-route-approval",
+      "owner": "Anthony",
+      "issue": 17,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Choose and approve the public contact route without committing private contact data.",
+      "evidence": null
+    },
+    {
+      "id": "public-identity-copy-approval",
+      "owner": "Anthony",
+      "issue": 17,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Approve title treatment, biography, statements, synopsis, credits, and public identity claims.",
+      "evidence": null
+    },
+    {
+      "id": "live-interaction-replay",
+      "owner": "Issue 17 and Anthony",
+      "issue": 17,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Record the outstanding live H, Escape, and touch disclosure replay against the deployed SHA.",
+      "evidence": null
+    },
+    {
+      "id": "publication-approval",
+      "owner": "Anthony",
+      "issue": 17,
+      "required_for": ["public", "release"],
+      "state": "pending",
+      "action": "Authorize the exact public artifact and deployment; the build itself must never publish or send.",
+      "evidence": null
+    },
+    {
+      "id": "release-custody",
+      "owner": "Issue 12 and Anthony",
+      "issue": 12,
+      "required_for": ["release"],
+      "state": "pending",
+      "action": "Verify independent checksum custody for final source, media, score, room spec, and release artifact.",
+      "evidence": null
+    },
+    {
+      "id": "restore-rehearsal",
+      "owner": "Issue 12 and Anthony",
+      "issue": 12,
+      "required_for": ["release"],
+      "state": "pending",
+      "action": "Restore the release on a clean target and rerun portable, Metal, package, and installation predicates.",
+      "evidence": null
+    },
+    {
+      "id": "actual-presentation",
+      "owner": "Issue 12, Anthony, and host",
+      "issue": 12,
+      "required_for": ["release"],
+      "state": "pending",
+      "action": "Record an actual filing, exhibition, or presentation lifecycle with durable external evidence.",
+      "evidence": null
+    }
+  ]
+}

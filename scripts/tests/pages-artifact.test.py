@@ -88,6 +88,8 @@ def public_fixture(root: Path) -> None:
     write(root / "pipeline/private.py", b"must stay private\n")
     write(root / "README.md", b"repository documentation\n")
     write(root / "corpus/tier-receipts/browse.json", b"internal receipt\n")
+    write(root / "release/manifest.json", b"draft release contract\n")
+    write(root / "project/index.html", b"unapproved project route\n")
 
 
 class ProductionArtifactTest(unittest.TestCase):
@@ -154,6 +156,7 @@ class ProductionArtifactTest(unittest.TestCase):
         }
         self.assertTrue(paths.isdisjoint(forbidden))
         self.assertFalse(any(path.startswith("pipeline/") for path in paths))
+        self.assertFalse(any(path.startswith("release/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
         self.assertFalse(any(path.startswith("music/") for path in paths))
         self.assertFalse(any(path.startswith("project/") for path in paths))
@@ -182,6 +185,8 @@ class ArtifactBoundaryTest(unittest.TestCase):
         self.assertNotIn("README.md", inventory)
         self.assertFalse(any(path.startswith("submission/") for path in inventory))
         self.assertFalse(any(path.startswith("pipeline/") for path in inventory))
+        self.assertFalse(any(path.startswith("release/") for path in inventory))
+        self.assertFalse(any(path.startswith("project/") for path in inventory))
         self.assertFalse(any(path.startswith("corpus/tier-receipts/") for path in inventory))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
