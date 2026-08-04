@@ -87,7 +87,8 @@ def make_package(base: Path, document: dict) -> Path:
         "schema": "danse.delivery.manifest.v1",
         "title": "Rights contract test",
         "seed": "0x1234ABCD",
-        "source_tree_sha256": "a" * 64,
+        "corpus_tier": "film",
+        "source_tree_sha256": RIGHTS.expected_delivery_source_sha256("film"),
         "items": [
             {
                 "name": "master.mov",
@@ -120,23 +121,52 @@ def make_package(base: Path, document: dict) -> Path:
     return package
 
 
-def make_release(base: Path, document: dict, register_path: Path = RIGHTS.REGISTER) -> Path:
-    evidence = source_evidence()
+def make_release(base: Path, document: dict) -> tuple[Path, Path, Path]:
+    root = base / "repository"
+    root.mkdir(parents=True, exist_ok=True)
+    evidence_path = root / "evidence.json"
+    evidence_path.write_bytes((ROOT / source_evidence()["path"]).read_bytes())
+    evidence = {
+        "path": "evidence.json",
+        "sha256": RIGHTS.sha256(evidence_path),
+        "summary": "Tracked public-safe fixture evidence",
+    }
+    register_path = root / "rights" / "register.json"
+    register_path.parent.mkdir(parents=True, exist_ok=True)
+    register_path.write_bytes(RIGHTS.REGISTER.read_bytes())
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "add", "evidence.json", "rights/register.json"],
+        check=True,
+    )
+    artifact_path = root / "media" / "assets" / "rights-test.bin"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(evidence_path.read_bytes())
     media = []
     for rule in document["release_rules"]:
+        artifact = {
+            "path": artifact_path.relative_to(root).as_posix(),
+            "sha256": RIGHTS.sha256(artifact_path),
+        }
+        artifact["destination"] = artifact["path"]
+        artifact["bytes"] = artifact_path.stat().st_size
         media.append(
             {
                 "id": rule["media_id"],
                 "required_for": rule["required_for"],
                 "status": "ready",
-                "source": {**copy.deepcopy(evidence), "destination": f"media/assets/{rule['media_id']}.bin"},
+                "source": artifact,
                 "clearance": {"status": "cleared", "owner": "Rights test", "evidence": copy.deepcopy(evidence)},
             }
         )
     credits = [
         {
             "id": rule["credit_id"],
-            "name": f"Approved {rule['credit_id']}",
+            "name": next(
+                asset["public_credit"]["label"]
+                for asset in document["assets"]
+                if asset["id"] == rule["asset"]
+            ),
             "status": "cleared",
             "evidence": copy.deepcopy(evidence),
         }
@@ -161,9 +191,9 @@ def make_release(base: Path, document: dict, register_path: Path = RIGHTS.REGIST
             }
         ],
     }
-    path = base / "release-manifest.json"
+    path = root / "release-manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n")
-    return path
+    return path, root, register_path
 
 
 class RightsContractTest(unittest.TestCase):
@@ -294,6 +324,24 @@ class RightsContractTest(unittest.TestCase):
             blockers, _ = RIGHTS.validate_package(candidate, package)
             self.assertTrue(any("digest does not match" in blocker for blocker in blockers), blockers)
 
+    def test_package_binds_current_delivery_tree_and_every_text_manifest_row(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["schema"] = "/Users/Alice/private-schema"
+            manifest["source_tree_sha256"] = "a" * 64
+            missing_text = candidate["package_text"][0]["destination"]
+            manifest["items"] = [item for item in manifest["items"] if item["name"] != missing_text]
+            manifest_path.write_text(json.dumps(manifest))
+            blockers, identity = RIGHTS.validate_package(candidate, package)
+            self.assertTrue(any("does not match the canonical delivery tree" in item for item in blockers), blockers)
+            self.assertTrue(any("package text" in item and "absent from the manifest" in item for item in blockers), blockers)
+            self.assertIsNone(identity["schema"])
+            self.assertNotIn("/Users/", RIGHTS.canonical_json(identity))
+
     def test_package_rejects_unmanifested_media_unknown_rules_and_symlinks(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
@@ -370,40 +418,75 @@ class RightsContractTest(unittest.TestCase):
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
         with tempfile.TemporaryDirectory() as temporary:
-            release = make_release(Path(temporary), candidate)
-            blockers, identity = RIGHTS.validate_release_manifest(candidate, release, "release")
+            release, root, register = make_release(Path(temporary), candidate)
+            blockers, identity = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
             self.assertEqual(blockers, [])
             self.assertEqual(identity["schema"], "danse.release.v1")
 
             manifest = json.loads(release.read_text())
             manifest["gates"][0]["evidence"]["sha256"] = "0" * 64
             release.write_text(json.dumps(manifest))
-            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "release")
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
             self.assertTrue(any("does not bind this exact rights register" in blocker for blocker in blockers), blockers)
+
+    def test_release_media_bytes_credit_labels_and_safe_identity_are_exact(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
+            manifest["schema"] = "/Users/Alice/private-schema"
+            manifest["release_id"] = "/Users/Alice/final-cut"
+            manifest["media"][0]["source"]["destination"] = "some/other/released.bin"
+            manifest["media"][1]["source"]["bytes"] += 1
+            manifest["credits"][0]["name"] = "Incorrect public attribution"
+            release.write_text(json.dumps(manifest))
+            blockers, identity = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
+            self.assertTrue(any("invalid release identifier" in item for item in blockers), blockers)
+            self.assertTrue(any("exact staged release destination" in item for item in blockers), blockers)
+            self.assertTrue(any("byte count is missing or stale" in item for item in blockers), blockers)
+            self.assertTrue(any("does not match its approved attribution" in item for item in blockers), blockers)
+            self.assertIsNone(identity["release_id"])
+            self.assertIsNone(identity["schema"])
+            self.assertNotIn("/Users/", RIGHTS.canonical_json(identity))
 
     def test_release_manifest_cannot_hide_rights_rows_or_repeat_gate_identities(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
         with tempfile.TemporaryDirectory() as temporary:
-            release = make_release(Path(temporary), candidate)
+            release, root, register = make_release(Path(temporary), candidate)
             manifest = json.loads(release.read_text())
             manifest["media"][0]["required_for"] = ["release"]
             release.write_text(json.dumps(manifest))
-            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "public")
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "public", root=root, register_path=register
+            )
             self.assertTrue(any("phase scope disagrees" in blocker for blocker in blockers), blockers)
 
-            manifest = json.loads(make_release(Path(temporary), candidate).read_text())
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
             manifest["gates"][0]["required_for"] = ["release"]
             release.write_text(json.dumps(manifest))
-            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "public")
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "public", root=root, register_path=register
+            )
             self.assertTrue(any("must govern public and release" in blocker for blocker in blockers), blockers)
 
-            manifest = json.loads(make_release(Path(temporary), candidate).read_text())
+            release, root, register = make_release(Path(temporary), candidate)
+            manifest = json.loads(release.read_text())
             manifest["media"].append(copy.deepcopy(manifest["media"][0]))
             manifest["credits"].append(copy.deepcopy(manifest["credits"][0]))
             manifest["gates"].append(copy.deepcopy(manifest["gates"][0]))
             release.write_text(json.dumps(manifest))
-            blockers, _ = RIGHTS.validate_release_manifest(candidate, release, "release")
+            blockers, _ = RIGHTS.validate_release_manifest(
+                candidate, release, "release", root=root, register_path=register
+            )
             self.assertTrue(any("repeats media id" in blocker for blocker in blockers), blockers)
             self.assertTrue(any("repeats credit id" in blocker for blocker in blockers), blockers)
             self.assertTrue(any("repeats gate id" in blocker for blocker in blockers), blockers)
@@ -444,6 +527,27 @@ class RightsContractTest(unittest.TestCase):
             package=Path("/Users/private-person/unavailable-package"),
         )
         self.assertNotIn("/Users/", RIGHTS.canonical_json(missing_package))
+
+    def test_package_receipt_binds_canonical_attestation_choices(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            include = yaml.safe_load((package / "attest.yaml").read_text())
+            include["archive-library-choice"] = "include"
+            (package / "attest.yaml").write_text(yaml.safe_dump(include, sort_keys=True))
+            blockers, inputs = RIGHTS.phase_blockers(candidate, "submitted", package=package)
+            self.assertEqual(blockers, [])
+            include_identity = inputs["attestation"]
+            self.assertEqual(include_identity["values"]["archive-library-choice"], "include")
+
+            include["archive-library-choice"] = "opt-out"
+            (package / "attest.yaml").write_text(yaml.safe_dump(include, sort_keys=True))
+            blockers, inputs = RIGHTS.phase_blockers(candidate, "submitted", package=package)
+            self.assertEqual(blockers, [])
+            opt_out_identity = inputs["attestation"]
+            self.assertEqual(opt_out_identity["values"]["archive-library-choice"], "opt-out")
+            self.assertNotEqual(include_identity["sha256"], opt_out_identity["sha256"])
 
     def test_frozen_submission_terms_and_fixture_music_state_are_exactly_bound(self) -> None:
         submission = yaml.safe_load((ROOT / self.document["bindings"]["submission"]["source"]["path"]).read_text())

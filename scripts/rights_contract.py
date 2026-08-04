@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -53,6 +54,8 @@ EXPECTED_CATEGORIES = {
     "other-third-party",
 }
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+SAFE_TIER = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE = re.compile(r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
 PRIVATE_PATH = re.compile(r"(?:/Users/|/home/|[A-Za-z]:[\\/]Users[\\/]|file://|(?:^|\s)~[\\/])")
@@ -142,6 +145,12 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def value_sha256(value: Any) -> str:
+    """Hash a canonical public-safe value without depending on source formatting."""
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -807,6 +816,45 @@ def gate_satisfied(gate: dict[str, Any], attestation: dict[str, Any], *, allow_a
     return isinstance(value, str) and value in record["values"]
 
 
+def attestation_identity(document: dict[str, Any], attestation: dict[str, Any]) -> dict[str, Any]:
+    """Return only registered, type-valid assertions for a redacted receipt."""
+    contracts = {
+        gate["attestation"]["key"]: gate["attestation"]
+        for gate in document["human_gates"]
+        if gate["attestation"] is not None
+    }
+    values: dict[str, bool | str | None] = {}
+    for key in sorted(contracts):
+        value = attestation.get(key)
+        record = contracts[key]
+        if value is None:
+            values[key] = None
+        elif record["kind"] == "boolean" and type(value) is bool:
+            values[key] = value
+        elif record["kind"] == "choice" and isinstance(value, str) and value in record["values"]:
+            values[key] = value
+        else:
+            # Invalid external values are never reflected into a public receipt.
+            values[key] = None
+    return {"sha256": value_sha256(values), "values": values}
+
+
+def expected_delivery_source_sha256(tier: str) -> str:
+    """Query the package builder's canonical source identity for one safe tier."""
+    if not SAFE_TIER.fullmatch(tier):
+        raise RightsError("package manifest corpus tier is invalid")
+    try:
+        path = ROOT / "render" / "deliver.py"
+        spec = importlib.util.spec_from_file_location("danse_delivery_source_contract", path)
+        if spec is None or spec.loader is None:
+            raise ImportError("delivery source contract has no loader")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.delivery_source_sha256(tier)
+    except (ImportError, OSError, ValueError, AttributeError) as exc:
+        raise RightsError("cannot compute the canonical delivery source identity") from exc
+
+
 def validate_package(
     document: dict[str, Any],
     package: Path,
@@ -822,10 +870,21 @@ def validate_package(
     except RightsError as exc:
         return [str(exc)], None
 
-    if manifest.get("schema") != "danse.delivery.manifest.v1":
+    package_schema = manifest.get("schema")
+    if package_schema != "danse.delivery.manifest.v1":
         blockers.append("package manifest schema is not danse.delivery.manifest.v1")
+    tier = manifest.get("corpus_tier")
+    if not isinstance(tier, str) or not SAFE_TIER.fullmatch(tier):
+        blockers.append("package manifest has no valid corpus tier")
     if not isinstance(manifest.get("source_tree_sha256"), str) or not HEX64.fullmatch(manifest["source_tree_sha256"]):
         blockers.append("package manifest has no exact source-tree SHA-256")
+    elif isinstance(tier, str) and SAFE_TIER.fullmatch(tier):
+        try:
+            expected_source_tree = expected_delivery_source_sha256(tier)
+            if manifest["source_tree_sha256"] != expected_source_tree:
+                blockers.append("package manifest source-tree SHA-256 does not match the canonical delivery tree")
+        except RightsError as exc:
+            blockers.append(str(exc))
     items = manifest.get("items")
     if not isinstance(items, list) or not items:
         blockers.append("package manifest has no items")
@@ -833,6 +892,7 @@ def validate_package(
 
     rules = [(rule, re.compile(rule["pattern"])) for rule in document["package_rules"]]
     item_names: set[str] = set()
+    item_records: dict[str, dict[str, Any]] = {}
     moving = {"master.mov", "midnight-moment.mov", "trailer.mp4", "screener.mp4", "reel.mp4"}
     submission = load_yaml(regular_file(root, document["bindings"]["submission"]["source"]["path"], "submission binding"), "submission binding")
     expected_audio = sorted(((submission.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
@@ -852,9 +912,10 @@ def validate_package(
             blockers.append(str(exc))
             continue
         if name in item_names:
-            blockers.append(f"package manifest repeats item {name}")
+            blockers.append(f"package manifest repeats item identity at index {index}")
             continue
         item_names.add(name)
+        item_records[name] = item
         matched = [rule for rule, expression in rules if expression.fullmatch(name)]
         public_label = name if len(matched) == 1 else f"manifest item {index}"
         try:
@@ -907,15 +968,29 @@ def validate_package(
 
     for binding in document["package_text"]:
         destination = binding["destination"]
+        item = item_records.get(destination)
+        if item is None:
+            blockers.append(f"package text {binding['id']} is absent from the manifest")
         try:
             staged = _external_file(package_root, destination, f"package text {binding['id']}")
-            if sha256(staged) != binding["source"]["sha256"]:
+            expected_digest = binding["source"]["sha256"]
+            expected_source = regular_file(
+                root,
+                binding["source"]["path"],
+                f"package text {binding['id']} source",
+            )
+            expected_bytes = expected_source.stat().st_size
+            if sha256(staged) != expected_digest:
                 blockers.append(f"package text {binding['id']} does not match its tracked source")
+            if item is not None and (
+                item.get("sha256") != expected_digest or item.get("bytes") != expected_bytes
+            ):
+                blockers.append(f"package text {binding['id']} manifest identity is stale")
         except RightsError as exc:
             blockers.append(str(exc))
 
     identity = {
-        "schema": manifest.get("schema"),
+        "schema": package_schema if package_schema == "danse.delivery.manifest.v1" else None,
         "sha256": sha256(manifest_path),
         "items": len(items),
     }
@@ -929,6 +1004,7 @@ def _verify_release_source(
     *,
     tracked: set[str],
     require_tracked: bool,
+    require_artifact: bool = False,
 ) -> list[str]:
     if not isinstance(source, dict):
         return [f"{label} has no source record"]
@@ -936,6 +1012,19 @@ def _verify_release_source(
         relative = safe_relative(source.get("path"), f"{label} source", expose_value=False)
     except RightsError as exc:
         return [str(exc)]
+    if require_artifact:
+        try:
+            destination = safe_relative(
+                source.get("destination"),
+                f"{label} destination",
+                expose_value=False,
+            )
+        except RightsError as exc:
+            return [str(exc)]
+        if destination != relative:
+            return [f"{label} source is not the exact staged release destination"]
+        if not relative.startswith("media/assets/"):
+            return [f"{label} source is outside the release media boundary"]
     if require_tracked and relative not in tracked:
         return [f"{label} source is not tracked public-safe evidence"]
     try:
@@ -945,6 +1034,12 @@ def _verify_release_source(
     expected = source.get("sha256")
     if not isinstance(expected, str) or not HEX64.fullmatch(expected) or sha256(path) != expected:
         return [f"{label} source digest is missing or stale"]
+    if require_artifact and (
+        type(source.get("bytes")) is not int
+        or source["bytes"] < 0
+        or source["bytes"] != path.stat().st_size
+    ):
+        return [f"{label} source byte count is missing or stale"]
     return []
 
 
@@ -967,11 +1062,16 @@ def validate_release_manifest(
         manifest = load_json(release_manifest, "release manifest", expose_path=False)
     except RightsError as exc:
         return [str(exc)], None
-    if manifest.get("schema") != "danse.release.v1":
+    release_schema = manifest.get("schema")
+    if release_schema != "danse.release.v1":
         blockers.append("release manifest schema is not danse.release.v1")
+    release_id = manifest.get("release_id")
+    if not isinstance(release_id, str) or not SAFE_ID.fullmatch(release_id):
+        blockers.append("release manifest has an invalid release identifier")
+        release_id = None
     required_status = {"public-approved", "released"} if phase == "public" else {"released"}
     if manifest.get("status") not in required_status:
-        blockers.append(f"release manifest status {manifest.get('status')!r} is not valid for {phase}")
+        blockers.append(f"release manifest status is not valid for {phase}")
 
     uses = _asset_use_index(document)
     release_rules = {row["media_id"]: row for row in document["release_rules"]}
@@ -981,7 +1081,11 @@ def validate_release_manifest(
         media_rows = []
     media_ids: set[str] = set()
     for row in media_rows:
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("id"), str)
+            or not SAFE_ID.fullmatch(row["id"])
+        ):
             blockers.append("release manifest contains malformed media")
             continue
         media_id = row["id"]
@@ -1012,6 +1116,7 @@ def validate_release_manifest(
                 f"release media {media_id}",
                 tracked=tracked,
                 require_tracked=False,
+                require_artifact=True,
             )
         )
         blockers.extend(
@@ -1036,7 +1141,11 @@ def validate_release_manifest(
     gates = {gate["id"]: gate for gate in document["human_gates"]}
     assets = {asset["id"]: asset for asset in document["assets"]}
     for row in credit_rows:
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("id"), str)
+            or not SAFE_ID.fullmatch(row["id"])
+        ):
             blockers.append("release manifest contains malformed credit")
             continue
         credit_id = row["id"]
@@ -1063,6 +1172,8 @@ def validate_release_manifest(
             blockers.append(f"release credit {credit_id} depends on pending gate {rule['gate']}")
         if assets[rule["asset"]]["public_credit"]["state"] != "approved":
             blockers.append(f"release credit {credit_id} depends on unapproved asset credit {rule['asset']}")
+        elif row.get("name") != assets[rule["asset"]]["public_credit"]["label"]:
+            blockers.append(f"release credit {credit_id} does not match its approved attribution")
     missing_credits = sorted(set(credit_rules) - credit_ids)
     if missing_credits:
         blockers.append(f"release manifest is missing rights-ruled credits: {', '.join(missing_credits)}")
@@ -1073,7 +1184,11 @@ def validate_release_manifest(
         blockers.append("release manifest has no gate inventory")
         gate_rows = []
     for row in gate_rows:
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("id"), str)
+            or not SAFE_ID.fullmatch(row["id"])
+        ):
             blockers.append("release manifest contains malformed gate")
             continue
         gate_id = row["id"]
@@ -1109,9 +1224,9 @@ def validate_release_manifest(
                 blockers.append(str(exc))
 
     identity = {
-        "schema": manifest.get("schema"),
+        "schema": release_schema if release_schema == "danse.release.v1" else None,
         "sha256": sha256(release_manifest),
-        "release_id": manifest.get("release_id"),
+        "release_id": release_id,
     }
     return blockers, identity
 
@@ -1141,6 +1256,8 @@ def phase_blockers(
     attestation, attestation_blockers = load_attestation(package)
     if scopes & {"package", "uploaded", "submitted"}:
         blockers.extend(attestation_blockers)
+        if package is not None:
+            inputs["attestation"] = attestation_identity(document, attestation)
         if not attestation_blockers:
             blockers.extend(validate_attestation(document, attestation, root=root))
     allow_attestation = phase in {"package", "uploaded", "submitted"}

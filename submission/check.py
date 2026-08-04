@@ -354,7 +354,15 @@ def check_rights(package: Path, phase: str, rep: Report) -> None:
         spec.loader.exec_module(checker)
         _, receipt = checker.validate_all(phase=phase, package=package)
     except Exception as exc:
-        rep.add("rights", "redacted exact-manifest contract", FAIL, str(exc))
+        # Exceptions may carry a caller-owned package or machine-local path.
+        # The detailed diagnostic remains available from the local rights CLI;
+        # the submission report itself is a public-safe receipt surface.
+        rep.add(
+            "rights",
+            "redacted exact-manifest contract",
+            FAIL,
+            f"rights validation failed ({type(exc).__name__}); run scripts/check-rights.py locally",
+        )
         return
     blockers = receipt["blockers"]
     detail = (

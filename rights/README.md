@@ -34,12 +34,15 @@ python3 scripts/check-rights.py --phase release \
   --receipt <redacted-receipt.json>
 ```
 
-The package checker verifies every manifested byte, byte count, source-tree identity,
-sound source and score identity, registered origin still, copied biography and rights
-declaration, rights-bearing unmanifested file, symlink boundary, and package rights
-rule. The release checker requires the exact rights-register digest, release media,
-clearance evidence, and approved credits. Package attestations may satisfy only package,
-uploaded, and submitted gates; they never replace durable public/release receipts.
+The package checker verifies every manifested byte and byte count, the declared corpus
+tier against the package builder's current source-tree identity, sound source and score
+identity, registered origin still, every copied text file's manifest row, rights-bearing
+unmanifested files, symlink boundaries, and package rights rules. The release checker
+requires the exact rights-register digest; media bytes staged at their declared
+`media/assets/` destination; clearance evidence; and credit text identical to the
+approved attribution label. Package attestations may satisfy only package, uploaded,
+and submitted gates; their registered canonical values are bound into the redacted
+phase receipt, and they never replace durable public/release receipts.
 
 Current state is deliberately `draft`. Anthony must still approve the final cut,
 biography, submission copy, and rights declaration; settle dancer permission and credit; disposition the

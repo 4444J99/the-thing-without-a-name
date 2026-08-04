@@ -1264,6 +1264,20 @@ class DeliveryContractTest(unittest.TestCase):
         self.assertIn("archive-library-choice: null", text)
         self.assertIn('choose one of ["include", "opt-out"]', text)
 
+    def test_attestation_template_rejects_duplicate_rights_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            duplicate = Path(temporary) / "register.json"
+            duplicate.write_text(
+                '{"human_gates":[],"human_gates":[{"attestation":'
+                '{"key":"injected-private-gate","kind":"boolean","values":[true]}}]}'
+            )
+            with (
+                mock.patch.object(DELIVER, "RIGHTS_REGISTER", duplicate),
+                mock.patch.object(DELIVER.yaml, "safe_load", return_value={}),
+                self.assertRaisesRegex(SystemExit, "invalid or unreadable JSON"),
+            ):
+                DELIVER.attestation_template()
+
     def test_text_preflight_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "absent"
@@ -2418,6 +2432,18 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertEqual(report.rows[0][2], CHECK.FAIL)
             self.assertIn("blocker(s)", report.rows[0][3])
             self.assertNotIn(str(package), report.rows[0][3])
+
+    def test_rights_checker_exception_never_leaks_a_machine_local_path(self) -> None:
+        report = CHECK.Report()
+        with mock.patch.object(
+            CHECK.importlib.util,
+            "spec_from_file_location",
+            side_effect=RuntimeError("failed at /Users/Alice/private-rights.json"),
+        ):
+            CHECK.check_rights(Path("/Users/Alice/private-package"), "package", report)
+        self.assertEqual(report.rows[0][2], CHECK.FAIL)
+        self.assertNotIn("/Users/", report.rows[0][3])
+        self.assertIn("RuntimeError", report.rows[0][3])
 
     def test_published_terms_keep_provenance_and_explicit_archive_choice(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())

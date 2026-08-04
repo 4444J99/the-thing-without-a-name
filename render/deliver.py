@@ -987,10 +987,23 @@ def attestation_template() -> str:
         if item.get("id")
     ]
     seen = {entry["key"] for entry in entries}
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("rights register contains a duplicate JSON key")
+            value[key] = item
+        return value
+
     try:
-        rights = json.loads(RIGHTS_REGISTER.read_text()) if RIGHTS_REGISTER.is_file() else {}
-    except (OSError, json.JSONDecodeError):
-        rights = {}
+        if not RIGHTS_REGISTER.is_file():
+            raise OSError("rights register is missing")
+        rights = json.loads(RIGHTS_REGISTER.read_text(), object_pairs_hook=unique_object)
+        if not isinstance(rights, dict):
+            raise ValueError("rights register is not a JSON object")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit("rights register is invalid or unreadable JSON") from exc
     for gate in rights.get("human_gates", []):
         attestation = gate.get("attestation") if isinstance(gate, dict) else None
         if not isinstance(attestation, dict) or attestation.get("key") in seen:
@@ -1176,10 +1189,15 @@ def main() -> int:
             "t0": span["t0"],
             "t1": span["t1"],
             "duration": span["duration"],
+            "corpus_tier": args.tier,
             "source_tree_sha256": source_tree,
         }
     else:
-        manifest |= {key: previous[key] for key in (*passage_fields, "source_tree_sha256") if key in previous}
+        manifest |= {
+            key: previous[key]
+            for key in (*passage_fields, "corpus_tier", "source_tree_sha256")
+            if key in previous
+        }
     for path in made:
         if not path.is_file():
             continue
