@@ -63,7 +63,10 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 SAFE_TIER = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-PHONE = re.compile(r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
+PHONE = re.compile(
+    r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)"
+    r"|(?<![\w])\+(?:\d[ .()/-]*){7,14}\d(?!\d)"
+)
 PRIVATE_PATH = re.compile(r"(?:/Users/|/home/|[A-Za-z]:[\\/]Users[\\/]|file://|(?:^|\s)~[\\/])")
 ABSOLUTE_PATH = re.compile(
     r"(?:(?:^|(?<=[\s(\[{=;,:'\"<>]))/(?!/)[^\s'\"<>]+"
@@ -105,6 +108,8 @@ RIGHTS_MEDIA_SUFFIXES = {
     ".aif",
     ".aiff",
 }
+PRODUCTION_RECEIPT = "provenance/production.json"
+PRODUCER_RECEIPTS = "provenance/producer-receipts"
 
 
 class RightsError(ValueError):
@@ -1223,17 +1228,39 @@ def _external_file(root: Path, relative: str, label: str) -> Path:
     return path
 
 
-def load_attestation(package: Path | None) -> tuple[dict[str, Any], list[str]]:
+def _load_attestation_with_identity(
+    package: Path | None,
+) -> tuple[dict[str, Any], list[str], dict[str, Any] | None]:
     if package is None:
-        return {}, []
+        return {}, [], None
     blockers: list[str] = []
     try:
         root = _external_root(package, "package")
         path = _external_file(root, "attest.yaml", "package attestation")
-        value = load_yaml(path, "package attestation", expose_path=False)
+        digest, size, payload = _stable_file_measure(
+            path,
+            "package attestation",
+            capture=True,
+        )
+        if payload is None:
+            raise RightsError("package attestation bytes could not be retained")
+        try:
+            value = yaml.load(
+                payload.decode("utf-8"),
+                Loader=_UniqueKeySafeLoader,
+            ) or {}
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise RightsError("cannot read package attestation: invalid or unreadable YAML") from exc
+        if not isinstance(value, dict):
+            raise RightsError("package attestation must be a mapping")
     except RightsError as exc:
         blockers.append(str(exc))
-        return {}, blockers
+        return {}, blockers, None
+    return value, blockers, {"sha256": digest, "bytes": size}
+
+
+def load_attestation(package: Path | None) -> tuple[dict[str, Any], list[str]]:
+    value, blockers, _ = _load_attestation_with_identity(package)
     return value, blockers
 
 
@@ -1392,6 +1419,16 @@ def expected_delivery_source_sha256(tier: str) -> str:
         raise RightsError("cannot compute the canonical delivery source identity") from exc
 
 
+def expected_renderer_source_sha256(tier: str) -> str:
+    """Query the exact visual source identity required in segment receipts."""
+    if not SAFE_TIER.fullmatch(tier):
+        raise RightsError("package manifest corpus tier is invalid")
+    try:
+        return _delivery_contract().renderer_source_sha256(tier)
+    except (OSError, ValueError, AttributeError, SystemExit) as exc:
+        raise RightsError("cannot compute the canonical renderer source identity") from exc
+
+
 def current_audio_identity() -> dict[str, Any]:
     """Return the exact hydrated bank identity accepted by the package builder."""
     try:
@@ -1532,6 +1569,450 @@ def _required_package_blockers(
     return blockers
 
 
+def _package_production_blockers(
+    package_root: Path,
+    manifest: dict[str, Any],
+    item_records: dict[str, dict[str, Any]],
+    item_rule_ids: dict[str, str],
+    audio_identity: dict[str, Any] | None,
+) -> list[str]:
+    """Authenticate rendered package outputs through immutable producer receipts."""
+    blockers: list[str] = []
+    rendered_names = {
+        name
+        for name, rule_id in item_rule_ids.items()
+        if rule_id in {"moving-image", "generated-still", "score-source"}
+    }
+    if not rendered_names:
+        return blockers
+    reference = manifest.get("production")
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        return ["package manifest has no typed production receipt"]
+    if reference.get("path") != PRODUCTION_RECEIPT:
+        return ["package manifest production receipt is not at its canonical path"]
+    try:
+        production_path = _external_file(
+            package_root,
+            PRODUCTION_RECEIPT,
+            "package production receipt",
+        )
+        production_digest, _, production_payload = _stable_file_measure(
+            production_path,
+            "package production receipt",
+            capture=True,
+        )
+        if reference.get("sha256") != production_digest or production_payload is None:
+            raise RightsError("package production receipt digest is missing or stale")
+        production = _parse_json_bytes(production_payload, "package production receipt")
+    except RightsError as exc:
+        return [str(exc)]
+    if set(production) != {
+        "schema",
+        "source_tree_sha256",
+        "passage",
+        "producers",
+        "outputs",
+    }:
+        blockers.append("package production receipt has fields outside its typed contract")
+    if production.get("schema") != "danse.delivery.production.v1":
+        blockers.append("package production receipt has the wrong schema")
+    source_tree = manifest.get("source_tree_sha256")
+    if production.get("source_tree_sha256") != source_tree:
+        blockers.append("package production receipt names a different delivery source tree")
+    tier = manifest.get("corpus_tier")
+    try:
+        renderer_source_tree = expected_renderer_source_sha256(tier)
+    except RightsError as exc:
+        blockers.append(str(exc))
+        renderer_source_tree = None
+    passage_keys = {
+        "seed",
+        "passage_seed",
+        "passage",
+        "start",
+        "t0",
+        "t1",
+        "duration",
+        "corpus_tier",
+    }
+    passage = production.get("passage")
+    if not isinstance(passage, dict) or set(passage) != passage_keys:
+        blockers.append("package production receipt has a malformed passage identity")
+    elif any(passage.get(key) != manifest.get(key) for key in passage_keys):
+        blockers.append("package production receipt names a different passage")
+
+    producer_rows = production.get("producers")
+    if not isinstance(producer_rows, list) or not producer_rows:
+        blockers.append("package production receipt has no producers")
+        producer_rows = []
+    producers: dict[str, dict[str, Any]] = {}
+    producer_receipts: dict[str, tuple[dict[str, Any], str, Path]] = {}
+    producer_paths: set[str] = set()
+    for index, producer in enumerate(producer_rows):
+        if not isinstance(producer, dict) or set(producer) != {
+            "id",
+            "kind",
+            "receipt",
+            "output_sha256",
+            "components",
+        }:
+            blockers.append(f"package producer {index} has fields outside its typed contract")
+            continue
+        producer_id = producer.get("id")
+        if (
+            not isinstance(producer_id, str)
+            or not SAFE_ID.fullmatch(producer_id)
+            or producer_id in producers
+        ):
+            blockers.append(f"package producer {index} has an invalid or repeated identity")
+            continue
+        producers[producer_id] = producer
+        kind = producer.get("kind")
+        if kind not in {"render-segment", "render-concat", "score"}:
+            blockers.append(f"package producer {producer_id} has an unknown kind")
+        components = producer.get("components")
+        if (
+            not isinstance(components, list)
+            or not all(isinstance(value, str) and SAFE_ID.fullmatch(value) for value in components)
+            or len(components) != len(set(components))
+        ):
+            blockers.append(f"package producer {producer_id} has malformed components")
+        receipt = producer.get("receipt")
+        if not isinstance(receipt, dict) or set(receipt) != {"path", "sha256"}:
+            blockers.append(f"package producer {producer_id} has no exact receipt identity")
+            continue
+        try:
+            relative = safe_relative(
+                receipt.get("path"),
+                f"package producer {producer_id} receipt",
+                expose_value=False,
+            )
+            pure = PurePosixPath(relative)
+            if pure.parent.as_posix() != PRODUCER_RECEIPTS or pure.suffix != ".json":
+                raise RightsError(f"package producer {producer_id} receipt is outside its boundary")
+            if relative in producer_paths:
+                raise RightsError(f"package producer {producer_id} reuses another producer receipt")
+            producer_paths.add(relative)
+            path = _external_file(
+                package_root,
+                relative,
+                f"package producer {producer_id} receipt",
+            )
+            digest, _, payload = _stable_file_measure(
+                path,
+                f"package producer {producer_id} receipt",
+                capture=True,
+            )
+            if receipt.get("sha256") != digest or payload is None:
+                raise RightsError(f"package producer {producer_id} receipt digest is stale")
+            producer_receipts[producer_id] = (
+                _parse_json_bytes(payload, f"package producer {producer_id} receipt"),
+                digest,
+                path,
+            )
+        except RightsError as exc:
+            blockers.append(str(exc))
+
+    receipt_root = package_root / PRODUCER_RECEIPTS
+    try:
+        if receipt_root.is_symlink() or not receipt_root.is_dir():
+            raise RightsError("package producer-receipt boundary is not a regular directory")
+        inventoried_receipts = set()
+        for path in receipt_root.iterdir():
+            if path.is_symlink() or not path.is_file():
+                raise RightsError("package producer-receipt boundary contains an unsafe entry")
+            inventoried_receipts.add(path.relative_to(package_root).as_posix())
+        if inventoried_receipts != producer_paths:
+            blockers.append("package producer-receipt inventory does not match its typed producers")
+    except RightsError as exc:
+        blockers.append(str(exc))
+    except OSError:
+        blockers.append("package producer-receipt boundary could not be inventoried")
+
+    for producer_id, producer in producers.items():
+        got = producer_receipts.get(producer_id)
+        if got is None:
+            continue
+        receipt, _, _ = got
+        kind = producer.get("kind")
+        components = producer.get("components")
+        output_sha256 = producer.get("output_sha256")
+        if not isinstance(output_sha256, str) or not HEX64.fullmatch(output_sha256):
+            blockers.append(f"package producer {producer_id} has no exact output digest")
+        if kind == "render-segment":
+            inputs = receipt.get("inputs") if isinstance(receipt.get("inputs"), dict) else {}
+            if receipt.get("schema") != "danse.render.segment.v1":
+                blockers.append(f"package producer {producer_id} is not a render-segment receipt")
+            if components:
+                blockers.append(f"package render segment {producer_id} must not have components")
+            if (
+                renderer_source_tree is None
+                or inputs.get("source_tree_sha256") != renderer_source_tree
+            ):
+                blockers.append(f"package render segment {producer_id} names a different source tree")
+            if inputs.get("tier") != manifest.get("corpus_tier"):
+                blockers.append(f"package render segment {producer_id} names a different corpus tier")
+            if receipt.get("file_sha256") != output_sha256:
+                blockers.append(f"package render segment {producer_id} output digest is stale")
+        elif kind == "render-concat":
+            segments = receipt.get("segments")
+            if receipt.get("schema") != "danse.render.concat.v1" or not isinstance(
+                segments, list
+            ):
+                blockers.append(f"package producer {producer_id} is not a render-concat receipt")
+                segments = []
+            component_digests = [
+                producer_receipts[value][1]
+                for value in components or []
+                if value in producer_receipts
+            ]
+            declared_digests = [
+                row.get("receipt_sha256")
+                for row in segments
+                if isinstance(row, dict)
+            ]
+            if (
+                len(component_digests) != len(components or [])
+                or declared_digests != component_digests
+                or any(
+                    producers.get(value, {}).get("kind") != "render-segment"
+                    for value in components or []
+                )
+            ):
+                blockers.append(f"package render concat {producer_id} has an invalid segment chain")
+            if receipt.get("file_sha256") != output_sha256:
+                blockers.append(f"package render concat {producer_id} output digest is stale")
+        elif kind == "score":
+            if receipt.get("schema") != "danse.score.receipt.v1":
+                blockers.append(f"package producer {producer_id} is not a score receipt")
+            if components:
+                blockers.append(f"package score producer {producer_id} must not have components")
+            if receipt.get("sha256") != output_sha256:
+                blockers.append(f"package score producer {producer_id} output digest is stale")
+            if (
+                receipt.get("t0") != manifest.get("t0")
+                or receipt.get("t1") != manifest.get("t1")
+                or receipt.get("duration") != manifest.get("duration")
+            ):
+                blockers.append(f"package score producer {producer_id} names a different passage")
+            if audio_identity is not None and (
+                receipt.get("bank_fingerprint") != audio_identity["bank_fingerprint"]
+                or not same_strings(receipt.get("sources"), audio_identity["sources"])
+            ):
+                blockers.append(f"package score producer {producer_id} names a different grain bank")
+
+    output_rows = production.get("outputs")
+    if not isinstance(output_rows, list):
+        blockers.append("package production receipt has no output inventory")
+        output_rows = []
+    outputs: dict[str, dict[str, Any]] = {}
+    directly_used_producers: set[str] = set()
+    score_output_sha = next(
+        (
+            item_records[name].get("sha256")
+            for name, rule_id in item_rule_ids.items()
+            if rule_id == "score-source"
+        ),
+        None,
+    )
+
+    def canonical_capture_start(capture: str) -> float | None:
+        if capture == "passage":
+            return manifest.get("t0")
+        try:
+            start = float(manifest.get("start"))
+            return _delivery_contract().query_capture_span(capture, start=start)["t0"]
+        except (KeyError, OSError, TypeError, ValueError, SystemExit):
+            blockers.append(f"cannot resolve canonical {capture} capture start")
+            return None
+
+    def validate_render_invocation(producer_id: str, capture: str) -> None:
+        producer = producers.get(producer_id)
+        if producer is None:
+            return
+        component_ids = (
+            producer.get("components")
+            if producer.get("kind") == "render-concat"
+            else [producer_id]
+        )
+        if not isinstance(component_ids, list):
+            return
+        expected_start = canonical_capture_start(capture)
+        expected = {
+            "window": capture,
+            "tier": tier,
+            "seed": None,
+            "stream": 0,
+            "codec": "h264" if capture == "reel" else "prores",
+            "width": None,
+            "height": None,
+            "fps": None,
+            "segment_frames": 600,
+        }
+        for component_id in component_ids or []:
+            got = producer_receipts.get(component_id)
+            if got is None:
+                continue
+            receipt = got[0]
+            inputs = receipt.get("inputs") if isinstance(receipt.get("inputs"), dict) else {}
+            mismatch = any(inputs.get(key) != value for key, value in expected.items())
+            try:
+                start_mismatch = expected_start is None or abs(
+                    float(inputs.get("start")) - float(expected_start)
+                ) > 1e-9
+            except (TypeError, ValueError):
+                start_mismatch = True
+            if mismatch or start_mismatch:
+                blockers.append(
+                    f"package render producer {component_id} does not match the canonical {capture} invocation"
+                )
+
+    def validate_still_invocation(producer_id: str, name: str) -> None:
+        got = producer_receipts.get(producer_id)
+        if got is None:
+            return
+        receipt = got[0]
+        inputs = receipt.get("inputs") if isinstance(receipt.get("inputs"), dict) else {}
+        try:
+            seed = int(Path(name).stem.removeprefix("seed-"), 0)
+        except ValueError:
+            seed = None
+        try:
+            expected_start = (
+                _delivery_contract()
+                .query_capture_span(
+                    "passage",
+                    seed=seed,
+                    start=float(manifest.get("t0")),
+                )["t0"]
+                if seed is not None
+                else None
+            )
+        except (KeyError, OSError, TypeError, ValueError, SystemExit):
+            expected_start = None
+        expected = {
+            "window": "passage",
+            "tier": tier,
+            "seed": seed,
+            "stream": 0,
+            "codec": "prores",
+            "width": None,
+            "height": None,
+            "fps": None,
+            "segment_frames": 1,
+        }
+        try:
+            start_mismatch = expected_start is None or abs(
+                float(inputs.get("start")) - float(expected_start)
+            ) > 1e-9
+        except (TypeError, ValueError):
+            start_mismatch = True
+        if seed is None or any(
+            inputs.get(key) != value for key, value in expected.items()
+        ) or receipt.get("frames") != 1 or start_mismatch:
+            blockers.append(
+                f"package render producer {producer_id} does not match generated still {name}"
+            )
+
+    for index, output in enumerate(output_rows):
+        if not isinstance(output, dict) or set(output) != {
+            "name",
+            "bytes",
+            "sha256",
+            "producers",
+        }:
+            blockers.append(f"package production output {index} has fields outside its typed contract")
+            continue
+        name = output.get("name")
+        if not isinstance(name, str) or name in outputs:
+            blockers.append(f"package production output {index} has an invalid or repeated identity")
+            continue
+        outputs[name] = output
+        item = item_records.get(name)
+        if item is None or output.get("sha256") != item.get("sha256") or output.get(
+            "bytes"
+        ) != item.get("bytes"):
+            blockers.append(f"package production output {name} does not bind its manifested bytes")
+        producer_ids = output.get("producers")
+        if (
+            not isinstance(producer_ids, list)
+            or not producer_ids
+            or not all(isinstance(value, str) and value in producers for value in producer_ids)
+            or len(producer_ids) != len(set(producer_ids))
+        ):
+            blockers.append(f"package production output {name} has invalid producers")
+            continue
+        directly_used_producers.update(producer_ids)
+        kinds = [producers[value]["kind"] for value in producer_ids]
+        rule_id = item_rule_ids.get(name)
+        if rule_id == "moving-image":
+            if sorted(kinds) != ["render-concat", "score"]:
+                blockers.append(f"package moving image {name} lacks exact render and score producers")
+            else:
+                render_id = producer_ids[kinds.index("render-concat")]
+                score_id = producer_ids[kinds.index("score")]
+                validate_render_invocation(
+                    render_id,
+                    "reel" if name == "reel.mp4" else "passage",
+                )
+                if producers[score_id].get("output_sha256") != score_output_sha:
+                    blockers.append(f"package moving image {name} names a different score producer")
+        elif rule_id == "generated-still":
+            if kinds != ["render-segment"]:
+                blockers.append(f"package generated still {name} lacks its exact render producer")
+            else:
+                validate_still_invocation(producer_ids[0], name)
+        elif rule_id == "score-source":
+            if kinds != ["score"]:
+                blockers.append(f"package score source {name} lacks its exact score producer")
+            elif producers[producer_ids[0]].get("output_sha256") != output.get("sha256"):
+                blockers.append(f"package score source {name} names a different score producer")
+
+    missing_outputs = sorted(rendered_names - outputs.keys())
+    extra_outputs = sorted(outputs.keys() - rendered_names)
+    if missing_outputs:
+        blockers.append(
+            f"package production receipt is missing {len(missing_outputs)} rendered output(s)"
+        )
+    if extra_outputs:
+        blockers.append(
+            f"package production receipt names {len(extra_outputs)} non-rendered output(s)"
+        )
+
+    reachable_producers = set(directly_used_producers)
+    frontier = list(reachable_producers)
+    while frontier:
+        producer_id = frontier.pop()
+        producer = producers.get(producer_id)
+        for component in (producer or {}).get("components") or []:
+            if component in producers and component not in reachable_producers:
+                reachable_producers.add(component)
+                frontier.append(component)
+    if set(producers) != reachable_producers:
+        blockers.append("package production receipt contains an unreferenced producer")
+
+    try:
+        final_digest, _, _ = _stable_file_measure(
+            production_path,
+            "package production receipt",
+        )
+        if final_digest != production_digest:
+            blockers.append("package production receipt changed during validation")
+    except RightsError:
+        blockers.append("package production receipt changed during validation")
+    for producer_id, (_, digest, path) in producer_receipts.items():
+        try:
+            final_digest, _, _ = _stable_file_measure(
+                path,
+                f"package producer {producer_id} receipt",
+            )
+            if final_digest != digest:
+                blockers.append("package producer receipt changed during validation")
+        except RightsError:
+            blockers.append("package producer receipt changed during validation")
+    return blockers
+
+
 def validate_package(
     document: dict[str, Any],
     package: Path,
@@ -1667,6 +2148,7 @@ def validate_package(
         for name, rule_id in item_rule_ids.items()
         if rule_id == "score-source"
     ]
+    audio_identity: dict[str, Any] | None = None
     if moving_items:
         if len(score_items) != 1:
             blockers.append("package moving images require exactly one manifested score source")
@@ -1692,6 +2174,16 @@ def validate_package(
                 or not same_strings(sound.get("sources"), audio_identity["sources"])
             ):
                 blockers.append(f"package audio item {name} does not bind the hydrated grain bank")
+
+    blockers.extend(
+        _package_production_blockers(
+            package_root,
+            manifest,
+            item_records,
+            item_rule_ids,
+            audio_identity,
+        )
+    )
 
     for relative in initial_package_paths:
         if Path(relative).suffix.lower() in RIGHTS_MEDIA_SUFFIXES and relative not in item_names:
@@ -2282,7 +2774,9 @@ def phase_blockers(
     if phase == "release" and document["status"] != "cleared":
         blockers.append(f"rights register status is {document['status']}; release requires cleared")
 
-    attestation, attestation_blockers = load_attestation(package)
+    attestation, attestation_blockers, attestation_file = _load_attestation_with_identity(
+        package
+    )
     if scopes & {"package", "uploaded", "submitted"}:
         blockers.extend(attestation_blockers)
         if package is not None:
@@ -2365,6 +2859,16 @@ def phase_blockers(
             blockers.extend(release_blockers)
             if identity is not None:
                 inputs["release_manifest"] = identity
+    if package is not None and scopes & {"package", "uploaded", "submitted"}:
+        final_attestation, final_attestation_blockers, final_attestation_file = (
+            _load_attestation_with_identity(package)
+        )
+        if (
+            final_attestation_blockers != attestation_blockers
+            or final_attestation_file != attestation_file
+            or final_attestation != attestation
+        ):
+            blockers.append("package attestation changed during phase validation")
     return sorted(set(blockers)), inputs
 
 

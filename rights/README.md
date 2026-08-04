@@ -43,10 +43,16 @@ score source, generated-still minimum, and origin still declared by that same re
 then repeats the complete package inventory after validation. It also binds the declared
 corpus tier against the package builder's current source-tree identity, every derivative
 selected by the canonical Pages corpus allowlist against one file-count and tree-digest
-binding, the copied score-source
-WAV and hydrated grain-bank identity, registered origin still, every copied text file's
-manifest row, rights-bearing unmanifested files, symlink boundaries, and package rights
-rules. The release checker requires the exact rights-register digest; a complete
+binding, and every rendered package artifact through a
+`danse.delivery.production.v1` receipt. That closed receipt inventories the exact
+`danse.render.segment.v1`, `danse.render.concat.v1`, and
+`danse.score.receipt.v1` producer receipts, binds their source trees and canonical
+capture invocations, and binds each final package byte to the reachable render and score
+chain. Extra, reused, stale, unreferenced, or unsafe producer receipts fail closed. The
+checker also verifies the copied score-source WAV and hydrated grain-bank identity,
+registered origin still, every copied text file's manifest row, rights-bearing
+unmanifested files, symlink boundaries, and package rights rules. The release checker
+requires the exact rights-register digest; a complete
 inventory of the active phase's `media/assets/` boundary with no extra, symlinked, or
 off-phase bytes; every media and public-copy byte at its declared destination; stable
 manifest and media identities rechecked after inventory; clearance evidence; and credit
@@ -60,10 +66,12 @@ cleared asset use likewise cites a tracked
 phase scope, territory, term, promotion, and archive grant. Every manual or choice
 assertion in the canonical submission specification must map to a phase-owning human
 gate with the same typed value contract. Package attestations may satisfy only package,
-uploaded, and submitted gates; their registered canonical values are bound into the
-redacted phase receipt, and they never replace durable public/release receipts. Public
-receipts, register prose, and release manifests reject absolute machine paths on POSIX
-and Windows as well as contacts, credentials, and sensitive fields. Release manifests
+uploaded, and submitted gates; their exact file identity is retained and rechecked after
+package validation, their registered canonical values are bound into the redacted phase
+receipt, and they never replace durable public/release receipts. Public receipts,
+register prose, and release manifests reject absolute machine paths on POSIX and Windows
+as well as domestic or international phone numbers, email addresses, credentials, and
+sensitive fields. Release manifests
 must use either the compact closed interchange shape or the full closed release schema;
 unknown top-level or media, clearance, credit, gate, source, and evidence fields fail.
 The Pages workflow runs the public phase before artifact upload, and the artifact builder

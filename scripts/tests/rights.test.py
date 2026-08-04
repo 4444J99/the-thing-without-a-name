@@ -88,6 +88,18 @@ def make_package(base: Path, document: dict) -> Path:
     submission = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
     audio_sources = submission["package"]["audio"]["source_recordings"]
     origin_source = submission["package"]["origin_still"]["source_sha256"]
+    source_tree = RIGHTS.expected_delivery_source_sha256("film")
+    renderer_source_tree = RIGHTS.expected_renderer_source_sha256("film")
+    passage = {
+        "seed": "0x1234ABCD",
+        "passage_seed": "0x1234ABCD",
+        "passage": 0,
+        "start": 0.0,
+        "t0": 0.0,
+        "t1": 390.0,
+        "duration": 390.0,
+        "corpus_tier": "film",
+    }
     text_items = []
     for binding in document["package_text"]:
         payload = (package / binding["destination"]).read_bytes()
@@ -101,9 +113,8 @@ def make_package(base: Path, document: dict) -> Path:
     manifest = {
         "schema": "danse.delivery.manifest.v1",
         "title": "Rights contract test",
-        "seed": "0x1234ABCD",
-        "corpus_tier": "film",
-        "source_tree_sha256": RIGHTS.expected_delivery_source_sha256("film"),
+        **passage,
+        "source_tree_sha256": source_tree,
         "items": [
             {
                 "name": "master.mov",
@@ -153,6 +164,162 @@ def make_package(base: Path, document: dict) -> Path:
             ),
             *text_items,
         ],
+    }
+    receipt_root = package / "provenance/producer-receipts"
+    receipt_root.mkdir()
+
+    def producer_receipt(name: str, value: dict) -> dict:
+        path = receipt_root / f"{name}.json"
+        path.write_text(json.dumps(value, indent=2) + "\n")
+        return {
+            "path": path.relative_to(package).as_posix(),
+            "sha256": RIGHTS.sha256(path),
+        }
+
+    picture_segment_bytes = digest_bytes(b"fixture rendered picture segment")
+    picture_segment = producer_receipt(
+        "picture-segment",
+        {
+            "schema": "danse.render.segment.v1",
+            "segment": 0,
+            "frames": 11700,
+            "inputs": {
+                "window": "passage",
+                "source_tree_sha256": renderer_source_tree,
+                "tier": "film",
+                "seed": None,
+                "stream": 0,
+                "codec": "prores",
+                "width": None,
+                "height": None,
+                "fps": None,
+                "segment_frames": 600,
+                "start": 0.0,
+            },
+            "file_sha256": picture_segment_bytes,
+        },
+    )
+    picture_bytes = digest_bytes(b"fixture rendered picture concat")
+    picture_concat = producer_receipt(
+        "picture-concat",
+        {
+            "schema": "danse.render.concat.v1",
+            "codec": "prores",
+            "segments": [
+                {
+                    "name": "passage-default-seg-000.mov",
+                    "receipt_sha256": picture_segment["sha256"],
+                }
+            ],
+            "file_sha256": picture_bytes,
+        },
+    )
+    score_receipt = producer_receipt(
+        "score",
+        {
+            "schema": "danse.score.receipt.v1",
+            "sha256": digest_bytes(score),
+            "t0": passage["t0"],
+            "t1": passage["t1"],
+            "duration": passage["duration"],
+            "bank_fingerprint": "test-bank",
+            "sources": audio_sources,
+        },
+    )
+    producers = [
+        {
+            "id": "picture-segment",
+            "kind": "render-segment",
+            "receipt": picture_segment,
+            "output_sha256": picture_segment_bytes,
+            "components": [],
+        },
+        {
+            "id": "picture-concat",
+            "kind": "render-concat",
+            "receipt": picture_concat,
+            "output_sha256": picture_bytes,
+            "components": ["picture-segment"],
+        },
+        {
+            "id": "score",
+            "kind": "score",
+            "receipt": score_receipt,
+            "output_sha256": digest_bytes(score),
+            "components": [],
+        },
+    ]
+    outputs = [
+        {
+            "name": name,
+            "bytes": len(payload),
+            "sha256": digest_bytes(payload),
+            "producers": ["picture-concat", "score"],
+        }
+        for name, payload in (("master.mov", master), ("screener.mp4", screener))
+    ]
+    outputs.append(
+        {
+            "name": "provenance/passage-score.wav",
+            "bytes": len(score),
+            "sha256": digest_bytes(score),
+            "producers": ["score"],
+        }
+    )
+    for index, (name, payload) in enumerate(generated_stills.items()):
+        producer_id = f"still-{index}"
+        render_sha = digest_bytes(f"fixture render for {name}".encode())
+        receipt = producer_receipt(
+            producer_id,
+            {
+                "schema": "danse.render.segment.v1",
+                "segment": index,
+                "frames": 1,
+                "inputs": {
+                    "window": "passage",
+                    "source_tree_sha256": renderer_source_tree,
+                    "tier": "film",
+                    "seed": 0x1000 + index,
+                    "stream": 0,
+                    "codec": "prores",
+                    "width": None,
+                    "height": None,
+                    "fps": None,
+                    "segment_frames": 1,
+                    "start": 0.0,
+                },
+                "file_sha256": render_sha,
+            },
+        )
+        producers.append(
+            {
+                "id": producer_id,
+                "kind": "render-segment",
+                "receipt": receipt,
+                "output_sha256": render_sha,
+                "components": [],
+            }
+        )
+        outputs.append(
+            {
+                "name": name,
+                "bytes": len(payload),
+                "sha256": digest_bytes(payload),
+                "producers": [producer_id],
+            }
+        )
+    production = {
+        "schema": "danse.delivery.production.v1",
+        "source_tree_sha256": source_tree,
+        "passage": passage,
+        "producers": producers,
+        "outputs": outputs,
+    }
+    production_path = package / RIGHTS.PRODUCTION_RECEIPT
+    production_path.write_text(json.dumps(production, indent=2) + "\n")
+    manifest["production"] = {
+        "path": RIGHTS.PRODUCTION_RECEIPT,
+        "sha256": RIGHTS.sha256(production_path),
     }
     (package / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     attest = {}
@@ -358,6 +525,8 @@ class RightsContractTest(unittest.TestCase):
             (("note", "private release at \\\\server\\share\\private.json"), "machine-local path"),
             (("note", "contact dancer@example.test"), "email address"),
             (("note", "call 305-555-0123"), "phone number"),
+            (("note", "call +44 20 7123 4567"), "phone number"),
+            (("note", "call +33 1 42 68 53 00"), "phone number"),
         ):
             with self.subTest(expected=expected):
                 candidate = copy.deepcopy(self.document)
@@ -733,6 +902,31 @@ class RightsContractTest(unittest.TestCase):
                 blockers, _ = validate_fixture_package(candidate, package)
             self.assertTrue(any("inventory changed during validation" in item for item in blockers), blockers)
 
+    def test_package_attestation_is_rechecked_after_package_validation(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+
+            def mutate_attestation(*_args, **_kwargs) -> tuple[list[str], dict]:
+                (package / "attest.yaml").write_text("final-cut-only: false\n")
+                return [], {"schema": "danse.delivery.manifest.v1", "sha256": "0" * 64}
+
+            with mock.patch.object(
+                RIGHTS,
+                "validate_package",
+                side_effect=mutate_attestation,
+            ):
+                blockers, _ = RIGHTS.phase_blockers(
+                    candidate,
+                    "package",
+                    package=package,
+                )
+            self.assertTrue(
+                any("attestation changed during phase validation" in item for item in blockers),
+                blockers,
+            )
+
     def test_phase_validators_fail_closed_on_invalid_register_graphs(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
@@ -802,6 +996,99 @@ class RightsContractTest(unittest.TestCase):
             next(rule for rule in renamed["package_rules"] if rule["id"] == "moving-image")["id"] = "film"
             blockers, _ = validate_fixture_package(renamed, make_package(Path(temporary) / "renamed", renamed))
             self.assertTrue(any("missing required package rule moving-image" in item for item in blockers), blockers)
+
+    def test_package_media_cannot_be_substituted_with_a_self_rehashed_manifest(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            replacement = b"unrelated but self-reported master bytes"
+            (package / "master.mov").write_bytes(replacement)
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            master = next(item for item in manifest["items"] if item["name"] == "master.mov")
+            master["bytes"] = len(replacement)
+            master["sha256"] = digest_bytes(replacement)
+            manifest_path.write_text(json.dumps(manifest))
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(
+                any("production output master.mov" in item for item in blockers),
+                blockers,
+            )
+
+    def test_package_producer_receipts_are_closed_reachable_and_canonical(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+
+        with self.subTest("closed receipt inventory"), tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            (package / "provenance/producer-receipts/unclaimed.json").write_text("{}\n")
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(
+                any("producer-receipt inventory" in item for item in blockers),
+                blockers,
+            )
+
+        with self.subTest("reachable producers"), tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            production_path = package / RIGHTS.PRODUCTION_RECEIPT
+            production = json.loads(production_path.read_text())
+            score = next(row for row in production["producers"] if row["id"] == "score")
+            unused_path = package / "provenance/producer-receipts/unused-score.json"
+            unused_path.write_bytes((package / score["receipt"]["path"]).read_bytes())
+            production["producers"].append(
+                {
+                    **score,
+                    "id": "unused-score",
+                    "receipt": {
+                        "path": unused_path.relative_to(package).as_posix(),
+                        "sha256": RIGHTS.sha256(unused_path),
+                    },
+                }
+            )
+            production_path.write_text(json.dumps(production, indent=2) + "\n")
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["production"]["sha256"] = RIGHTS.sha256(production_path)
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(
+                any("unreferenced producer" in item for item in blockers),
+                blockers,
+            )
+
+        with self.subTest("canonical render invocation"), tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            production_path = package / RIGHTS.PRODUCTION_RECEIPT
+            production = json.loads(production_path.read_text())
+            segment = next(
+                row for row in production["producers"] if row["id"] == "picture-segment"
+            )
+            segment_path = package / segment["receipt"]["path"]
+            segment_receipt = json.loads(segment_path.read_text())
+            segment_receipt["inputs"]["window"] = "reel"
+            segment_path.write_text(json.dumps(segment_receipt, indent=2) + "\n")
+            segment["receipt"]["sha256"] = RIGHTS.sha256(segment_path)
+
+            concat = next(
+                row for row in production["producers"] if row["id"] == "picture-concat"
+            )
+            concat_path = package / concat["receipt"]["path"]
+            concat_receipt = json.loads(concat_path.read_text())
+            concat_receipt["segments"][0]["receipt_sha256"] = segment["receipt"]["sha256"]
+            concat_path.write_text(json.dumps(concat_receipt, indent=2) + "\n")
+            concat["receipt"]["sha256"] = RIGHTS.sha256(concat_path)
+
+            production_path.write_text(json.dumps(production, indent=2) + "\n")
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["production"]["sha256"] = RIGHTS.sha256(production_path)
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(
+                any("canonical passage invocation" in item for item in blockers),
+                blockers,
+            )
 
     def test_package_rejects_unmanifested_media_unknown_rules_and_symlinks(self) -> None:
         candidate = copy.deepcopy(self.document)

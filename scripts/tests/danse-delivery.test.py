@@ -110,6 +110,51 @@ def run_corpus_pipeline(work: Path, out: Path, tiers: str, *extra: str) -> int:
         return CORPUS_PIPELINE.main()
 
 
+def write_fake_reel_segment(render_out: Path, payload: bytes = b"rendered reel") -> Path:
+    """Write the typed renderer evidence expected by the reel delivery boundary."""
+    segment = render_out / "reel-default-seg-000.mp4"
+    segment.write_bytes(payload)
+    receipt = {
+        "schema": "danse.render.segment.v1",
+        "segment": 0,
+        "frames": 450,
+        "inputs": {
+            "source_tree_sha256": "fixture-renderer-source",
+            "tier": "film",
+        },
+        "file_sha256": DELIVER.digest(segment),
+    }
+    segment.with_name(segment.name + ".receipt.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
+    return segment
+
+
+def write_fake_reel_concat(render_out: Path, payload: bytes = b"rendered reel") -> Path:
+    """Write a one-segment concat and its exact receipt chain."""
+    segment = render_out / "reel-default-seg-000.mp4"
+    if not segment.is_file():
+        write_fake_reel_segment(render_out)
+    segment_receipt = segment.with_name(segment.name + ".receipt.json")
+    picture = render_out / "reel-default.mp4"
+    picture.write_bytes(payload)
+    receipt = {
+        "schema": "danse.render.concat.v1",
+        "codec": "h264",
+        "segments": [
+            {
+                "name": segment.name,
+                "receipt_sha256": DELIVER.digest(segment_receipt),
+            }
+        ],
+        "file_sha256": DELIVER.digest(picture),
+    }
+    picture.with_name(picture.name + ".receipt.json").write_text(
+        json.dumps(receipt, indent=2) + "\n"
+    )
+    return picture
+
+
 class DeliveryContractTest(unittest.TestCase):
     def test_offline_url_preserves_zero_seed_and_every_capture_override(self) -> None:
         args = SimpleNamespace(
@@ -1752,7 +1797,7 @@ class DeliveryContractTest(unittest.TestCase):
             manifest = json.loads((package / "manifest.json").read_text())
             self.assertEqual(manifest["sound"], old_sound)
 
-    def test_reused_media_preserves_prior_digest_for_validation(self) -> None:
+    def test_reused_media_without_producer_receipt_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             package = root / "package"
@@ -1790,17 +1835,11 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
                 redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(DELIVER.main(), 0)
-            items = json.loads((package / "manifest.json").read_text())["items"]
-            receipt = next(item for item in items if item["name"] == "master.mov")
-            self.assertEqual(receipt["sha256"], prior_digest)
-            self.assertNotEqual(receipt["sha256"], DELIVER.digest(master))
-            score_receipt = next(item for item in items if item["name"] == DELIVER.SCORE_SOURCE_ITEM)
-            self.assertEqual(score_receipt["sha256"], DELIVER.digest(score))
-            self.assertEqual(
-                score_receipt["sound"]["score_sha256"],
-                DELIVER.digest(score),
-            )
+                with self.assertRaisesRegex(SystemExit, "producer receipt is missing"):
+                    DELIVER.main()
+            self.assertEqual(master.read_bytes(), b"modified after packaging")
+            prior = json.loads((package / "manifest.json").read_text())
+            self.assertEqual(prior["items"][0]["sha256"], prior_digest)
 
     def test_score_receipt_is_bound_to_cached_audio_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1907,9 +1946,9 @@ class DeliveryContractTest(unittest.TestCase):
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
                 if "--concat" in command:
-                    (render_out / "reel-default.mp4").write_bytes(b"validated concat")
+                    write_fake_reel_concat(render_out, b"validated concat")
                 else:
-                    (render_out / "reel-default-seg-000.mp4").write_bytes(b"rendered reel")
+                    write_fake_reel_segment(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def mux_reel(picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
@@ -2000,7 +2039,7 @@ class DeliveryContractTest(unittest.TestCase):
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
-                (render_out / "reel-default.mp4").write_bytes(b"rendered reel")
+                write_fake_reel_concat(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def fail_mux(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:
@@ -2040,7 +2079,7 @@ class DeliveryContractTest(unittest.TestCase):
 
             def render(command: list[str], **_: object) -> subprocess.CompletedProcess:
                 render_out = Path(command[command.index("--out") + 1])
-                (render_out / "reel-default.mp4").write_bytes(b"rendered reel")
+                write_fake_reel_concat(render_out)
                 return subprocess.CompletedProcess(command, 0)
 
             def mux_reel(_picture: Path, _audio: Path, dest: Path, *_: object, **__: object) -> None:

@@ -90,6 +90,8 @@ AUDIO_ITEMS = {
     "reel.mp4",
 }
 SCORE_SOURCE_ITEM = "provenance/passage-score.wav"
+PRODUCTION_RECEIPT = "provenance/production.json"
+PRODUCER_RECEIPTS = "provenance/producer-receipts"
 PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
 FIXED_WINDOW_ITEMS = {"midnight-moment.mov", "trailer.mp4", "reel.mp4"}
 
@@ -190,6 +192,23 @@ def delivery_source_sha256(tier: str) -> str:
             h.update(str(path.relative_to(DANSE)).encode())
             h.update(bytes.fromhex(digest(path)))
     return h.hexdigest()
+
+
+@functools.lru_cache(maxsize=None)
+def renderer_source_sha256(tier: str) -> str:
+    """Canonical visual source identity embedded in offline segment receipts."""
+    spec = importlib.util.spec_from_file_location("danse_delivery_renderer_contract", RENDER)
+    if spec is None or spec.loader is None:
+        raise SystemExit("cannot load the canonical renderer source contract")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Args:
+        score = None
+
+    args = Args()
+    args.tier = tier
+    return module.source_tree_sha256(args)
 
 
 def captures(program: dict) -> dict:
@@ -334,6 +353,219 @@ def write_score_receipt(score: Path, span: dict, provenance: dict) -> None:
         **provenance,
     }
     score_receipt_path(score).write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def _production_targets(manifest: dict) -> dict[str, dict]:
+    """Rendered outputs that require an independent producer-receipt chain."""
+    targets = {}
+    for item in manifest.get("items") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        name = item["name"]
+        if (
+            name in AUDIO_ITEMS
+            or name == SCORE_SOURCE_ITEM
+            or re.fullmatch(r"stills/seed-0x[0-9A-Fa-f]{4,}\.(?:jpg|jpeg|png)", name)
+        ):
+            targets[name] = item
+    return targets
+
+
+def _passage_identity(manifest: dict) -> dict:
+    keys = (
+        "seed",
+        "passage_seed",
+        "passage",
+        "start",
+        "t0",
+        "t1",
+        "duration",
+        "corpus_tier",
+    )
+    missing = [key for key in keys if key not in manifest]
+    if missing:
+        raise SystemExit("rendered package has no complete passage identity")
+    return {key: manifest[key] for key in keys}
+
+
+def _prior_production_matches(package: Path, manifest: dict, previous: dict) -> dict | None:
+    reference = previous.get("production")
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        return None
+    if reference.get("path") != PRODUCTION_RECEIPT:
+        return None
+    path = package / PRODUCTION_RECEIPT
+    if path.is_symlink() or not path.is_file() or digest(path) != reference.get("sha256"):
+        return None
+    try:
+        production = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(production, dict):
+        return None
+    if (
+        production.get("schema") != "danse.delivery.production.v1"
+        or production.get("source_tree_sha256") != manifest.get("source_tree_sha256")
+        or production.get("passage") != _passage_identity(manifest)
+    ):
+        return None
+    outputs = {
+        row.get("name"): row
+        for row in production.get("outputs") or []
+        if isinstance(row, dict) and isinstance(row.get("name"), str)
+    }
+    targets = _production_targets(manifest)
+    if set(outputs) != set(targets):
+        return None
+    for name, item in targets.items():
+        output = outputs[name]
+        if output.get("sha256") != item.get("sha256") or output.get("bytes") != item.get(
+            "bytes"
+        ):
+            return None
+    return reference
+
+
+def _read_producer_receipt(path: Path, expected_schema: str) -> tuple[dict, str]:
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"producer receipt is missing or unsafe: {path.name}")
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"producer receipt is invalid: {path.name}") from exc
+    if not isinstance(value, dict) or value.get("schema") != expected_schema:
+        raise SystemExit(f"producer receipt has the wrong schema: {path.name}")
+    return value, digest(path)
+
+
+def write_production_receipt(
+    package: Path,
+    render_root: Path,
+    manifest: dict,
+    previous: dict,
+) -> dict | None:
+    """Bind package bytes to the render/score receipts that produced their inputs."""
+    targets = _production_targets(manifest)
+    if not targets:
+        return None
+    prior = _prior_production_matches(package, manifest, previous)
+    if prior is not None:
+        return prior
+
+    receipt_root = package / PRODUCER_RECEIPTS
+    if receipt_root.is_symlink() or (receipt_root.exists() and not receipt_root.is_dir()):
+        raise SystemExit("package producer-receipt boundary is not a regular directory")
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    for old in receipt_root.iterdir():
+        if old.is_symlink() or not old.is_file():
+            raise SystemExit("package producer-receipt boundary contains an unsafe entry")
+        old.unlink()
+
+    producers: dict[str, dict] = {}
+
+    def add_receipt(path: Path, kind: str) -> str:
+        schema = {
+            "render-segment": "danse.render.segment.v1",
+            "render-concat": "danse.render.concat.v1",
+            "score": "danse.score.receipt.v1",
+        }[kind]
+        value, receipt_sha = _read_producer_receipt(path, schema)
+        if kind == "render-segment":
+            inputs = value.get("inputs") if isinstance(value.get("inputs"), dict) else {}
+            if (
+                inputs.get("source_tree_sha256")
+                != renderer_source_sha256(manifest["corpus_tier"])
+                or inputs.get("tier") != manifest["corpus_tier"]
+            ):
+                raise SystemExit(f"render segment receipt source identity is stale: {path.name}")
+        producer_id = f"{kind}-{receipt_sha[:20]}"
+        if producer_id in producers:
+            return producer_id
+        components: list[str] = []
+        if kind == "render-concat":
+            segments = value.get("segments")
+            if not isinstance(segments, list) or not segments:
+                raise SystemExit(f"render concat receipt has no segment chain: {path.name}")
+            for segment in segments:
+                name = segment.get("name") if isinstance(segment, dict) else None
+                if not isinstance(name, str) or Path(name).name != name:
+                    raise SystemExit(f"render concat receipt has an unsafe segment: {path.name}")
+                segment_path = path.parent / f"{name}.receipt.json"
+                component = add_receipt(segment_path, "render-segment")
+                if producers[component]["receipt"]["sha256"] != segment.get("receipt_sha256"):
+                    raise SystemExit(f"render concat receipt segment digest is stale: {path.name}")
+                components.append(component)
+        output_sha = value.get("sha256") if kind == "score" else value.get("file_sha256")
+        if not isinstance(output_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", output_sha):
+            raise SystemExit(f"producer receipt has no output digest: {path.name}")
+        destination = receipt_root / f"{producer_id}.json"
+        shutil.copy2(path, destination)
+        if digest(destination) != receipt_sha:
+            raise SystemExit(f"producer receipt copy changed bytes: {path.name}")
+        producers[producer_id] = {
+            "id": producer_id,
+            "kind": kind,
+            "receipt": {
+                "path": destination.relative_to(package).as_posix(),
+                "sha256": receipt_sha,
+            },
+            "output_sha256": output_sha,
+            "components": components,
+        }
+        return producer_id
+
+    score_id = None
+    if SCORE_SOURCE_ITEM in targets or any(name in AUDIO_ITEMS for name in targets):
+        score_id = add_receipt(score_receipt_path(render_root / "passage-score.wav"), "score")
+    picture_id = None
+    if any(name in AUDIO_ITEMS - {"reel.mp4"} for name in targets):
+        picture_id = add_receipt(
+            render_root / "passage-default.mov.receipt.json",
+            "render-concat",
+        )
+    reel_id = None
+    if "reel.mp4" in targets:
+        reel_id = add_receipt(
+            render_root / "reel-provenance/reel-default.mp4.receipt.json",
+            "render-concat",
+        )
+
+    outputs = []
+    for name, item in sorted(targets.items()):
+        if name == SCORE_SOURCE_ITEM:
+            producer_ids = [score_id]
+        elif name == "reel.mp4":
+            producer_ids = [reel_id, score_id]
+        elif name in AUDIO_ITEMS:
+            producer_ids = [picture_id, score_id]
+        else:
+            seed = int(Path(name).stem.removeprefix("seed-"), 0)
+            matches = sorted(render_root.glob(f"passage-{seed}-seg-*.mov.receipt.json"))
+            if len(matches) != 1:
+                raise SystemExit(f"generated still has no unique render receipt: {name}")
+            producer_ids = [add_receipt(matches[0], "render-segment")]
+        if any(value is None for value in producer_ids):
+            raise SystemExit(f"rendered package output has incomplete producer evidence: {name}")
+        outputs.append(
+            {
+                "name": name,
+                "bytes": item["bytes"],
+                "sha256": item["sha256"],
+                "producers": producer_ids,
+            }
+        )
+
+    production = {
+        "schema": "danse.delivery.production.v1",
+        "source_tree_sha256": manifest["source_tree_sha256"],
+        "passage": _passage_identity(manifest),
+        "producers": [producers[key] for key in sorted(producers)],
+        "outputs": outputs,
+    }
+    path = package / PRODUCTION_RECEIPT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(production, indent=2) + "\n")
+    return {"path": PRODUCTION_RECEIPT, "sha256": digest(path)}
 
 
 def capture_root(root: Path, span: dict, start: float) -> Path:
@@ -845,6 +1077,27 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             done = subprocess.run([*render_command, "--concat"], check=False)
         if done.returncode != 0 or not picture.is_file():
             raise SystemExit("the reel would not render")
+        provenance = OUT / "reel-provenance"
+        if provenance.is_symlink() or (provenance.exists() and not provenance.is_dir()):
+            raise SystemExit("reel provenance boundary is not a regular directory")
+        provenance.mkdir(parents=True, exist_ok=True)
+        for old in provenance.iterdir():
+            if old.is_symlink() or not old.is_file():
+                raise SystemExit("reel provenance boundary contains an unsafe entry")
+            old.unlink()
+        concat_receipt = picture.with_name(picture.name + ".receipt.json")
+        concat_value, _ = _read_producer_receipt(
+            concat_receipt,
+            "danse.render.concat.v1",
+        )
+        shutil.copy2(concat_receipt, provenance / concat_receipt.name)
+        for segment in concat_value.get("segments") or []:
+            name = segment.get("name") if isinstance(segment, dict) else None
+            if not isinstance(name, str) or Path(name).name != name:
+                raise SystemExit("reel concat receipt has an unsafe segment")
+            receipt = render_out / f"{name}.receipt.json"
+            _read_producer_receipt(receipt, "danse.render.segment.v1")
+            shutil.copy2(receipt, provenance / receipt.name)
         tmp_a = render_out / "reel-a.wav"
         cut_audio(sound, rel_t0, seconds, tmp_a)
         with tempfile.TemporaryDirectory(prefix=".reel-publish-", dir=PACKAGE) as publish_tmp:
@@ -1252,6 +1505,9 @@ def main() -> int:
         manifest["sound"] = master_sound
     elif previous_sound:
         manifest["sound"] = previous_sound
+    production = write_production_receipt(PACKAGE, OUT, manifest, previous)
+    if production is not None:
+        manifest["production"] = production
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     total = sum(i["bytes"] for i in manifest["items"])
     print(f"\n  {len(manifest['items'])} items · {total / 1e9:.2f} GB · {PACKAGE}")
