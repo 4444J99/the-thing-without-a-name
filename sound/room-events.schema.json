@@ -93,6 +93,7 @@
     },
     "position": {
       "type": "object",
+      "description": "Listener-relative vector in the layout registry axes; routing adds the registry listener anchor before measuring to absolute speaker positions.",
       "additionalProperties": false,
       "required": ["x", "y", "z"],
       "properties": {

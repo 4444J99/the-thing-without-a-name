@@ -442,6 +442,8 @@ def room_layout(registry: dict[str, Any], layout_id: str | None = None) -> dict[
 
 
 def _distance(event: dict[str, Any], speaker: dict[str, Any], registry: dict[str, Any]) -> float:
+    # Event positions are listener-relative vectors; speaker positions are
+    # absolute normalized-room coordinates, so the listener anchors the event.
     listener = registry["coordinate_system"]["listener"]
     meters = registry["coordinate_system"]["meters_per_unit"]
     axes = [event["position"][axis] for axis in ("x", "y", "z")]
@@ -560,7 +562,7 @@ def calibration_bus(
     }
     events = []
     for index, speaker in enumerate(layout["speakers"]):
-        x, y, z = speaker["position"]
+        x, y, z = (_rounded(min(1.0, max(-1.0, value)), 6) for value in speaker["position"])
         events.append(
             {
                 "index": -1,

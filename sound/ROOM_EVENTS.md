@@ -14,7 +14,7 @@ validated musical score. Every event carries:
 - an explicit type (`passage.start`, `movement.start`, `plane.assembly`,
   `score.cue`, `plane.recast`, or `score.note`);
 - absolute river time and immutable passage identity;
-- normalized room position, depth, and bounded intensity;
+- a listener-relative normalized-room vector, depth, and bounded intensity;
 - the originating score row and score/MIDI contract digests; and
 - an audio role plus exact source digest, or `null` when no cleared bytes exist;
   score notes also retain their authored MIDI pitch for identical playback rate.
@@ -29,6 +29,7 @@ a separate authored allocation/offset contract.
 fallback and a normalized four-channel reference simulation. It makes no venue
 or equipment claim. Each speaker has a stable channel and position; every
 multichannel tap has an explicit stereo fold-down coefficient. Routing uses
+the registry listener as the absolute anchor for each relative event vector,
 equal-energy inverse-distance weights, propagation-delay differences, the
 declared latency budget, a per-event gain ceiling, and a downstream limiter
 ceiling. A layout with duplicate channels, an invalid matrix, stale identity, or
@@ -96,7 +97,7 @@ merging it wholesale.
 
 ## Remaining external gates
 
-Completion of the physical predicate still requires selected and cleared source
-bytes, a venue-approved speaker map, measured device latency/limiting, and a
+Completion of the physical predicate still requires source bytes to be selected
+and cleared, a venue-approved speaker map, measured device latency/limiting, and a
 documented human-observed plane/cue room test. None is inferred from a green
 fixture suite.

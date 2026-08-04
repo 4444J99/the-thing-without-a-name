@@ -24,6 +24,7 @@ from room_events import (  # noqa: E402
     validate_room_bus,
     validate_room_layouts,
 )
+from music_score import canonical_sha256  # noqa: E402
 from room_render import plan_control, validate_control_room  # noqa: E402
 from score import room_event_plan  # noqa: E402
 
@@ -92,6 +93,15 @@ class RoomEventContractTest(unittest.TestCase):
             self.bus["identity"]["contract_sha256"],
             room_contract_sha256(self.bus),
         )
+        canonical_zero = node_json(
+            """
+              import { canonicalSha256 } from './engine/score.js';
+              console.log(JSON.stringify({negative: canonicalSha256(-0), positive: canonicalSha256(0)}));
+            """
+        )
+        self.assertEqual(canonical_zero["negative"], canonical_zero["positive"])
+        self.assertEqual(canonical_zero["positive"], canonical_sha256(0))
+        self.assertEqual(canonical_sha256(-0.0), canonical_sha256(0))
         self.assertEqual(self.node_plan, plan_room_render(
             self.bus,
             self.layouts,
@@ -286,6 +296,19 @@ class RoomEventContractTest(unittest.TestCase):
         for event in unordered_python["events"]:
             self.assertTrue(all(tap["output"] == tap["source_speaker"] for tap in event["stereo"]))
 
+        anchored = copy.deepcopy(self.layouts)
+        anchored["coordinate_system"]["listener"] = [0.1, -0.05, 0.1]
+        anchored["identity"]["contract_sha256"] = layout_contract_sha256(anchored)
+        validate_room_layouts(anchored)
+        anchored_python = plan_room_render(self.bus, anchored, "reference-quad", PASSAGE["t0"], PASSAGE["t0"] + 1)
+        anchored_script = f"""
+          import {{ planRoomRender, validateRoomLayouts }} from './engine/room-events.js';
+          const registry = validateRoomLayouts({json.dumps(anchored)});
+          console.log(JSON.stringify(planRoomRender({json.dumps(self.bus)}, registry, 'reference-quad', {PASSAGE['t0']}, {PASSAGE['t0'] + 1})));
+        """
+        self.assertEqual(node_json(anchored_script), anchored_python)
+        self.assertNotEqual(anchored_python["events"], plan["events"][: len(anchored_python["events"])])
+
         excessive = copy.deepcopy(self.layouts)
         excessive["coordinate_system"]["meters_per_unit"] = 100
         excessive["identity"]["contract_sha256"] = layout_contract_sha256(excessive)
@@ -312,6 +335,22 @@ class RoomEventContractTest(unittest.TestCase):
             target = python_bus["events"][event["event_index"]]["target_speaker"]
             self.assertEqual(event["multichannel"][0]["speaker"], target)
             self.assertEqual(event["multichannel"][0]["delay_ms"], 0)
+
+        precise = copy.deepcopy(self.layouts)
+        precise_layout = next(row for row in precise["layouts"] if row["id"] == "reference-quad")
+        precise_layout["speakers"][0]["position"] = [-0.0000004, 0.21234567, 0.81234567]
+        precise["identity"]["contract_sha256"] = layout_contract_sha256(precise)
+        validate_room_layouts(precise)
+        precise_python = calibration_bus(precise, "reference-quad")
+        precise_script = f"""
+          import {{ calibrationBus, validateRoomLayouts }} from './engine/room-events.js';
+          const registry = validateRoomLayouts({json.dumps(precise)});
+          console.log(JSON.stringify(calibrationBus(registry, 'reference-quad')));
+        """
+        precise_node = node_json(precise_script)
+        validate_room_bus(precise_node)
+        self.assertEqual(precise_node, precise_python)
+        self.assertEqual(precise_node["events"][0]["position"], {"x": 0, "y": 0.212346, "z": 0.812346})
 
     def test_webaudio_disabled_and_uncleared_paths_do_not_touch_audio_nodes(self) -> None:
         script = f"""
@@ -561,6 +600,9 @@ class RoomEventContractTest(unittest.TestCase):
         buses = validate_control_room(control, self.layouts)
         self.assertEqual(control["room"]["semantics"], "authored-start-events")
         self.assertEqual(control["room"]["layout_registry_path"], "sound/room-layout.json")
+        self.assertEqual(control["music"]["score_path"], "music/score.json")
+        self.assertNotIn("\\", control["room"]["layout_registry_path"])
+        self.assertNotIn("\\", control["music"]["score_path"])
         self.assertNotIn(str(ROOT), json.dumps(control["room"]))
         stereo = plan_control(control, self.layouts, "reference-quad", "stereo")
         multichannel = plan_control(control, self.layouts, "reference-quad", "multichannel")
@@ -666,6 +708,13 @@ class RoomEventContractTest(unittest.TestCase):
         continuous["t1"] = third["time"]["t1"]
         continuous["room"]["buses"] = [original, second, third]
         self.assertEqual(len(validate_control_room(continuous, self.layouts)), 3)
+
+        tolerated_seam = copy.deepcopy(continuous)
+        tolerated_seam["room"]["buses"][0]["time"]["t1"] -= 0.5e-6
+        tolerated_seam["room"]["buses"][0]["identity"]["contract_sha256"] = room_contract_sha256(
+            tolerated_seam["room"]["buses"][0]
+        )
+        self.assertEqual(len(validate_control_room(tolerated_seam, self.layouts)), 3)
 
         missing_middle = copy.deepcopy(continuous)
         del missing_middle["room"]["buses"][1]

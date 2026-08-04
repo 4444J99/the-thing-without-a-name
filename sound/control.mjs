@@ -40,6 +40,10 @@ function inside(root, candidate) {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }
 
+function portableRelative(root, candidate) {
+  return path.relative(root, candidate).split(path.sep).join("/");
+}
+
 /** How many planes the score actually voices.
  *
  * A cut can put 256 rectangles on screen and voicing all of them would be a wash
@@ -280,7 +284,7 @@ const payload = {
   ...(musicalScore
     ? {
         music: {
-          score_path: path.relative(DANSE_REAL, musicalScorePath),
+          score_path: portableRelative(DANSE_REAL, musicalScorePath),
           score_file_sha256: musicalScoreFileSha256,
           identity: musicalScore.identity,
           provenance: musicalScore.provenance,
@@ -290,7 +294,7 @@ const payload = {
         room: {
           schema: "danse.room.control.v1",
           semantics: "authored-start-events",
-          layout_registry_path: path.relative(DANSE_REAL, roomLayoutsPath),
+          layout_registry_path: portableRelative(DANSE_REAL, roomLayoutsPath),
           layout_identity: roomLayouts.identity,
           buses: roomBuses,
         },

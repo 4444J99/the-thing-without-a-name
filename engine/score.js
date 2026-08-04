@@ -84,8 +84,9 @@ function canonicalTree(value) {
   if (typeof value === "boolean") return ["boolean", value];
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError(`non-finite canonical number ${value}`);
+    const normalized = Object.is(value, -0) ? 0 : value;
     const bits = new DataView(new ArrayBuffer(8));
-    bits.setFloat64(0, value, false);
+    bits.setFloat64(0, normalized, false);
     const hex = Array.from(new Uint8Array(bits.buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
     return ["number", hex];
   }

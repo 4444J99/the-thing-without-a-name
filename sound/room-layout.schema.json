@@ -33,7 +33,10 @@
             "z": {"const": "far-to-near"}
           }
         },
-        "listener": {"$ref": "#/$defs/position"},
+        "listener": {
+          "description": "Absolute normalized-room anchor added to each listener-relative event position before routing to room-coordinate speakers.",
+          "$ref": "#/$defs/position"
+        },
         "meters_per_unit": {"type": "number", "exclusiveMinimum": 0}
       }
     },
@@ -75,7 +78,10 @@
       "properties": {
         "id": {"type": "string", "minLength": 1},
         "channel": {"type": "integer", "minimum": 0},
-        "position": {"$ref": "#/$defs/position"}
+        "position": {
+          "description": "Absolute position in the declared normalized-room coordinate system.",
+          "$ref": "#/$defs/position"
+        }
       }
     },
     "layout": {

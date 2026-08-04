@@ -28,6 +28,8 @@ def _canonical_tree(value: Any) -> list[Any]:
         number = float(value)
         if not math.isfinite(number) or (type(value) is int and int(number) != value):
             raise ValueError(f"music score: number is not finite IEEE-754: {value!r}")
+        if number == 0:
+            number = 0.0
         return ["number", struct.pack(">d", number).hex()]
     if isinstance(value, str):
         return ["string", value]

@@ -46,7 +46,8 @@ const EVENT_TAG = new Map([
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const rounded = (value, places = 9) => {
   const scale = 10 ** places;
-  return Math.round(value * scale) / scale;
+  const result = Math.round(value * scale) / scale;
+  return result === 0 ? 0 : result;
 };
 const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
@@ -474,6 +475,8 @@ export function roomLayout(registry, id = registry.default_layout) {
 }
 
 function distance(event, speaker, registry) {
+  // Event positions are listener-relative vectors; speaker positions are
+  // absolute normalized-room coordinates, so the listener anchors the event.
   const listener = registry.coordinate_system.listener;
   const meters = registry.coordinate_system.meters_per_unit;
   const axes = [event.position.x, event.position.y, event.position.z];

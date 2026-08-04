@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import sys
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from room_events import (  # noqa: E402
 )
 
 UINT32_MAX = 0xFFFFFFFF
+CONTROL_EPSILON = 1e-6
 
 
 def _uint32(value: Any) -> bool:
@@ -81,8 +83,8 @@ def validate_control_room(control: Any, registry: dict[str, Any]) -> list[dict[s
     ):
         raise ValueError("control room bus score identity does not match the control track")
 
-    for left, right in zip(validated, validated[1:]):
-        if left["time"]["t1"] != right["time"]["t0"]:
+    for left, right in pairwise(validated):
+        if abs(float(left["time"]["t1"]) - float(right["time"]["t0"])) > CONTROL_EPSILON:
             raise ValueError("control room buses must be ordered and contiguous")
     start = float(control["t0"])
     end = float(control["t1"])
