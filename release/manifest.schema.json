@@ -73,10 +73,11 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256", "destination"],
+      "required": ["path", "sha256", "bytes", "destination"],
       "properties": {
         "path": {"$ref": "#/$defs/path"},
         "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0},
         "destination": {"$ref": "#/$defs/path"}
       }
     },

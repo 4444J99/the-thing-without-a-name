@@ -1,0 +1,640 @@
+{
+  "schema": "danse.rights.v1",
+  "assessment": {
+    "date": "2026-08-04",
+    "issue": 16,
+    "note": "This is a redacted source inventory and executable gate. It is not a representation that pending permissions, credits, repertoire, or release media are cleared."
+  },
+  "status": "draft",
+  "policy": {
+    "classification": "public-safe-redacted",
+    "private_custody": "external-only",
+    "statement": "Private releases, signatures, contacts, raw media, local paths, and credentials never enter this register. A satisfied private gate may cite only a tracked redacted receipt and its digest."
+  },
+  "bindings": {
+    "corpus": {
+      "source": {
+        "path": "corpus/manifest.json",
+        "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371",
+        "summary": "Publishable derivative corpus registry for the 20 June 2017 session."
+      },
+      "schema": "danse.corpus.v1",
+      "frames": 162,
+      "public_files": 651,
+      "public_tree_sha256": "24833805b7dab3eee32764fa4ead184ae1a7e9bdc21d4420592c5fa805f0927b"
+    },
+    "music": {
+      "source": {
+        "path": "music/repertoire.yaml",
+        "sha256": "cdf3d772e7f2ac4dc05eecfb86cf50e5910a27e60e3161ccac7b0f81ddff74df",
+        "summary": "Layered composition, edition, arrangement, performance, recording, and sample register."
+      },
+      "schema": "danse.music.repertoire.v1",
+      "works": 1,
+      "artistic_gate": "pending"
+    },
+    "pose_vendor": {
+      "source": {
+        "path": "interaction/vendor/mediapipe/manifest.json",
+        "sha256": "d9165f2c604d3fb721bcb4571df9468b8b25adbf00ba792271ef3b1b8454bc29",
+        "summary": "Vendored pose runtime, model, upstream identities, local transformations, and file digests."
+      },
+      "schema": "danse.vendor.v1",
+      "files": 9,
+      "package_license": "Apache-2.0",
+      "model_license": "Apache-2.0"
+    },
+    "submission": {
+      "source": {
+        "path": "submission/screendance-2027.yaml",
+        "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d",
+        "summary": "Frozen ScreenDance package requirements, approvals, and published legal terms."
+      },
+      "schema": "danse.submission.v2",
+      "required_terms": [
+        "accepted-film-no-withdrawal",
+        "publicity-stills-free-of-rights",
+        "archive-library-choice",
+        "regulations-accepted"
+      ]
+    }
+  },
+  "package_text": [
+    {
+      "id": "synopsis-short-text",
+      "source": {
+        "path": "submission/text/synopsis_short.txt",
+        "sha256": "eb35ec0c36f482f11df0b03c3d33eb07178143293bf4151b73b2e61f7ed9dbd8",
+        "summary": "Tracked short synopsis copied byte-for-byte into a staged package."
+      },
+      "destination": "text/synopsis_short.txt",
+      "gate": "submission-copy-approved"
+    },
+    {
+      "id": "synopsis-long-text",
+      "source": {
+        "path": "submission/text/synopsis_long.txt",
+        "sha256": "bdee56cb19f27bc062a67b1324252c17f422d1bd5a3e44d07e11377d8b761979",
+        "summary": "Tracked long synopsis copied byte-for-byte into a staged package."
+      },
+      "destination": "text/synopsis_long.txt",
+      "gate": "submission-copy-approved"
+    },
+    {
+      "id": "artist-statement-text",
+      "source": {
+        "path": "submission/text/artist_statement.txt",
+        "sha256": "fc2da2a7873b42b9ed71b4bba6af0f31f36fc2b69fd2839550dc8bfa0fda3881",
+        "summary": "Tracked artist statement copied byte-for-byte into a staged package."
+      },
+      "destination": "text/artist_statement.txt",
+      "gate": "submission-copy-approved"
+    },
+    {
+      "id": "biography-text",
+      "source": {
+        "path": "submission/text/bio.txt",
+        "sha256": "82fc477f95b586bae2747844d8852fd3f5cbb11cc9529d108eb8e4322a2a7f45",
+        "summary": "Tracked biography copied byte-for-byte into a staged package."
+      },
+      "destination": "text/bio.txt",
+      "gate": "biography-approved"
+    },
+    {
+      "id": "rights-declaration-text",
+      "source": {
+        "path": "submission/text/rights_declaration.txt",
+        "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53",
+        "summary": "Tracked authorship declaration whose claims require explicit human approval."
+      },
+      "destination": "text/rights_declaration.txt",
+      "gate": "rights-declaration-approved"
+    },
+    {
+      "id": "technical-note-text",
+      "source": {
+        "path": "submission/text/technical_note.txt",
+        "sha256": "5e152ea4d4f101f987a950b0ba9a2528e7dcabfd3b7f2e9f199c2e0ac259eaa5",
+        "summary": "Tracked technical note copied byte-for-byte into a staged package."
+      },
+      "destination": "text/technical_note.txt",
+      "gate": "submission-copy-approved"
+    }
+  ],
+  "human_gates": [
+    {
+      "id": "final-cut-approved",
+      "label": "Final score-driven cut",
+      "required_for": ["package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "final-cut-only", "kind": "boolean", "values": [true]},
+      "note": "A package is not rights-final until the exact score/image relationship and cut are accepted."
+    },
+    {
+      "id": "biography-approved",
+      "label": "Biography claims",
+      "required_for": ["package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "bio-approved", "kind": "boolean", "values": [true]},
+      "note": "Tracked biography text is not self-approving."
+    },
+    {
+      "id": "rights-declaration-approved",
+      "label": "Authorship and rights declaration",
+      "required_for": ["public", "package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "rights-declaration-approved", "kind": "boolean", "values": [true]},
+      "note": "No script infers ownership from tracked prose."
+    },
+    {
+      "id": "submission-copy-approved",
+      "label": "Synopsis, artist statement, and technical claims",
+      "required_for": ["public", "package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "submission-copy-approved", "kind": "boolean", "values": [true]},
+      "note": "Tracked copy is exact but its factual and artistic claims still require human approval."
+    },
+    {
+      "id": "link-password-protected",
+      "label": "Uploaded screener password protection",
+      "required_for": ["uploaded"],
+      "authority": "Anthony J. Padavano as the account owner",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "link-password-protected", "kind": "boolean", "values": [true]},
+      "note": "Only an account-owned upload check can establish password protection."
+    },
+    {
+      "id": "link-downloadable",
+      "label": "Uploaded screener download permission",
+      "required_for": ["uploaded"],
+      "authority": "Anthony J. Padavano as the account owner",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "link-downloadable", "kind": "boolean", "values": [true]},
+      "note": "Only an account-owned download rehearsal can establish this setting."
+    },
+    {
+      "id": "submitted-via-submittable",
+      "label": "ScreenDance filing through Submittable",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano as the applicant",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "submitted-via-submittable", "kind": "boolean", "values": [true]},
+      "note": "Only the applicant's durable filing receipt can establish submission."
+    },
+    {
+      "id": "dancer-release-and-credit",
+      "label": "Dancer permission, identity, and credit wording",
+      "required_for": ["public", "package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano and the performer",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "dancer-release-and-credit", "kind": "boolean", "values": [true]},
+      "note": "The performer is deliberately unnamed here; a private release or contact history cannot be reconstructed or invented."
+    },
+    {
+      "id": "pictured-objects-reviewed",
+      "label": "Poster and pictured-object disposition",
+      "required_for": ["public", "package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano and qualified rights review where required",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "pictured-objects-reviewed", "kind": "boolean", "values": [true]},
+      "note": "The classic-horror poster wall remains a documented exposure until the exact final frames and uses are reviewed."
+    },
+    {
+      "id": "music-cleared",
+      "label": "Selected repertoire and every music rights layer",
+      "required_for": ["package", "uploaded", "submitted", "release"],
+      "authority": "Anthony J. Padavano and applicable rights holders",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "music-cleared", "kind": "boolean", "values": [true]},
+      "note": "The current generated fixture is not selectable repertoire and cannot clear a release."
+    },
+    {
+      "id": "press-stills-cleared",
+      "label": "Selected press stills and promotional scope",
+      "required_for": ["public", "submitted", "release"],
+      "authority": "Anthony J. Padavano and applicable depicted contributors",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "press-stills-cleared", "kind": "boolean", "values": [true]},
+      "note": "No press still is selected or cleared for unlimited festival promotion."
+    },
+    {
+      "id": "installation-evidence-cleared",
+      "label": "Installation documentation people and venue",
+      "required_for": ["release"],
+      "authority": "Anthony J. Padavano, venue, and depicted contributors",
+      "state": "pending",
+      "evidence": null,
+      "attestation": null,
+      "note": "Future calibration and recovery documentation must be dispositioned after it exists."
+    },
+    {
+      "id": "mediapipe-attribution-retained",
+      "label": "MediaPipe license and model attribution",
+      "required_for": ["public", "release"],
+      "authority": "Apache-2.0 license and exact MediaPipe vendor manifest",
+      "state": "satisfied",
+      "evidence": {"path": "rights/evidence/mediapipe-attribution.json", "sha256": "498712503155e0f080df6c401e1d59fc05373cfdfa141002f02d9afc038c38be", "summary": "Typed public-safe decision receipt binds the exact attribution gate, authority, asset, and approved wording."},
+      "attestation": null,
+      "note": "The shipped vendor manifest and Apache-2.0 notice establish the exact retained attribution."
+    },
+    {
+      "id": "accepted-film-no-withdrawal",
+      "label": "Accepted-film nonwithdrawal term acknowledged",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "accepted-film-no-withdrawal", "kind": "boolean", "values": [true]},
+      "note": "Acknowledgement is required at filing; an agent cannot accept the term."
+    },
+    {
+      "id": "publicity-stills-free-of-rights",
+      "label": "Unlimited ScreenDance promotional-still scope acknowledged",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "publicity-stills-free-of-rights", "kind": "boolean", "values": [true]},
+      "note": "Selected material must support promotion without time or place limits after official selection."
+    },
+    {
+      "id": "archive-library-choice",
+      "label": "ScreenDance archive-library choice",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "archive-library-choice", "kind": "choice", "values": ["include", "opt-out"]},
+      "note": "The filing must record one explicit choice; no default is inferred."
+    },
+    {
+      "id": "regulations-accepted",
+      "label": "ScreenDance regulations accepted",
+      "required_for": ["submitted"],
+      "authority": "Anthony J. Padavano",
+      "state": "pending",
+      "evidence": null,
+      "attestation": {"key": "regulations-accepted", "kind": "boolean", "values": [true]},
+      "note": "Only the applicant may accept the regulations and festival-management authority."
+    }
+  ],
+  "assets": [
+    {
+      "id": "dancer-performance-likeness",
+      "category": "performer",
+      "description": "The unnamed dancer's performance, likeness, identity, and credit across the 2017 photographic session and derived media.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "Identity and credit wording remain a private human decision."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "162-frame session inventory without a performer name."}
+      ],
+      "uses": [
+        {"id": "interactive", "medium": "interactive-site", "required_for": ["public", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "No redacted release receipt is recorded."},
+        {"id": "film", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Final-cut and festival scopes are not approved."},
+        {"id": "still", "medium": "still", "required_for": ["public", "package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Still and promotional use remain unapproved."},
+        {"id": "installation", "medium": "installation", "required_for": ["release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Installation, documentation, and sale scopes remain unreviewed."}
+      ],
+      "blocker": "A redacted receipt must establish permission scope and approved credit wording without publishing private evidence."
+    },
+    {
+      "id": "photographic-corpus",
+      "category": "photograph",
+      "description": "The 162 source-frame records and publishable derivative plate, matte, and recovered-room corpus.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Photography — Anthony J. Padavano", "note": "Authorship is stated in tracked material but final credit wording is not approved."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exact publishable derivative corpus identity."},
+        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Unapproved tracked ownership claim; not completion evidence."}
+      ],
+      "uses": [
+        {"id": "interactive", "medium": "interactive-site", "required_for": ["public", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "Rights declaration and depicted-person/object gates remain open."},
+        {"id": "film", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact final cut and human declaration are pending."},
+        {"id": "still", "medium": "still", "required_for": ["public", "package", "uploaded", "submitted", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No final still selection or compatible promotional clearance exists."},
+        {"id": "installation", "medium": "installation", "required_for": ["release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Venue and sale scope remain outside the current evidence."}
+      ],
+      "blocker": "Approve the exact authorship declaration, then clear people and pictured objects for each use."
+    },
+    {
+      "id": "final-cut-derived-media",
+      "category": "video",
+      "description": "The future score-driven master, screener, excerpts, and other delivery derivatives identified by one exact package manifest.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "Final direction, edit, and contributor roles are not approved."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "render/program.json", "sha256": "db8cc1a7e4768e2d472e766737e32c3f2ea0ee19a1b1ff0e7d503595f2bf397e", "summary": "Passage and capture program; not a rendered package."}
+      ],
+      "uses": [
+        {"id": "delivery", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No final package manifest or artistic acceptance exists."},
+        {"id": "still", "medium": "still", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No exact rendered still set exists."}
+      ],
+      "blocker": "Build and approve a fresh score-driven package; preserve the provisional package unchanged."
+    },
+    {
+      "id": "project-software-design",
+      "category": "design",
+      "description": "Project-authored engine, renderer, interaction, sound, and presentation design expressed in the canonical repository.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Concept and software — Anthony J. Padavano", "note": "Final public role wording remains subject to artist approval."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "LINEAGE.json", "sha256": "ff5651e732492f88d8b5788ab468ca77542d453bc8a044b3be382401c9c508ff", "summary": "Canonical repository lineage."},
+        {"path": "render/program.json", "sha256": "db8cc1a7e4768e2d472e766737e32c3f2ea0ee19a1b1ff0e7d503595f2bf397e", "summary": "Tracked authored program identity."}
+      ],
+      "uses": [
+        {"id": "distribution", "medium": "software-distribution", "required_for": ["public", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "Authorship declaration and final credit wording remain pending."}
+      ],
+      "blocker": "Artist approval of authorship declaration and public role wording."
+    },
+    {
+      "id": "poster-wall-and-pictured-objects",
+      "category": "pictured-object",
+      "description": "Classic-horror posters and any other legible third-party works or marks appearing in source or derived frames.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "No object-by-object credit or legal disposition is approved."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "README.md", "sha256": "c7f28e32dac9679db2c4f305620c53fbe044c4b2724c5589ce6679c6ce9164c4", "summary": "Public project description records the framed poster wall."},
+        {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exact visual source inventory to be reviewed."}
+      ],
+      "uses": [
+        {"id": "interactive", "medium": "interactive-site", "required_for": ["public", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "Incidental or transformative posture is not recorded as clearance."},
+        {"id": "film", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact final frames require review."},
+        {"id": "still", "medium": "still", "required_for": ["public", "package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Press stills may make pictured works more legible and need separate review."},
+        {"id": "installation", "medium": "installation", "required_for": ["release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Museum installation and sale remain higher-risk scopes."}
+      ],
+      "blocker": "Inventory legibility in exact final film, still, installation, and sale media and obtain qualified review where required."
+    },
+    {
+      "id": "festival-archive-copy",
+      "category": "archive",
+      "description": "The optional ScreenDance Miami video-library archive copy and any later institutional archive deposit.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "not-required", "label": null, "note": "This row records a use choice rather than a contributor credit."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
+      "provenance": [
+        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Published archive-library opt-in or opt-out choice."}
+      ],
+      "uses": [
+        {"id": "festival-archive", "medium": "festival-archive", "required_for": ["submitted"], "territory": "pending", "term": "pending", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "conditional_exclusion": {"gate": "archive-library-choice", "value": "opt-out"}, "note": "Include requires cleared archive scope; the registered opt-out decision excludes this use."}
+      ],
+      "blocker": "Anthony must choose include or opt-out at filing; the system has no default."
+    },
+    {
+      "id": "system-font-references",
+      "category": "font",
+      "description": "CSS refers only to visitor system font families; no font binary is included in the Pages artifact or release inventory.",
+      "disposition": "excluded",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "not-required", "label": null, "note": "No font bytes are distributed."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
+      "provenance": [
+        {"path": "index.html", "sha256": "38b9a7850cd4b553c5da1880acdcade36ba473c38eb9a95222a21d0d76db1d03", "summary": "System-only CSS font stack in the live artwork."}
+      ],
+      "uses": [
+        {"id": "no-font-binary", "medium": "software-distribution", "required_for": [], "territory": "not-applicable", "term": "not-applicable", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "excluded", "evidence": null, "note": "The exclusion is enforced by artifact inventory tests."}
+      ],
+      "blocker": null
+    },
+    {
+      "id": "photographic-textures",
+      "category": "texture",
+      "description": "All shipped visual textures are publishable photographic derivatives named by the corpus manifest; no stock or synthesized texture inventory is declared.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Photography — Anthony J. Padavano", "note": "This is the visual-source layer of the photographic credit."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exclusive shipped texture registry."}
+      ],
+      "uses": [
+        {"id": "visual-source", "medium": "interactive-site", "required_for": ["public", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "The same people, object, and authorship gates apply to the photographic source."}
+      ],
+      "blocker": "Resolve the photographic-corpus, dancer, and pictured-object gates."
+    },
+    {
+      "id": "room-source-recordings",
+      "category": "recording",
+      "description": "The two private source recordings declared by exact basename and SHA-256 in the ScreenDance package register.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Source recordings — Anthony J. Padavano", "note": "Ownership claim and final sound credit remain unapproved."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Exact source recording names and byte digests; no private location."},
+        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Unapproved tracked ownership claim; not completion evidence."}
+      ],
+      "uses": [
+        {"id": "delivery-audio", "medium": "audio", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact rendered score and rights declaration are pending."}
+      ],
+      "blocker": "Validate hydrated source bytes and approve the authorship declaration against the exact package."
+    },
+    {
+      "id": "press-still-set",
+      "category": "still",
+      "description": "Future selected stills for the project page, press kit, festival promotion, and release media.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "No still selection or final caption and credit package exists."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Still dimensions and unlimited official-selection promotional term."}
+      ],
+      "uses": [
+        {"id": "press", "medium": "press", "required_for": ["public", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No selected source digest or clearance receipt."},
+        {"id": "festival-promotion", "medium": "festival-promotion", "required_for": ["submitted"], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "The published term requires unlimited time and place, but no compatible permission is recorded."}
+      ],
+      "blocker": "Select exact still bytes and clear the depicted performer, pictured objects, worldwide perpetual promotion, captions, and credits."
+    },
+    {
+      "id": "selected-music",
+      "category": "music",
+      "description": "Future selected composition, edition, arrangement or MIDI, performance, recording, samples, and score-derived bytes.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "No repertoire is selected and no public music credit can be generated."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "music/repertoire.yaml", "sha256": "cdf3d772e7f2ac4dc05eecfb86cf50e5910a27e60e3161ccac7b0f81ddff74df", "summary": "Fixture-only layered rights register with pending artistic gate."}
+      ],
+      "uses": [
+        {"id": "score-audio", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "A generated contract fixture is not releasable repertoire."}
+      ],
+      "blocker": "Anthony must select and accept repertoire; every music layer and exact byte must then validate independently."
+    },
+    {
+      "id": "mediapipe-pose-runtime",
+      "category": "software",
+      "description": "Vendored MediaPipe Tasks Vision runtime and Pose Landmarker Lite model used only for local pose input.",
+      "disposition": "licensed",
+      "rights_holder": "Google LLC and upstream contributors",
+      "license": {
+        "spdx": "Apache-2.0",
+        "name": "Apache License 2.0",
+        "evidence": {"path": "interaction/vendor/mediapipe/Apache-2.0.txt", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30", "summary": "License text shipped beside the vendored runtime and model."}
+      },
+      "public_credit": {"state": "approved", "label": "MediaPipe Tasks Vision and Pose Landmarker Lite — Apache-2.0", "note": "The package and model license are declared by the exact vendor manifest."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
+      "provenance": [
+        {"path": "interaction/vendor/mediapipe/manifest.json", "sha256": "d9165f2c604d3fb721bcb4571df9468b8b25adbf00ba792271ef3b1b8454bc29", "summary": "Upstream source, integrity, transformations, and nine delivered file digests."}
+      ],
+      "uses": [
+        {"id": "distribution", "medium": "software-distribution", "required_for": ["public", "release"], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "cleared", "evidence": {"path": "rights/evidence/mediapipe-distribution.json", "sha256": "b9fb90e4fd8a8356da7ac265a90b02d79aeb03ea1bfb1a8f3167d7c7e8193a8c", "summary": "Typed public-safe receipt binds the Apache-2.0 distribution decision and exact use scope."}, "note": "License text and exact transformed-file manifest are shipped."}
+      ],
+      "blocker": null
+    },
+    {
+      "id": "submission-and-release-copy",
+      "category": "text",
+      "description": "Biography, synopsis, statements, technical note, rights declaration, captions, transcript, and future press copy.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "not-required", "label": null, "note": "Author credit is represented by the project credit rather than repeated for each text file."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "submission/text/bio.txt", "sha256": "82fc477f95b586bae2747844d8852fd3f5cbb11cc9529d108eb8e4322a2a7f45", "summary": "Tracked biography source."},
+        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Tracked rights declaration source."}
+      ],
+      "uses": [
+        {"id": "package-copy", "medium": "text", "required_for": ["package", "uploaded", "submitted"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "note": "Biography and rights claims require human approval."},
+        {"id": "release-copy", "medium": "text", "required_for": ["public", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "allowed", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "Final public copy, captions, and transcript are not approved."}
+      ],
+      "blocker": "Bind artist-approved text and accessibility materials to their exact source digests."
+    },
+    {
+      "id": "installation-documentation",
+      "category": "installation-evidence",
+      "description": "Future calibration photographs, recovery videos, venue documentation, setup, strike, and restore evidence.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "No venue or documentation contributor credits exist yet."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano and future venue", "receipt": null},
+      "provenance": [],
+      "uses": [
+        {"id": "release-proof", "medium": "installation", "required_for": ["release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No physical venue evidence exists."}
+      ],
+      "blocker": "Create the evidence, clear every depicted person and venue, then emit a redacted receipt."
+    },
+    {
+      "id": "unclassified-third-party-material",
+      "category": "other-third-party",
+      "description": "Fail-closed census row for any third-party material introduced by the final cut, package, installation, or release media and not covered above.",
+      "disposition": "blocked",
+      "rights_holder": null,
+      "license": null,
+      "public_credit": {"state": "pending", "label": null, "note": "No absence claim is made before the exact final inventories exist."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [],
+      "uses": [
+        {"id": "final-census", "medium": "film", "required_for": ["public", "package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact final manifests do not yet exist, so an exhaustive negative inventory cannot be asserted."}
+      ],
+      "blocker": "Run the exact package and release inventories and either disposition each additional item or record a source-verified absence receipt."
+    }
+  ],
+  "package_rules": [
+    {
+      "id": "moving-image",
+      "pattern": "^(master\\.mov|midnight-moment\\.mov|trailer\\.mp4|screener\\.mp4|reel\\.mp4)$",
+      "requirements": [
+        {"asset": "final-cut-derived-media", "use": "delivery"},
+        {"asset": "photographic-corpus", "use": "film"},
+        {"asset": "dancer-performance-likeness", "use": "film"},
+        {"asset": "poster-wall-and-pictured-objects", "use": "film"},
+        {"asset": "room-source-recordings", "use": "delivery-audio"},
+        {"asset": "selected-music", "use": "score-audio"}
+      ]
+    },
+    {
+      "id": "score-source",
+      "pattern": "^provenance/passage-score\\.wav$",
+      "requirements": [
+        {"asset": "final-cut-derived-media", "use": "delivery"},
+        {"asset": "room-source-recordings", "use": "delivery-audio"},
+        {"asset": "selected-music", "use": "score-audio"}
+      ]
+    },
+    {
+      "id": "generated-still",
+      "pattern": "^stills/seed-0x[0-9A-Fa-f]{4,}\\.(jpg|jpeg|png)$",
+      "requirements": [
+        {"asset": "final-cut-derived-media", "use": "still"},
+        {"asset": "photographic-corpus", "use": "still"},
+        {"asset": "dancer-performance-likeness", "use": "still"},
+        {"asset": "poster-wall-and-pictured-objects", "use": "still"}
+      ]
+    },
+    {
+      "id": "origin-still",
+      "pattern": "^stills/origin-2017\\.jpg$",
+      "requirements": [
+        {"asset": "photographic-corpus", "use": "still"},
+        {"asset": "dancer-performance-likeness", "use": "still"},
+        {"asset": "poster-wall-and-pictured-objects", "use": "still"}
+      ]
+    },
+    {
+      "id": "submission-text",
+      "pattern": "^text/(synopsis_short|synopsis_long|artist_statement|bio|technical_note|rights_declaration)\\.txt$",
+      "requirements": [
+        {"asset": "submission-and-release-copy", "use": "package-copy"}
+      ]
+    }
+  ],
+  "release_rules": [
+    {"media_id": "press-still-primary", "destination": "media/assets/press-still-primary.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "project-social-card", "destination": "media/assets/project-social-card.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
+    {"media_id": "accessible-trailer", "destination": "media/assets/accessible-trailer.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "score-driven-master", "destination": "media/assets/score-driven-master.mov", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "installation-proof", "destination": "media/assets/installation-proof.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]},
+    {"media_id": "project-page-copy", "destination": "media/assets/project-page.html", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "pitch-pdf-copy", "destination": "media/assets/pitch.pdf", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "accessibility-copy", "destination": "media/assets/accessibility.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "caption-track-copy", "destination": "media/assets/captions.en.vtt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "transcript-copy", "destination": "media/assets/transcript.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "press-kit-copy", "destination": "media/assets/press-kit.md", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]},
+    {"media_id": "credits-copy", "destination": "media/assets/credits.txt", "required_for": ["public", "release"], "requirements": [{"asset": "submission-and-release-copy", "use": "release-copy"}]}
+  ],
+  "credit_rules": [
+    {"credit_id": "artist-credit", "asset": "project-software-design", "gate": "rights-declaration-approved"},
+    {"credit_id": "dancer-credit", "asset": "dancer-performance-likeness", "gate": "dancer-release-and-credit"},
+    {"credit_id": "music-credit", "asset": "selected-music", "gate": "music-cleared"},
+    {"credit_id": "pictured-objects-credit", "asset": "poster-wall-and-pictured-objects", "gate": "pictured-objects-reviewed"},
+    {"credit_id": "mediapipe-credit", "asset": "mediapipe-pose-runtime", "gate": "mediapipe-attribution-retained"}
+  ]
+}

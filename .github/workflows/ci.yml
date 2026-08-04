@@ -25,6 +25,7 @@ jobs:
       - run: python scripts/check-danse.py
       - run: python scripts/tests/pages-artifact.test.py
       - run: python scripts/tests/release-manifest.test.py
+      - run: python scripts/tests/rights.test.py
       - run: python scripts/tests/danse-delivery.test.py
       - run: node scripts/tests/interaction.test.mjs
       - run: python -m py_compile render/*.py pipeline/*.py sound/*.py submission/*.py scripts/*.py

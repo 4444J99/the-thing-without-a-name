@@ -122,6 +122,10 @@ def verify_record(root: Path, record: dict[str, Any], label: str) -> Path:
     actual = sha256(path)
     if actual != expected:
         raise ReleaseError(f"{label} digest mismatch for {record.get('path')}: expected {expected}, got {actual}")
+    if "bytes" in record:
+        expected_bytes = record["bytes"]
+        if type(expected_bytes) is not int or expected_bytes < 0 or path.stat().st_size != expected_bytes:
+            raise ReleaseError(f"{label} byte count mismatch for {record.get('path')}")
     return path
 
 

@@ -84,8 +84,9 @@ function canonicalTree(value) {
   if (typeof value === "boolean") return ["boolean", value];
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError(`non-finite canonical number ${value}`);
+    const normalized = Object.is(value, -0) ? 0 : value;
     const bits = new DataView(new ArrayBuffer(8));
-    bits.setFloat64(0, value, false);
+    bits.setFloat64(0, normalized, false);
     const hex = Array.from(new Uint8Array(bits.buffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
     return ["number", hex];
   }
@@ -100,6 +101,11 @@ function canonicalTree(value) {
   throw new TypeError(`unsupported canonical value ${typeof value}`);
 }
 
+/** Type-stable canonical SHA-256 shared by immutable Danse contracts. */
+export function canonicalSha256(value) {
+  return sha256Hex(JSON.stringify(canonicalTree(value)));
+}
+
 /** SHA-256 over the score with its self-identifying digest omitted. */
 export function contractSha256(score) {
   const identity = score?.identity;
@@ -108,7 +114,7 @@ export function contractSha256(score) {
   }
   const { contract_sha256: _declared, ...identitySource } = identity;
   const source = { ...score, identity: identitySource };
-  return sha256Hex(JSON.stringify(canonicalTree(source)));
+  return canonicalSha256(source);
 }
 
 export async function load(url = "music/score.json") {

@@ -34,6 +34,7 @@ FIXTURE_FILES = (
     "submission/screendance-2027.yaml",
     "corpus/manifest.json",
     "scripts/check-danse.py",
+    "rights/evidence/mediapipe-attribution.json",
 )
 
 
@@ -152,6 +153,7 @@ def complete_manifest(root: Path) -> dict:
         medium["source"] = {
             "path": source_path.relative_to(root).as_posix(),
             "sha256": CONTRACT.sha256(source_path),
+            "bytes": source_path.stat().st_size,
             "destination": f"media/assets/{medium['id']}.bin",
         }
         medium["clearance"] = {
@@ -466,6 +468,15 @@ class AdversarialManifestTest(unittest.TestCase):
             manifest["media"][1]["source"]["destination"] = manifest["media"][0]["source"]["destination"]
             write_manifest(root, manifest)
             with self.assertRaisesRegex(CONTRACT.ReleaseError, "media destination is not unique"):
+                CONTRACT.validate_release(root, phase="public")
+
+    def test_media_byte_count_drift_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            manifest = complete_manifest(root)
+            manifest["media"][0]["source"]["bytes"] += 1
+            write_manifest(root, manifest)
+            with self.assertRaisesRegex(CONTRACT.ReleaseError, "byte count mismatch"):
                 CONTRACT.validate_release(root, phase="public")
 
 

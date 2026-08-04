@@ -210,7 +210,7 @@
       "status": "verified",
       "evidence": {
         "path": "scripts/check-danse.py",
-        "sha256": "74a4c9a9d0941bf4c55f5ab9e14b1d38e890a21991f9bf29d28d3913c19ba6f8",
+        "sha256": "4051ab60286920e770aca96abdfcaceb54dfe58a203bbd2b8b362253920f5b4d",
         "summary": "Executable invariant source bound by digest; the release receipt must record its passing run."
       }
     },
@@ -272,6 +272,18 @@
       "status": "pending",
       "note": "Every public still and release frame must be dispositioned through issue 16 before use.",
       "evidence": null
+    },
+    {
+      "id": "mediapipe-credit",
+      "role": "Pose runtime and model attribution",
+      "name": "MediaPipe Tasks Vision and Pose Landmarker Lite — Apache-2.0",
+      "status": "cleared",
+      "note": "The exact vendored runtime and model retain their reviewed Apache-2.0 attribution.",
+      "evidence": {
+        "path": "rights/evidence/mediapipe-attribution.json",
+        "sha256": "498712503155e0f080df6c401e1d59fc05373cfdfa141002f02d9afc038c38be",
+        "summary": "Typed public-safe decision receipt binds the exact attribution gate, authority, asset, and approved wording."
+      }
     }
   ],
   "media": [
@@ -341,6 +353,104 @@
       "clearance": {
         "status": "pending",
         "owner": "Issues 14 and 16, Anthony, and venue",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "project-page-copy",
+      "kind": "interactive-document",
+      "label": "Approved public project page",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 16 and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "pitch-pdf-copy",
+      "kind": "interactive-document",
+      "label": "Approved installation pitch PDF",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 14, 16, and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "accessibility-copy",
+      "kind": "interactive-document",
+      "label": "Approved accessibility statement",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 16 and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "caption-track-copy",
+      "kind": "interactive-document",
+      "label": "Approved English caption track",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 10, 16, and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "transcript-copy",
+      "kind": "interactive-document",
+      "label": "Approved public transcript",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 10, 16, and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "press-kit-copy",
+      "kind": "interactive-document",
+      "label": "Approved public press kit",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 16 and 17 and Anthony",
+        "evidence": null
+      },
+      "alt_text": null
+    },
+    {
+      "id": "credits-copy",
+      "kind": "interactive-document",
+      "label": "Approved public credits",
+      "required_for": ["public", "release"],
+      "status": "pending",
+      "source": null,
+      "clearance": {
+        "status": "pending",
+        "owner": "Issues 16 and 17 and Anthony",
         "evidence": null
       },
       "alt_text": null

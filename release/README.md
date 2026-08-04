@@ -59,8 +59,10 @@ commit. Generated outputs are not committed from the draft phase.
 ## Closing a gate
 
 Do not change a status alone. A completed claim, credit, medium, or gate names a
-tracked public-safe evidence file and its SHA-256. Ready media also names a tracked
-source, digest, public destination under `media/assets/`, and accessible description.
+tracked public-safe evidence file and its SHA-256. Ready media also names an exact
+source path, SHA-256, byte count, public destination under `media/assets/`, and
+accessible description. Its ID and phase scope must match `rights/register.json`,
+and its clearance must satisfy the typed rights/production receipt contract.
 Private releases, signatures, contacts, raw media, package roots, and credentials stay
 in their owning custody; only their redacted receipt can be referenced here.
 

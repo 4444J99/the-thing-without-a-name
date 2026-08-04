@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -60,12 +61,17 @@ else:
     DEPENDENCY_ERROR = None
 
 HERE = Path(__file__).resolve().parent
+DANSE = HERE.parent
+DANSE_REAL = DANSE.resolve()
 sys.path.insert(0, str(HERE))
 from bank_contract import audit_bank  # noqa: E402
+from room_events import load_room_layouts  # noqa: E402
+from room_render import plan_control, validate_control_room  # noqa: E402
 
 BANK = HERE / "bank"
 CONTROL = HERE / "control.mjs"
 OUT = HERE / "out"
+ROOM_LAYOUTS = HERE / "room-layout.json"
 
 SR = 48_000
 
@@ -106,7 +112,6 @@ SWELL_DB = -14.0
 # implementations to identical values on every run.
 
 from rng import pick, rand  # noqa: E402
-
 
 # ── the bank ───────────────────────────────────────────────────────────────────
 
@@ -283,12 +288,55 @@ def music_event_plan(control: dict) -> list[dict]:
     return sorted(events, key=lambda event: (float(event["at"]), event["type"], int(event["index"])))
 
 
+def _control_room_layouts(control: dict) -> Path:
+    """Resolve a receipt-declared registry without escaping repository custody."""
+    declared = control["room"].get("layout_registry_path")
+    if declared is None:
+        return ROOM_LAYOUTS
+    if not isinstance(declared, str) or not declared or Path(declared).is_absolute():
+        raise ValueError("control room layout registry path must be repository-relative")
+    lexical = DANSE / declared
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(DANSE_REAL)
+    except ValueError as exc:
+        raise ValueError("control room layout registry resolves outside the Danse repository") from exc
+    try:
+        metadata = lexical.lstat()
+    except OSError as exc:
+        raise ValueError(f"control room layout registry is unavailable: {declared}") from exc
+    if lexical.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("control room layout registry must be a regular file, not a symlink")
+    return resolved
+
+
+def _control_room_registry(control: dict) -> dict | None:
+    if not control.get("room"):
+        return None
+    return load_room_layouts(_control_room_layouts(control))
+
+
+def validate_room_event_control(control: dict) -> list[dict] | None:
+    """Validate receipt/layout/bus identities without computing discarded taps."""
+    registry = _control_room_registry(control)
+    return None if registry is None else validate_control_room(control, registry)
+
+
+def room_event_plan(control: dict, layout: str | None = None, output: str = "stereo") -> dict | None:
+    """Validate and route immutable room buses into explicit render instructions."""
+    registry = _control_room_registry(control)
+    if registry is None:
+        return None
+    return plan_control(control, registry, layout, output)
+
+
 def render(control: dict, bank: Bank, quiet: bool = False) -> np.ndarray:
     seed = int(control["seed"])
     rate = float(control["rate"])
     frames = control["frames"]
     total = int(round(control["duration"] * SR))
     buf = np.zeros((2, total), dtype=np.float64)
+    validate_room_event_control(control)
     if control.get("music"):
         stems = control["music"].get("stems") or []
         missing = [stem["id"] for stem in stems if not stem.get("audio_source_sha256")]
