@@ -1,0 +1,100 @@
+{
+  "schema": "danse.archive-dispositions.v3",
+  "recorded_at": "2026-08-05T00:00:00Z",
+  "supersedes": {
+    "path": "docs/continuations/alpha-omega/archive-dispositions-20260804-v2.json",
+    "canonical_json_sha256": "a416ee3bc47c7797466ab12f8c82826f6a93c8f46b5f81a8cc4ff4dbcf26a450",
+    "policy": "The v1 and v2 decision records remain immutable. V3 records the two residual archive paths that the v2 matrix did not enumerate, completing exhaustive per-path coverage of the source commit."
+  },
+  "source": {
+    "repository": "organvm/limen",
+    "branch": "archive/danse-predecessor-experiments-20260802",
+    "commit": "a232f2d7160e213802580e2d532a0d2d9ac65727",
+    "remote_parity": true,
+    "merge_wholesale": false
+  },
+  "artifacts": [
+    {
+      "id": "visitor-pose-prototype",
+      "paths": ["apps/danse/join.html", "apps/danse/index.html"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/28",
+      "disposition": "The body-derived modulation concept was deliberately reimplemented as reproducible local pose input with permission-denied, dropout, privacy, accessibility, and no-camera fallbacks.",
+      "rejected": "The CDN-dependent archive implementation and any impurity inside the canonical engine were not ported."
+    },
+    {
+      "id": "pose-engine-cast-diagnostic",
+      "paths": ["apps/danse/engine/engine.js"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/28",
+      "disposition": "The 1-line archive change exposed the computed cast in the frameAt return for pose-interaction diagnostics. The canonical engine already returns the cast as a first-class field (engine/engine.js frameAt: `return { state: s, cast }`), so the diagnostic need is satisfied by canonical behavior and no separate port is required. The archive file remains part of the visitor-pose experiment's preserved history.",
+      "rejected": "The archive engine file itself was not ported; the canonical pure engine remains unchanged."
+    },
+    {
+      "id": "archive-hygiene-gitignore",
+      "paths": ["apps/danse/.gitignore"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/tree/main",
+      "disposition": "Hygiene, not an experiment. All four archived patterns (.work/, render/out/, sound/bank/, sound/sources.json) are expressed canonically across the root .gitignore and the render/ and sound/ .gitignore files, so the archive copy carries no unique content. No port or merge is warranted."
+    },
+    {
+      "id": "stateful-spatial-score-prototype",
+      "paths": ["apps/danse/engine/score.js", "apps/danse/sound/score.py"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/25 and https://github.com/organvm/the-thing-without-a-name/pull/30",
+      "disposition": "Typed score and spatial-event ideas were deliberately reimplemented as immutable absolute-time score queries and a deterministic room-event bus shared across canonical renderers.",
+      "rejected": "Accumulated WebAudio scheduling, timer state, and stateful engine behavior remain superseded.",
+      "remaining_predicate": "Issue #11 retains real-room, multichannel, restart, and presentation evidence."
+    },
+    {
+      "id": "browser-audio-harness",
+      "paths": ["apps/danse/test-audio.html"],
+      "status": "archived",
+      "receipt": "docs/continuations/alpha-omega/archive-dispositions-20260804.json",
+      "disposition": "Retain as historical internal test material. It is not an artwork route and is excluded from Pages and release artifacts."
+    },
+    {
+      "id": "cloudflare-deployment-experiment",
+      "paths": [".github/workflows/deploy-danse.yml"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/24",
+      "disposition": "The experiment is superseded by the deterministic staged GitHub Pages allowlist and was not ported."
+    },
+    {
+      "id": "theoretical-framework",
+      "paths": ["docs/plans/2026-07-31-danse-theoretical-framework.md"],
+      "status": "archived",
+      "receipt": "docs/continuations/alpha-omega/archive-dispositions-20260804.json",
+      "disposition": "Preserve as historical working theory. Its unapproved claims are not public release copy; any future use requires deliberate editing and release-manifest evidence."
+    },
+    {
+      "id": "installation-proposal",
+      "paths": ["docs/plans/danse-installation-spec.md", "organs/artist/chambers/danse.yaml"],
+      "status": "ported",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/pull/33",
+      "disposition": "Useful room, routing, calibration, and recovery ideas were deliberately reworked into the evidence-bound canonical installation twin.",
+      "rejected": "Archive prose is not treated as venue approval or physical proof.",
+      "remaining_predicate": "Issue #14 retains all eight venue, hardware, calibration, wall-plug recovery, and owner-acceptance gates."
+    },
+    {
+      "id": "submission-attestation",
+      "paths": ["apps/danse/.work/submission/attest.yaml"],
+      "status": "superseded",
+      "receipt": "https://github.com/organvm/the-thing-without-a-name/issues/2",
+      "disposition": "The unsupported archive attestation remains rejected. Upload and filing can be recorded only by the canonical account-owned phase predicates."
+    },
+    {
+      "id": "private-brainstorm-history",
+      "paths": [],
+      "status": "not recorded",
+      "receipt": "docs/session-closeout.md",
+      "disposition": "No additional Danse-specific durable artifact was found in configured Claude, Agy, or Codex history surfaces. Unrecorded conversations cannot be reconstructed; no creative, legal, or technical claim is inferred from their absence."
+    }
+  ],
+  "coverage_note": "V3 enumerates the two apps/danse paths in the source commit that the v2 matrix did not name: engine/engine.js (cast diagnostic, superseded by canonical frameAt) and .gitignore (hygiene, superseded by canonical ignore files). All remaining apps/danse paths in the source commit (engine/, corpus/, pipeline/, render/, sound/, submission/, reference/, arrival.js, film.html, probe.html, verify.html, README, AGENTS, nested .gitignore files) are the mirrored canonical application at archive time, not predecessor-experiment content: the archive preserved source custody of the then-current app, and every such path is governed by its canonical owner in the-thing-without-a-name. Only the experiment deltas listed in this matrix carry an archive-specific disposition.",
+  "issue_state": {
+    "id": 3,
+    "status": "blocked",
+    "reason": "The disposition matrix is exhaustive over the source commit. The accepted spatial port still explicitly inherits the real-room terminal predicate owned by issue #11."
+  }
+}
