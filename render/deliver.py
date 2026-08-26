@@ -180,6 +180,8 @@ def repository_state() -> dict:
     head = sh(["git", "rev-parse", "--verify", "HEAD^{commit}"], cwd=DANSE)
     if head.returncode != 0:
         raise SystemExit("delivery requires a Git commit identity")
+    if not isinstance(head.stdout, str):
+        raise SystemExit("delivery received no Git commit identity")
     commit = head.stdout.strip().lower()
     if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
         raise SystemExit("delivery received an invalid Git commit identity")
@@ -189,6 +191,8 @@ def repository_state() -> dict:
     )
     if status.returncode != 0:
         raise SystemExit("delivery cannot verify the repository worktree")
+    if not isinstance(status.stdout, str):
+        raise SystemExit("delivery received no repository worktree status")
     changes = [line for line in status.stdout.splitlines() if line.strip()]
     return {
         "head": commit,

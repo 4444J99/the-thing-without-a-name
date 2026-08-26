@@ -1523,6 +1523,15 @@ class DeliveryContractTest(unittest.TestCase):
                     "run",
                     return_value=subprocess.CompletedProcess([], 0),
                 ),
+                mock.patch.object(
+                    DELIVER,
+                    "repository_state",
+                    return_value={
+                        "head": SUBMISSION_REPOSITORY_HEAD,
+                        "clean": True,
+                        "changes": [],
+                    },
+                ),
                 mock.patch.dict(DELIVER.os.environ, {"DANSE_WORK": str(external_work)}, clear=True),
                 redirect_stdout(io.StringIO()) as output,
             ):
@@ -1963,6 +1972,7 @@ class DeliveryContractTest(unittest.TestCase):
             (package / "manifest.json").write_text(
                 json.dumps(
                     {
+                        "repository_head": SUBMISSION_REPOSITORY_HEAD,
                         "passage_seed": DELIVER.hexseed(SPAN["seed"]),
                         "passage": SPAN["passage"],
                         "t0": SPAN["t0"],
@@ -1984,6 +1994,15 @@ class DeliveryContractTest(unittest.TestCase):
                     DELIVER,
                     "passage_sound",
                     return_value=(score, sound, False),
+                ),
+                mock.patch.object(
+                    DELIVER,
+                    "require_clean_repository",
+                    return_value={
+                        "head": SUBMISSION_REPOSITORY_HEAD,
+                        "clean": True,
+                        "changes": [],
+                    },
                 ),
                 mock.patch.object(DELIVER, "AUDIO_RENDER_RECEIPT", audio_receipt),
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
@@ -2070,6 +2089,18 @@ class DeliveryContractTest(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "clean tracked/untracked worktree"),
         ):
             DELIVER.require_clean_repository()
+        no_head = subprocess.CompletedProcess([], 0, stdout=None, stderr="")
+        with (
+            mock.patch.object(DELIVER, "sh", return_value=no_head),
+            self.assertRaisesRegex(SystemExit, "no Git commit identity"),
+        ):
+            DELIVER.repository_state()
+        no_status = subprocess.CompletedProcess([], 0, stdout=None, stderr="")
+        with (
+            mock.patch.object(DELIVER, "sh", side_effect=[head, no_status]),
+            self.assertRaisesRegex(SystemExit, "no repository worktree status"),
+        ):
+            DELIVER.repository_state()
 
     def test_production_receipt_uses_the_decimal_renderer_still_seed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
