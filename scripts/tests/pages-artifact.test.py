@@ -215,6 +215,7 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertEqual(
             {path for path in paths if path.startswith("engine/")}, set(PAGES.ENGINE_MODULES)
         )
+        self.assertIn("engine/choreography.js", paths)
         self.assertNotIn("engine/query.js", paths)
         self.assertNotIn("engine/tier.js", paths)
         self.assertNotIn("corpus/tier-receipts/browse.json", paths)

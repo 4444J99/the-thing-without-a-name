@@ -1,81 +1,122 @@
 schema: danse.music.repertoire.v1
 
-# Anthony has not selected repertoire. This register contains only a generated
-# contract fixture so the reversible implementation can be tested now.
 artistic_gate:
-  status: pending
+  status: accepted
   authority: Anthony J. Padavano
-  evidence: null
-  note: A fixture is not an artistic choice; no score-driven cut is approved for release.
+  evidence: Danse ScreenDance 2027 hardening directive, 2026-08-26
+  note: The two-movement Delibes suite is selected for the competition film; final-cut approval remains a separate delivery gate.
 
 works:
-  - id: generated-contract-study
-    role: fixture
+  - id: delibes-screendance-suite
+    role: repertoire
     selection:
-      status: not-selected
+      status: selected
       authority: Anthony J. Padavano
-      evidence: null
+      evidence: Danse ScreenDance 2027 hardening directive, 2026-08-26
 
     composition:
-      title: Generated contract study
-      composer: Deterministic fixture generator
-      date: "2026-08-03"
-      status: fixture-only
+      title: Valse lente from Sylvia; Valse from Coppélia
+      composer: Léo Delibes
+      date: "1870; 1876"
+      status: public-domain
       license: null
-      source:
-        path: music/generate_fixture_midi.py
-        sha256: 4d403e0885d9af874bdefa2f3795246c3f212190ab4183eab108eef2a9d980ac
+      source: null
       evidence:
-        - kind: repository-source
-          citation: Generated test instructions tracked with the fixture; no authorship or release claim is inferred.
+        - kind: public-domain-composition
+          citation: "Library of Congress Sylvia evidence: https://www.loc.gov/item/2023848130/"
+        - kind: public-domain-composition
+          citation: "Library of Congress Coppélia evidence: https://www.loc.gov/item/2023855939/"
 
     edition:
-      title: null
-      editor: null
-      status: not-applicable
-      license: null
+      title: Valse-Lente-Delibes and Valse-Coppelia accordion arrangements
+      editor: Paul De Bra
+      status: licensed
+      license: CC BY 4.0
       source: null
+      sources:
+        - path: music/sources/Valse-Lente-Delibes.mscz
+          sha256: 76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70
+        - path: music/sources/Valse-Coppelia.mscz
+          sha256: 86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7
       evidence:
-        - kind: fixture-declaration
-          citation: The generated study has no separately sourced edition.
+        - kind: arranger-and-license
+          citation: "Paul De Bra arrangements: https://www.de-bra.nl/arrangements.html; CC BY 4.0: https://creativecommons.org/licenses/by/4.0/"
+          source:
+            path: music/licenses/CC-BY-4.0-NOTICE.md
+            sha256: 3c5f6080386cbd8a84f31a3db00a686cccef89158ea7295c3dbc117ea06ec2f1
+        - kind: licensed-source-score
+          citation: "IMSLP Sylvia evidence: https://imslp.org/wiki/Sylvia_%28Delibes%2C_L%C3%A9o%29"
+          source:
+            path: music/sources/Valse-Lente-Delibes.mscz
+            sha256: 76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70
+        - kind: licensed-source-score
+          citation: "IMSLP Coppélia evidence: https://imslp.org/wiki/Copp%C3%A9lia_%28Delibes%2C_L%C3%A9o%29"
+          source:
+            path: music/sources/Valse-Coppelia.mscz
+            sha256: 86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7
 
     arrangement_midi:
-      author: Deterministic fixture generator
-      status: fixture-only
-      license: null
+      author: Danse project, after Paul De Bra
+      status: project-authored
+      license: CC BY 4.0 derivative adaptation
       source:
-        path: music/fixtures/generated-study.mid
-        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+        path: music/delibes-screendance-suite.mid
+        sha256: a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199
       evidence:
-        - kind: byte-reproduction
-          citation: python3 music/generate_fixture_midi.py --check reproduces the exact tracked MIDI bytes.
+        - kind: deterministic-adaptation
+          citation: Five accordion voices are mapped to chamber strings; triangle and timpani are retained; no musical event is time-scaled.
+          source:
+            path: music/adaptation.json
+            sha256: 19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21
 
     performance:
-      performer: Deterministic fixture generator
-      status: fixture-only
+      performer: Danse deterministic MIDI performance
+      status: project-authored
       license: null
       source:
-        path: music/fixtures/generated-study.mid
-        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
+        path: music/delibes-screendance-suite.mid
+        sha256: a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199
       evidence:
-        - kind: midi-performance
-          citation: Note timing and velocity are generated test data, not a claimed human performance.
+        - kind: sequenced-performance
+          citation: Note timing, velocities, CC expression, phrase markers, movement markers, and cues are fixed in the adapted MIDI.
+          source:
+            path: music/delibes-screendance-suite.mid
+            sha256: a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199
 
     recording:
-      owner: null
-      status: absent
+      owner: Danse project
+      status: pending-render
       license: null
       source: null
+      render_contract:
+        path: music/audio-render.schema.json
+        sha256: e9b6098a19a9f7afaf120e0834c7f5bd49a456bd6a0cfaafce79ba38735e5956
       evidence:
-        - kind: no-recording
-          citation: No rendered audio, commercial recording, or private DAW session belongs to this fixture.
+        - kind: deterministic-render-contract
+          citation: The package must supply a matching danse.audio.render.v1 receipt; selection does not claim that ignored WAV bytes already exist.
+          source:
+            path: music/audio-toolchain.json
+            sha256: 373a34e14c22231a4f8c530a4f8a1c6452ecf0c7e79df67cec1ff8bdb646906a
 
     samples:
-      status: none
-      items: []
+      status: licensed
+      items:
+        - id: musescore-general-sf3
+          license: MIT
+          source:
+            path: .work/music/MuseScore_General.sf3
+            sha256: 5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3
+            custody: hydrated-local
+            source_url: https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3
+            license_notice:
+              path: music/licenses/MuseScore_General_License.md
+              sha256: 9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4
       evidence:
-        - kind: no-samples
-          citation: The MIDI contract fixture embeds no sample or stem bytes.
+        - kind: soundfont-license
+          citation: MuseScore General is distributed under the MIT license; the tracked notice preserves the required acknowledgements.
+          source:
+            path: music/licenses/MuseScore_General_License.md
+            sha256: 9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4
 
     dramatic_roles:
       - ONE
@@ -88,60 +129,51 @@ works:
 
     score:
       source_midi:
-        path: music/fixtures/generated-study.mid
-        sha256: c7ba904af1a519e762748b1865eb14a94562ef1e673cb892385dca394b24f25d
-      # CC11 is channel-local MIDI data. This explicit source alone becomes the
-      # score's global visual/audio dynamic; expression on other stems is not
-      # silently collapsed into it.
+        path: music/delibes-screendance-suite.mid
+        sha256: a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199
       dynamics_source: {track: 1, channel: 0}
       cue_bindings:
-        division-entry:
+        sylvia-entry:
           window_beats: 1.0
-          visual:
-            channel_offsets: {divergence: 0.04, spread: 0.04}
-        phrase-entry:
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        sylvia-lift:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {spread: 0.02}}
+        sylvia-triangle-01:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        sylvia-triangle-02:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        sylvia-triangle-03:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        sylvia-triangle-04:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        sylvia-triangle-05:
+          window_beats: 0.5
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        coppelia-entry:
           window_beats: 1.0
-          visual:
-            recast: true
-            channel_offsets: {turnover: 0.18}
-        phrase-accent-a:
+          visual: {hold: false, recast: false, channel_offsets: {}}
+        coppelia-lift:
           window_beats: 0.5
-          visual:
-            recast: true
-            channel_offsets: {spread: 0.05, turnover: 0.22}
-        phrase-accent-b:
-          window_beats: 0.5
-          visual:
-            recast: true
-            channel_offsets: {azimuth: -0.05, turnover: 0.26}
-        phrase-accent-c:
-          window_beats: 0.5
-          visual:
-            recast: true
-            channel_offsets: {elevation: 0.05, turnover: 0.30}
-        stillness-entry:
-          window_beats: 4.0
-          visual:
-            hold: true
-        reseed-entry:
+          visual: {hold: false, recast: false, channel_offsets: {elevation: 0.02}}
+        coppelia-climax:
           window_beats: 1.0
-          visual:
-            recast: true
-            channel_offsets: {projK: 0.06}
-        reseed-accent-a:
-          window_beats: 0.5
-          visual:
-            recast: true
-            channel_offsets: {turnover: 0.32}
-        reseed-accent-b:
-          window_beats: 0.5
-          visual:
-            recast: true
-            channel_offsets: {turnover: 0.40}
+          visual: {hold: false, recast: false, channel_offsets: {spread: 0.03, turnover: 0.04}}
+        signature-entry:
+          window_beats: 1.0
+          visual: {hold: true, recast: false, channel_offsets: {}}
 
-    # Filled with the byte digest of the deterministic compiler output. The
-    # validator checks it; it is not an approval or a release manifest.
     derived_artifacts:
-      - kind: fixture-score-contract
-        path: music/score.json
-        sha256: da30bb8c167916d1de9de50629e88feaa0ebc65fb833656787f8e8e678225e48
+      - kind: adaptation-contract
+        path: music/adaptation.json
+        sha256: 19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21
+      - kind: audio-toolchain-contract
+        path: music/audio-toolchain.json
+        sha256: 373a34e14c22231a4f8c530a4f8a1c6452ecf0c7e79df67cec1ff8bdb646906a
+      - kind: audio-use-manifest
+        path: sound/audio-uses.json
+        sha256: 3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831

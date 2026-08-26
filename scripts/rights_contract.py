@@ -60,6 +60,7 @@ EXPECTED_CATEGORIES = {
     "other-third-party",
 }
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+GIT_OID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 SAFE_TIER = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 EMAIL = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -110,6 +111,76 @@ RIGHTS_MEDIA_SUFFIXES = {
 }
 PRODUCTION_RECEIPT = "provenance/production.json"
 PRODUCER_RECEIPTS = "provenance/producer-receipts"
+DELIBES_CUSTODY_PATH = "rights/evidence/delibes-source-license-custody.json"
+DELIBES_CUSTODY_SHA256 = "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543"
+MUSESCORE_GENERAL_NOTICE_PATH = "music/licenses/MuseScore_General_License.md"
+MUSESCORE_GENERAL_NOTICE_SHA256 = "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4"
+MUSESCORE_GENERAL_SF3_SHA256 = "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3"
+ADAPTED_DELIBES_MIDI_PATH = "music/delibes-screendance-suite.mid"
+ADAPTED_DELIBES_MIDI_SHA256 = "a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199"
+DELIBES_ADAPTATION_PATH = "music/adaptation.json"
+DELIBES_ADAPTATION_SHA256 = "19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21"
+AUDIO_USES_PATH = "sound/audio-uses.json"
+AUDIO_USES_SHA256 = "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831"
+AUDIO_TOOLCHAIN_PATH = "music/audio-toolchain.json"
+AUDIO_MIX_PATH = "music/delibes-mix.json"
+COMPETITION_AUDIO_RENDER_RECEIPT = ROOT / ".work" / "music" / "competition" / "audio-render.json"
+COMPETITION_AUDIO_PROFILE = "competition-classical"
+HYBRID_AUDIO_PROFILE = "hybrid-apartment"
+COMPETITION_SOURCE_IDS = ("delibes-chamber-midi", "musescore-general-sf3")
+COMPETITION_STEM_IDS = (
+    "violin-i",
+    "violin-ii",
+    "viola",
+    "cello",
+    "contrabass",
+    "triangle",
+    "timpani",
+)
+AUDIO_IDENTITY_HASH_FIELDS = (
+    "audio_uses_sha256",
+    "score_file_sha256",
+    "score_contract_sha256",
+    "choreography_file_sha256",
+    "choreography_contract_sha256",
+    "midi_sha256",
+    "adaptation_sha256",
+    "toolchain_sha256",
+    "mix_sha256",
+    "soundfont_sha256",
+    "audio_render_receipt_sha256",
+    "master_sha256",
+)
+AUDIO_SOUND_FIELDS = (
+    "profile",
+    *AUDIO_IDENTITY_HASH_FIELDS,
+    "sources",
+    "stems",
+    "credit",
+)
+COMPETITION_AUDIO_REQUIREMENTS = (
+    ("delibes-public-domain-compositions", "competition-composition"),
+    ("paul-de-bra-source-arrangements", "competition-arrangement"),
+    ("adapted-delibes-midi", "competition-midi"),
+    ("musescore-general-soundfont", "competition-soundfont"),
+    ("selected-music", "score-audio"),
+)
+HYBRID_AUDIO_REQUIREMENT = ("room-source-recordings", "hybrid-apartment-grains")
+REQUIRED_DELIBES_CREDIT = (
+    "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and "
+    "re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, "
+    "sequencing, cue markers, and mix."
+)
+DELIBES_SOURCE_FILES = (
+    (
+        "music/sources/Valse-Lente-Delibes.mscz",
+        "76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70",
+    ),
+    (
+        "music/sources/Valse-Coppelia.mscz",
+        "86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7",
+    ),
+)
 
 
 class RightsError(ValueError):
@@ -828,6 +899,434 @@ def _validate_bindings(
     return errors
 
 
+def _validate_delibes_custody(
+    root: Path,
+    document: dict[str, Any],
+    tracked: set[str],
+) -> list[str]:
+    """Authenticate selected-music custody without turning it into clearance."""
+    errors: list[str] = []
+    declared_records = [
+        record
+        for _, record in _source_records(document)
+        if record.get("path") == DELIBES_CUSTODY_PATH
+    ]
+    if not declared_records:
+        return ["selected Delibes sources have no digest-bound custody evidence"]
+    if any(record.get("sha256") != DELIBES_CUSTODY_SHA256 for record in declared_records):
+        errors.append("selected Delibes custody evidence is declared with a stale digest")
+    try:
+        if DELIBES_CUSTODY_PATH not in tracked:
+            raise RightsError("selected Delibes custody evidence is not tracked by Git")
+        evidence_path = regular_file(root, DELIBES_CUSTODY_PATH, "selected Delibes custody evidence")
+        if sha256(evidence_path) != DELIBES_CUSTODY_SHA256:
+            raise RightsError("selected Delibes custody evidence bytes have drifted")
+        evidence = load_json(evidence_path, "selected Delibes custody evidence")
+    except RightsError as exc:
+        return [*errors, str(exc)]
+
+    expected_compositions = [
+        {
+            "work_id": "sylvia-valse-lente",
+            "composer": "Léo Delibes",
+            "title": "Valse lente from Sylvia",
+            "rights_status": "public-domain-composition",
+            "library_of_congress_url": "https://www.loc.gov/item/2023848130/",
+        },
+        {
+            "work_id": "coppelia-valse",
+            "composer": "Léo Delibes",
+            "title": "Valse from Coppélia",
+            "rights_status": "public-domain-composition",
+            "library_of_congress_url": "https://www.loc.gov/item/2023855939/",
+        },
+    ]
+    expected_arrangements = [
+        {
+            "work_id": "sylvia-valse-lente",
+            "arranger": "Paul De Bra",
+            "path": DELIBES_SOURCE_FILES[0][0],
+            "sha256": DELIBES_SOURCE_FILES[0][1],
+            "source_page_url": "https://www.de-bra.nl/arrangements.html",
+            "imslp_url": "https://imslp.org/wiki/Sylvia_%28Delibes%2C_L%C3%A9o%29",
+            "imslp_file_ids": [1001719, 1001726],
+            "publisher_year": 2025,
+            "declared_instrumentation": "4 accordions, bass, and triangle",
+            "license": {
+                "spdx": "CC-BY-4.0",
+                "url": "https://creativecommons.org/licenses/by/4.0/",
+            },
+        },
+        {
+            "work_id": "coppelia-valse",
+            "arranger": "Paul De Bra",
+            "path": DELIBES_SOURCE_FILES[1][0],
+            "sha256": DELIBES_SOURCE_FILES[1][1],
+            "source_page_url": "https://www.de-bra.nl/arrangements.html",
+            "imslp_url": "https://imslp.org/wiki/Copp%C3%A9lia_%28Delibes%2C_L%C3%A9o%29",
+            "imslp_file_ids": [818172],
+            "publisher_year": 2022,
+            "reference_duration": "3:23",
+            "license": {
+                "spdx": "CC-BY-4.0",
+                "url": "https://creativecommons.org/licenses/by/4.0/",
+            },
+        },
+    ]
+    expected_soundfont = {
+        "name": "MuseScore_General.sf3",
+        "license": "MIT",
+        "documentation_url": "https://musescore.org/en/handbook/3/soundfonts-and-sfz-files",
+        "notice": {
+            "path": MUSESCORE_GENERAL_NOTICE_PATH,
+            "sha256": MUSESCORE_GENERAL_NOTICE_SHA256,
+        },
+        "soundfont_sha256": MUSESCORE_GENERAL_SF3_SHA256,
+    }
+    expected_clearance = {
+        "gate": "music-cleared",
+        "state": "pending",
+        "note": (
+            "This receipt records source and license custody only. It does not approve the "
+            "adapted MIDI, rendered audio, credit, final cut, or submission."
+        ),
+    }
+    if set(evidence) != {
+        "schema",
+        "status",
+        "recorded_on",
+        "composition_evidence",
+        "source_arrangements",
+        "soundfont",
+        "required_credit",
+        "clearance",
+    }:
+        errors.append("selected Delibes custody evidence has fields outside its typed contract")
+    if evidence.get("schema") != "danse.music-rights-custody.v1":
+        errors.append("selected Delibes custody evidence has the wrong schema")
+    if evidence.get("status") != "custody-only" or evidence.get("recorded_on") != "2026-08-26":
+        errors.append("selected Delibes custody evidence overstates or misdates its status")
+    if evidence.get("composition_evidence") != expected_compositions:
+        errors.append("selected Delibes composition evidence has drifted")
+    if evidence.get("source_arrangements") != expected_arrangements:
+        errors.append("selected Paul De Bra source or CC BY 4.0 evidence has drifted")
+    if evidence.get("soundfont") != expected_soundfont:
+        errors.append("MuseScore_General soundfont license custody has drifted")
+    if evidence.get("required_credit") != REQUIRED_DELIBES_CREDIT:
+        errors.append("selected Delibes required credit has drifted")
+    if evidence.get("clearance") != expected_clearance:
+        errors.append("selected Delibes custody evidence falsely changes the clearance gate")
+
+    for relative, expected_digest in (
+        *DELIBES_SOURCE_FILES,
+        (MUSESCORE_GENERAL_NOTICE_PATH, MUSESCORE_GENERAL_NOTICE_SHA256),
+    ):
+        try:
+            if relative not in tracked:
+                raise RightsError(f"selected music custody source is not tracked by Git: {relative}")
+            source = regular_file(root, relative, "selected music custody source")
+            if sha256(source) != expected_digest:
+                raise RightsError(f"selected music custody source digest drifted: {relative}")
+        except RightsError as exc:
+            errors.append(str(exc))
+
+    assets = {asset["id"]: asset for asset in document.get("assets", [])}
+    components = {
+        "delibes-public-domain-compositions": ("public-domain-with-provenance", None),
+        "paul-de-bra-source-arrangements": ("licensed", "CC-BY-4.0"),
+        "adapted-delibes-midi": ("owned", None),
+        "musescore-general-soundfont": ("licensed", "MIT"),
+    }
+    for asset_id, (disposition, spdx) in components.items():
+        asset = assets.get(asset_id)
+        if asset is None:
+            errors.append(f"selected music custody is missing component asset {asset_id}")
+            continue
+        if asset.get("disposition") != disposition:
+            errors.append(f"selected music component {asset_id} has an invalid disposition")
+        license_row = asset.get("license")
+        if spdx is None and license_row is not None:
+            errors.append(f"selected music component {asset_id} invents a license layer")
+        if spdx is not None and (
+            not isinstance(license_row, dict) or license_row.get("spdx") != spdx
+        ):
+            errors.append(f"selected music component {asset_id} has the wrong license")
+
+    arrangement = assets.get("paul-de-bra-source-arrangements")
+    if arrangement is not None:
+        paths = {record.get("path") for record in arrangement.get("provenance", [])}
+        expected_paths = {DELIBES_CUSTODY_PATH, *(path for path, _ in DELIBES_SOURCE_FILES)}
+        if paths != expected_paths:
+            errors.append("Paul De Bra arrangement asset does not bind both exact sources")
+    soundfont = assets.get("musescore-general-soundfont")
+    if soundfont is not None:
+        license_row = soundfont.get("license") or {}
+        if (license_row.get("evidence") or {}).get("path") != MUSESCORE_GENERAL_NOTICE_PATH:
+            errors.append("MuseScore_General asset does not retain its exact license notice")
+    selected = assets.get("selected-music")
+    if selected is None:
+        errors.append("selected Delibes suite has no integrated music asset")
+    elif (selected.get("public_credit") or {}).get("label") != REQUIRED_DELIBES_CREDIT:
+        errors.append("selected Delibes suite does not carry the exact required credit")
+    return errors
+
+
+def _validate_audio_use_profiles(
+    root: Path,
+    document: dict[str, Any],
+    tracked: set[str],
+) -> list[str]:
+    """Bind competition audio to classical sources and quarantine private grains."""
+    errors: list[str] = []
+    records = [
+        record
+        for _, record in _source_records(document)
+        if record.get("path") == AUDIO_USES_PATH
+    ]
+    if not records:
+        return ["rights register does not bind the canonical audio-use profiles"]
+    if any(record.get("sha256") != AUDIO_USES_SHA256 for record in records):
+        errors.append("canonical audio-use profile is declared with a stale digest")
+    try:
+        if AUDIO_USES_PATH not in tracked:
+            raise RightsError("canonical audio-use profile is not tracked by Git")
+        profile_path = regular_file(root, AUDIO_USES_PATH, "canonical audio-use profile")
+        if sha256(profile_path) != AUDIO_USES_SHA256:
+            raise RightsError("canonical audio-use profile bytes have drifted")
+        audio_uses = load_json(profile_path, "canonical audio-use profile")
+    except RightsError as exc:
+        return [*errors, str(exc)]
+
+    if set(audio_uses) != {"schema", "competition_profile", "profiles"}:
+        errors.append("canonical audio-use profile has fields outside its typed contract")
+    if audio_uses.get("schema") != "danse.audio.uses.v1":
+        errors.append("canonical audio-use profile has the wrong schema")
+    if audio_uses.get("competition_profile") != COMPETITION_AUDIO_PROFILE:
+        errors.append("canonical audio-use profile selects the wrong competition profile")
+    profiles = audio_uses.get("profiles")
+    if not isinstance(profiles, dict) or set(profiles) != {
+        COMPETITION_AUDIO_PROFILE,
+        HYBRID_AUDIO_PROFILE,
+    }:
+        errors.append("canonical audio-use profile census has drifted")
+        profiles = {}
+
+    competition = profiles.get(COMPETITION_AUDIO_PROFILE)
+    expected_competition_sources = [
+        {
+            "id": "delibes-chamber-midi",
+            "kind": "project-authored-midi",
+            "path": ADAPTED_DELIBES_MIDI_PATH,
+            "sha256": ADAPTED_DELIBES_MIDI_SHA256,
+        },
+        {
+            "id": "musescore-general-sf3",
+            "kind": "licensed-soundfont",
+            "path": ".work/music/MuseScore_General.sf3",
+            "sha256": MUSESCORE_GENERAL_SF3_SHA256,
+            "custody": "hydrated-local",
+            "license": "MIT",
+            "license_notice": {
+                "path": MUSESCORE_GENERAL_NOTICE_PATH,
+                "sha256": MUSESCORE_GENERAL_NOTICE_SHA256,
+            },
+        },
+    ]
+    expected_stems = list(COMPETITION_STEM_IDS)
+    if not isinstance(competition, dict) or set(competition) != {
+        "package_eligible",
+        "description",
+        "declared_sources",
+        "required_stems",
+        "forbidden_source_kinds",
+    }:
+        errors.append("competition-classical audio profile has an unknown shape")
+        competition = {}
+    if competition.get("package_eligible") is not True:
+        errors.append("competition-classical audio profile is not package eligible")
+    if competition.get("declared_sources") != expected_competition_sources:
+        errors.append("competition-classical sources do not match exact MIDI and soundfont custody")
+    if competition.get("required_stems") != expected_stems:
+        errors.append("competition-classical required stem census has drifted")
+    if competition.get("forbidden_source_kinds") != [
+        "private-grain-bank",
+        "daw-instrument",
+        "unverified-download",
+    ]:
+        errors.append("competition-classical forbidden source kinds have drifted")
+
+    hybrid = profiles.get(HYBRID_AUDIO_PROFILE)
+    expected_hybrid_source = {
+        "id": "apartment-grain-bank",
+        "kind": "private-grain-bank",
+        "path": "sound/sources.json",
+        "custody": "ignored-private-optional",
+    }
+    if not isinstance(hybrid, dict) or set(hybrid) != {
+        "package_eligible",
+        "description",
+        "inherits",
+        "declared_sources",
+        "required_stems",
+        "forbidden_source_kinds",
+    }:
+        errors.append("hybrid-apartment audio profile has an unknown shape")
+        hybrid = {}
+    if hybrid.get("package_eligible") is not False:
+        errors.append("hybrid-apartment audio profile must remain package ineligible")
+    if hybrid.get("inherits") != COMPETITION_AUDIO_PROFILE:
+        errors.append("hybrid-apartment audio profile no longer inherits competition custody")
+    if hybrid.get("declared_sources") != [expected_hybrid_source]:
+        errors.append("hybrid-apartment source census has drifted")
+    if hybrid.get("required_stems") != [] or hybrid.get("forbidden_source_kinds") != []:
+        errors.append("hybrid-apartment overlay contract has drifted")
+    competition_kinds = {
+        source.get("kind")
+        for source in competition.get("declared_sources", [])
+        if isinstance(source, dict)
+    }
+    forbidden = set(competition.get("forbidden_source_kinds", []))
+    if competition_kinds & forbidden or "private-grain-bank" in competition_kinds:
+        errors.append("competition-classical profile admits a forbidden private or unverified source")
+
+    for relative, expected_digest in (
+        (ADAPTED_DELIBES_MIDI_PATH, ADAPTED_DELIBES_MIDI_SHA256),
+        (DELIBES_ADAPTATION_PATH, DELIBES_ADAPTATION_SHA256),
+    ):
+        try:
+            if relative not in tracked:
+                raise RightsError(f"competition audio source is not tracked by Git: {relative}")
+            source = regular_file(root, relative, "competition audio source")
+            if sha256(source) != expected_digest:
+                raise RightsError(f"competition audio source digest drifted: {relative}")
+        except RightsError as exc:
+            errors.append(str(exc))
+
+    try:
+        adaptation = load_json(
+            regular_file(root, DELIBES_ADAPTATION_PATH, "competition adaptation receipt"),
+            "competition adaptation receipt",
+        )
+    except RightsError as exc:
+        errors.append(str(exc))
+        adaptation = {}
+    adaptation_sources = adaptation.get("sources")
+    expected_adaptation_sources = {
+        source_id: (path, digest)
+        for source_id, (path, digest) in zip(
+            ("sylvia-valse-lente", "coppelia-valse"),
+            DELIBES_SOURCE_FILES,
+            strict=True,
+        )
+    }
+    if not isinstance(adaptation_sources, list) or len(adaptation_sources) != 2:
+        errors.append("competition adaptation does not bind both licensed source arrangements")
+    else:
+        for source in adaptation_sources:
+            source_id = source.get("id") if isinstance(source, dict) else None
+            expected = expected_adaptation_sources.get(source_id)
+            if (
+                expected is None
+                or source.get("path") != expected[0]
+                or source.get("sha256") != expected[1]
+                or source.get("arranger") != "Paul De Bra"
+                or source.get("license") != "CC BY 4.0"
+                or source.get("license_url")
+                != "https://creativecommons.org/licenses/by/4.0/"
+            ):
+                errors.append("competition adaptation loses an exact CC BY 4.0 source identity")
+                break
+    if adaptation.get("credit") != REQUIRED_DELIBES_CREDIT:
+        errors.append("competition adaptation does not carry the exact approved credit wording")
+    output = adaptation.get("output")
+    if not isinstance(output, dict) or (
+        output.get("path") != ADAPTED_DELIBES_MIDI_PATH
+        or output.get("sha256") != ADAPTED_DELIBES_MIDI_SHA256
+        or output.get("timing_mode") != "native-tempo"
+    ):
+        errors.append("competition adaptation output identity or native timing has drifted")
+
+    try:
+        if AUDIO_TOOLCHAIN_PATH not in tracked:
+            raise RightsError("competition audio toolchain is not tracked by Git")
+        toolchain = load_json(
+            regular_file(root, AUDIO_TOOLCHAIN_PATH, "competition audio toolchain"),
+            "competition audio toolchain",
+        )
+    except RightsError as exc:
+        errors.append(str(exc))
+        toolchain = {}
+    toolchain_soundfont = toolchain.get("soundfont")
+    if not isinstance(toolchain_soundfont, dict) or (
+        toolchain_soundfont.get("path") != ".work/music/MuseScore_General.sf3"
+        or toolchain_soundfont.get("sha256") != MUSESCORE_GENERAL_SF3_SHA256
+        or toolchain_soundfont.get("license") != "MIT"
+        or toolchain_soundfont.get("license_notice")
+        != {
+            "path": MUSESCORE_GENERAL_NOTICE_PATH,
+            "sha256": MUSESCORE_GENERAL_NOTICE_SHA256,
+        }
+    ):
+        errors.append("competition audio toolchain loses the exact soundfont notice identity")
+    if toolchain.get("midi") != {
+        "path": ADAPTED_DELIBES_MIDI_PATH,
+        "sha256": ADAPTED_DELIBES_MIDI_SHA256,
+    } or toolchain.get("adaptation") != {
+        "path": DELIBES_ADAPTATION_PATH,
+        "sha256": DELIBES_ADAPTATION_SHA256,
+    }:
+        errors.append("competition audio toolchain loses the exact MIDI/adaptation identity")
+    fluidsynth = toolchain.get("fluidsynth")
+    if not isinstance(fluidsynth, dict) or (
+        fluidsynth.get("version") != "2.6.0"
+        or not isinstance(fluidsynth.get("executable_sha256"), str)
+        or not HEX64.fullmatch(fluidsynth["executable_sha256"])
+    ):
+        errors.append("competition audio toolchain does not pin FluidSynth 2.6.0 exactly")
+
+    assets = {asset["id"]: asset for asset in document.get("assets", [])}
+    adapted = assets.get("adapted-delibes-midi")
+    if adapted is not None:
+        paths = {record.get("path") for record in adapted.get("provenance", [])}
+        if not {
+            ADAPTED_DELIBES_MIDI_PATH,
+            DELIBES_ADAPTATION_PATH,
+            AUDIO_USES_PATH,
+            DELIBES_CUSTODY_PATH,
+        } <= paths:
+            errors.append("adapted Delibes MIDI asset lacks exact profile and adaptation provenance")
+    room = assets.get("room-source-recordings")
+    if room is None:
+        errors.append("hybrid apartment grain source has no rights asset")
+    else:
+        uses = room.get("uses")
+        if not isinstance(uses, list) or len(uses) != 1 or uses[0].get("id") != HYBRID_AUDIO_REQUIREMENT[1]:
+            errors.append("hybrid apartment grain source has the wrong use identity")
+        elif uses[0].get("required_for") != []:
+            errors.append("hybrid apartment grain source leaks into global shipping phases")
+
+    audio_assets = {asset for asset, _ in (*COMPETITION_AUDIO_REQUIREMENTS, HYBRID_AUDIO_REQUIREMENT)}
+
+    def audio_requirements(rule: dict[str, Any]) -> list[tuple[str, str]]:
+        return [
+            (row.get("asset"), row.get("use"))
+            for row in rule.get("requirements", [])
+            if row.get("asset") in audio_assets
+        ]
+
+    package_rules = {rule["id"]: rule for rule in document.get("package_rules", [])}
+    for rule_id in ("moving-image", "score-source", "audio-render-receipt"):
+        rule = package_rules.get(rule_id)
+        if rule is not None and audio_requirements(rule) != list(COMPETITION_AUDIO_REQUIREMENTS):
+            errors.append(f"package rule {rule_id} does not require the exact competition audio rights layers")
+    release_rules = {rule["media_id"]: rule for rule in document.get("release_rules", [])}
+    for media_id in ("accessible-trailer", "score-driven-master"):
+        rule = release_rules.get(media_id)
+        if rule is not None and audio_requirements(rule) != list(COMPETITION_AUDIO_REQUIREMENTS):
+            errors.append(f"release rule {media_id} does not require the exact competition audio rights layers")
+    return errors
+
+
 def validate_document(
     document: dict[str, Any],
     *,
@@ -881,6 +1380,8 @@ def validate_document(
     required_binding_labels = {f"binding {name}" for name in ("corpus", "music", "pose_vendor", "submission")}
     if required_binding_labels <= verified.keys():
         errors.extend(_validate_bindings(root, document, verified, tracked))
+    errors.extend(_validate_delibes_custody(root, document, tracked))
+    errors.extend(_validate_audio_use_profiles(root, document, tracked))
 
     gate_rows = document["human_gates"]
     gate_ids = [row["id"] for row in gate_rows]
@@ -1075,7 +1576,12 @@ def validate_document(
             key = (requirement["asset"], requirement["use"])
             if key not in uses:
                 errors.append(f"package rule {rule['id']} names unknown asset/use {key[0]}/{key[1]}")
-    for required_rule in ("moving-image", "origin-still", "score-source"):
+    for required_rule in (
+        "moving-image",
+        "origin-still",
+        "score-source",
+        "audio-render-receipt",
+    ):
         if required_rule not in package_rule_ids:
             errors.append(f"required package rule is missing: {required_rule}")
 
@@ -1429,24 +1935,61 @@ def expected_renderer_source_sha256(tier: str) -> str:
         raise RightsError("cannot compute the canonical renderer source identity") from exc
 
 
-def current_audio_identity() -> dict[str, Any]:
-    """Return the exact hydrated bank identity accepted by the package builder."""
-    try:
-        identity = _delivery_contract().bank_provenance()
-    except (OSError, ValueError, AttributeError) as exc:
-        raise RightsError("cannot verify package audio against the hydrated grain bank") from exc
+def _audio_identity_blockers(identity: object, label: str) -> list[str]:
+    """Validate the one typed competition sound identity copied across a package."""
     if not isinstance(identity, dict):
-        raise RightsError("package audio cannot be verified without the hydrated grain bank")
-    fingerprint = identity.get("bank_fingerprint")
-    sources = identity.get("sources")
-    if (
-        not isinstance(fingerprint, str)
-        or not fingerprint
-        or not isinstance(sources, list)
-        or not all(isinstance(source, str) for source in sources)
-    ):
-        raise RightsError("canonical grain-bank identity is malformed")
-    return {"bank_fingerprint": fingerprint, "sources": list(sources)}
+        return [f"{label} has no typed competition sound identity"]
+    blockers: list[str] = []
+    if set(identity) != set(AUDIO_SOUND_FIELDS):
+        blockers.append(f"{label} has fields outside the competition sound contract")
+    if identity.get("profile") != COMPETITION_AUDIO_PROFILE:
+        blockers.append(f"{label} does not select the package-eligible competition-classical profile")
+    for field in AUDIO_IDENTITY_HASH_FIELDS:
+        value = identity.get(field)
+        if not isinstance(value, str) or not HEX64.fullmatch(value):
+            blockers.append(f"{label} has no exact {field} identity")
+    fixed_hashes = {
+        "audio_uses_sha256": AUDIO_USES_SHA256,
+        "midi_sha256": ADAPTED_DELIBES_MIDI_SHA256,
+        "adaptation_sha256": DELIBES_ADAPTATION_SHA256,
+        "soundfont_sha256": MUSESCORE_GENERAL_SF3_SHA256,
+    }
+    for field, expected in fixed_hashes.items():
+        if identity.get(field) != expected:
+            blockers.append(f"{label} has a stale or substituted {field} identity")
+    if identity.get("sources") != list(COMPETITION_SOURCE_IDS):
+        blockers.append(f"{label} does not name the exact competition-classical sources")
+    stems = identity.get("stems")
+    if not isinstance(stems, list) or len(stems) != len(COMPETITION_STEM_IDS):
+        blockers.append(f"{label} has no exact competition stem identity")
+    else:
+        for index, (stem, expected_id) in enumerate(zip(stems, COMPETITION_STEM_IDS, strict=True)):
+            if (
+                not isinstance(stem, dict)
+                or set(stem) != {"id", "sha256"}
+                or stem.get("id") != expected_id
+                or not isinstance(stem.get("sha256"), str)
+                or not HEX64.fullmatch(stem["sha256"])
+            ):
+                blockers.append(f"{label} has a malformed or reordered stem at index {index}")
+                break
+    if identity.get("credit") != REQUIRED_DELIBES_CREDIT:
+        blockers.append(f"{label} does not carry the exact required Delibes credit")
+    return blockers
+
+
+def current_audio_identity(span: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact deterministic competition-audio identity for one passage."""
+    try:
+        identity = _delivery_contract().competition_audio_provenance(span)
+    except (OSError, ValueError, AttributeError, SystemExit) as exc:
+        raise RightsError(
+            "cannot verify package audio against the deterministic competition render receipt"
+        ) from exc
+    blockers = _audio_identity_blockers(identity, "canonical competition audio")
+    if blockers:
+        raise RightsError(blockers[0])
+    return {field: identity[field] for field in AUDIO_SOUND_FIELDS}
 
 
 def _package_inventory(package_root: Path) -> tuple[set[str], list[str]]:
@@ -1514,6 +2057,14 @@ def _required_package_blockers(
             "canonical package score source destination",
             expose_value=False,
         )
+        audio = package.get("audio")
+        if not isinstance(audio, dict):
+            raise RightsError("canonical package audio contract is missing")
+        audio_render_destination = safe_relative(
+            audio.get("audio_render_receipt"),
+            "canonical package audio-render receipt destination",
+            expose_value=False,
+        )
     except (RightsError, AttributeError, TypeError):
         return ["canonical delivery contract cannot resolve required package destinations"]
     moving_image_required = False
@@ -1534,6 +2085,11 @@ def _required_package_blockers(
         if item_rule_ids.get(score_destination) != "score-source":
             blockers.append(
                 f"package is missing required score source artifact {score_destination}"
+            )
+        if item_rule_ids.get(audio_render_destination) != "audio-render-receipt":
+            blockers.append(
+                "package is missing required audio-render receipt artifact "
+                f"{audio_render_destination}"
             )
 
     origin = package.get("origin_still")
@@ -1609,7 +2165,9 @@ def _package_production_blockers(
     if set(production) != {
         "schema",
         "source_tree_sha256",
+        "repository_head",
         "passage",
+        "sound",
         "producers",
         "outputs",
     }:
@@ -1619,6 +2177,11 @@ def _package_production_blockers(
     source_tree = manifest.get("source_tree_sha256")
     if production.get("source_tree_sha256") != source_tree:
         blockers.append("package production receipt names a different delivery source tree")
+    repository_head = manifest.get("repository_head")
+    if production.get("repository_head") != repository_head:
+        blockers.append("package production receipt names a different repository head")
+    if production.get("sound") != manifest.get("sound"):
+        blockers.append("package production receipt does not copy the manifest sound identity")
     tier = manifest.get("corpus_tier")
     try:
         renderer_source_tree = expected_renderer_source_sha256(tier)
@@ -1794,7 +2357,19 @@ def _package_production_blockers(
             if receipt.get("file_sha256") != output_sha256:
                 blockers.append(f"package render concat {producer_id} output digest is stale")
         elif kind == "score":
-            if receipt.get("schema") != "danse.score.receipt.v1":
+            expected_fields = {
+                "schema",
+                "sha256",
+                "t0",
+                "t1",
+                "duration",
+                *AUDIO_SOUND_FIELDS,
+            }
+            if set(receipt) != expected_fields:
+                blockers.append(
+                    f"package score producer {producer_id} has fields outside its typed contract"
+                )
+            if receipt.get("schema") != "danse.score.receipt.v2":
                 blockers.append(f"package producer {producer_id} is not a score receipt")
             if components:
                 blockers.append(f"package score producer {producer_id} must not have components")
@@ -1806,11 +2381,26 @@ def _package_production_blockers(
                 or receipt.get("duration") != manifest.get("duration")
             ):
                 blockers.append(f"package score producer {producer_id} names a different passage")
-            if audio_identity is not None and (
-                receipt.get("bank_fingerprint") != audio_identity["bank_fingerprint"]
-                or not same_strings(receipt.get("sources"), audio_identity["sources"])
-            ):
-                blockers.append(f"package score producer {producer_id} names a different grain bank")
+            receipt_sound = {field: receipt.get(field) for field in AUDIO_SOUND_FIELDS}
+            blockers.extend(
+                _audio_identity_blockers(
+                    receipt_sound,
+                    f"package score producer {producer_id}",
+                )
+            )
+            manifest_sound = manifest.get("sound")
+            if receipt_sound != manifest_sound:
+                blockers.append(
+                    f"package score producer {producer_id} does not copy the manifest sound identity"
+                )
+            if audio_identity is not None and receipt_sound != audio_identity:
+                blockers.append(
+                    f"package score producer {producer_id} names a different competition audio render"
+                )
+            if receipt.get("sha256") != receipt_sound.get("master_sha256"):
+                blockers.append(
+                    f"package score producer {producer_id} master digest differs from its WAV"
+                )
 
     output_rows = production.get("outputs")
     if not isinstance(output_rows, list):
@@ -2063,6 +2653,9 @@ def validate_package(
                 blockers.append("package manifest source-tree SHA-256 does not match the canonical delivery tree")
         except RightsError as exc:
             blockers.append(str(exc))
+    repository_head = manifest.get("repository_head")
+    if not isinstance(repository_head, str) or not GIT_OID.fullmatch(repository_head):
+        blockers.append("package manifest has no exact repository head")
     items = manifest.get("items")
     if not isinstance(items, list) or not items:
         blockers.append("package manifest has no items")
@@ -2075,7 +2668,12 @@ def validate_package(
             rules.append((rule, re.compile(rule["pattern"])))
         except re.error:
             blockers.append(f"rights register package rule {rule['id']} has an invalid regex")
-    for required_rule in ("moving-image", "origin-still", "score-source"):
+    for required_rule in (
+        "moving-image",
+        "origin-still",
+        "score-source",
+        "audio-render-receipt",
+    ):
         if required_rule not in rule_ids:
             blockers.append(f"rights register is missing required package rule {required_rule}")
     item_names: set[str] = set()
@@ -2083,7 +2681,6 @@ def validate_package(
     item_rule_ids: dict[str, str] = {}
     verified_items: list[tuple[str, dict[str, Any]]] = []
     submission = load_yaml(regular_file(root, document["bindings"]["submission"]["source"]["path"], "submission binding"), "submission binding")
-    expected_audio = sorted(((submission.get("package") or {}).get("audio") or {}).get("source_recordings") or [])
     expected_origin = (((submission.get("package") or {}).get("origin_still") or {}).get("source_sha256"))
     initial_package_paths, initial_inventory_blockers = _package_inventory(package_root)
     blockers.extend(initial_inventory_blockers)
@@ -2159,6 +2756,12 @@ def validate_package(
         for name, rule_id in item_rule_ids.items()
         if rule_id == "score-source"
     ]
+    audio_render_items = [
+        (name, item_records[name])
+        for name, rule_id in item_rule_ids.items()
+        if rule_id == "audio-render-receipt"
+    ]
+    timed_audio_items = [*moving_items, *score_items]
     audio_identity: dict[str, Any] | None = None
     if moving_items:
         if len(score_items) != 1:
@@ -2167,24 +2770,41 @@ def validate_package(
         else:
             score_digest = score_items[0][1].get("sha256")
         try:
-            audio_identity = current_audio_identity()
+            audio_identity = current_audio_identity(manifest)
         except RightsError as exc:
             blockers.append(str(exc))
             audio_identity = None
-        for name, item in moving_items:
+        manifest_sound = manifest.get("sound")
+        blockers.extend(_audio_identity_blockers(manifest_sound, "package manifest"))
+        if audio_identity is not None and manifest_sound != audio_identity:
+            blockers.append("package manifest sound does not bind the canonical competition audio render")
+        if isinstance(manifest_sound, dict) and (
+            score_digest is None or manifest_sound.get("master_sha256") != score_digest
+        ):
+            blockers.append("package manifest sound does not bind the manifested score source")
+        for name, item in timed_audio_items:
             sound = item.get("sound")
             if not isinstance(sound, dict):
-                blockers.append(f"package audio item {name} has no score/source provenance")
+                blockers.append(f"package audio item {name} has no competition sound identity")
                 continue
-            if not same_strings(sound.get("sources"), expected_audio):
-                blockers.append(f"package audio item {name} does not name the exact registered recordings")
-            if score_digest is None or sound.get("score_sha256") != score_digest:
-                blockers.append(f"package audio item {name} does not bind the manifested score source")
-            if audio_identity is not None and (
-                sound.get("bank_fingerprint") != audio_identity["bank_fingerprint"]
-                or not same_strings(sound.get("sources"), audio_identity["sources"])
+            if sound != manifest_sound:
+                blockers.append(f"package audio item {name} does not copy the manifest sound identity")
+        expected_audio_render = (
+            (((submission.get("package") or {}).get("audio") or {}).get("audio_render_receipt"))
+        )
+        if len(audio_render_items) != 1:
+            blockers.append("package moving images require exactly one manifested audio-render receipt")
+        else:
+            audio_render_name, audio_render_item = audio_render_items[0]
+            if audio_render_name != expected_audio_render:
+                blockers.append("package audio-render receipt is not at its canonical destination")
+            receipt_digest = audio_render_item.get("sha256")
+            if not isinstance(manifest_sound, dict) or (
+                receipt_digest != manifest_sound.get("audio_render_receipt_sha256")
             ):
-                blockers.append(f"package audio item {name} does not bind the hydrated grain bank")
+                blockers.append(
+                    "package audio-render receipt does not bind the manifest sound identity"
+                )
 
     blockers.extend(
         _package_production_blockers(

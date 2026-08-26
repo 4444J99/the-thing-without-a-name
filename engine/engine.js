@@ -13,22 +13,41 @@
  */
 
 import { state } from "./clock.js";
+import { poseAt } from "./choreography.js";
 import { cells } from "./grammar.js";
+import { passageAt } from "./program.js";
 
 /** What is on screen at (seed, t). `program` null runs the piece free. */
-export function step(corpus, seed, t, program = null, { quantise = 0, stream = 0, score = null } = {}) {
-  const s = state(seed, t, program, stream, score);
+export function step(
+  corpus,
+  seed,
+  t,
+  program = null,
+  { quantise = 0, stream = 0, score = null, choreography = null } = {},
+) {
+  if (choreography && !score) throw new Error("score-led choreography requires a music score");
+  if (choreography && !program) throw new Error("score-led choreography requires a program");
+  const posePassage = choreography ? passageAt(program, seed, t, stream, score) : null;
+  const pose = choreography
+    ? poseAt(score, choreography, seed, t, { t0: posePassage.t0, seconds: posePassage.seconds })
+    : null;
+  const s = state(seed, t, program, stream, score, pose);
   // The state is always sampled at the exact t; only the cast may be held.
   const ct = quantise > 0 ? Math.floor(t / quantise) * quantise : t;
   const castAt = s.turnoverAt ?? ct;
-  const cast = cells(corpus, s.material, castAt, { reveal: s.reveal, cut: s.cut, rate: s.turnover });
-  return { state: s, cast };
+  const cast = cells(corpus, s.material, castAt, {
+    reveal: s.reveal,
+    cut: s.cut,
+    rate: s.turnover,
+    pose,
+  });
+  return { state: s, cast, pose };
 }
 
 /** Step and draw. Returns the renderer's stats plus the state that produced them. */
 export function frameAt(renderer, corpus, seed, t, program = null, opts = {}) {
-  const { quantise = 0, stream = 0, score = null, ...draw } = opts;
-  const { state: s, cast } = step(corpus, seed, t, program, { quantise, stream, score });
+  const { quantise = 0, stream = 0, score = null, choreography = null, ...draw } = opts;
+  const { state: s, cast } = step(corpus, seed, t, program, { quantise, stream, score, choreography });
   // The signature is not an overlay added afterwards — it is the last movement,
   // and it comes through the same canvas as every frame before it.
   const closing =

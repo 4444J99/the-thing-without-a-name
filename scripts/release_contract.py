@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = Path("release/manifest.json")
 SCHEMA = Path("release/manifest.schema.json")
 RELEASE_SCHEMA = "danse.release.v1"
-EXPECTED_OPPORTUNITY_ID = "omega-20260826"
-EXPECTED_OPPORTUNITY_FROZEN_AT = "2026-08-26T18:16:30Z"
-EXPECTED_OPPORTUNITY_SHA256 = "91404ef677066de002819abd69d2fa2f320b4b215c3f80551e0a40edd2b6f667"
-EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "0f55ba2784bbe28659107d0e473d68f35bcd1f57ffa0bd7f547fdb5e55b9dfbe"
+EXPECTED_OPPORTUNITY_ID = "omega-20260826-2"
+EXPECTED_OPPORTUNITY_FROZEN_AT = "2026-08-26T19:54:24Z"
+EXPECTED_OPPORTUNITY_SHA256 = "f5bb090a2cc1491055124d5e422b2e148f2e0327f9e096ead204eda86893c7af"
+EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "f8926f5777eb1d50d3d997493fa592a3c19004ebe5532803ea76f983f348756f"
 EXPECTED_SOURCE_EVIDENCE_SHA256 = "7e9ba1c74f8ac78df116ada8c94d8af4e7d04813f2a3c026693258cd6c974bc8"
 LIVE_INTERACTION_EVIDENCE_PATH = "release/evidence/live-interaction-replay-20260804.json"
 LIVE_INTERACTION_COMMENT_BODY_SHA256 = "4cc41f9ed353c92c27b172907800b123c7b4e85ef4ba7165ed210133f40952bf"
@@ -259,8 +259,8 @@ def validate_opportunity_binding(root: Path, manifest: dict[str, Any]) -> None:
     if binding["source_evidence_sha256"] != EXPECTED_SOURCE_EVIDENCE_SHA256:
         raise ReleaseError("release manifest does not consume the reviewed source-evidence digest")
     expected_paths = {
-        "path": "opportunities/omega-20260826.json",
-        "receipt_path": "opportunities/omega-20260826.receipt.json",
+        "path": "opportunities/omega-20260826-2.json",
+        "receipt_path": "opportunities/omega-20260826-2.receipt.json",
         "source_evidence_path": "opportunities/source-evidence-20260826.json",
     }
     for key, expected in expected_paths.items():

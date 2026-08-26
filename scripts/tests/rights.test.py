@@ -28,6 +28,10 @@ def digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+AUDIO_RENDER_RECEIPT_BYTES = b'{"schema":"danse.audio.render.v1","fixture":true}\n'
+REPOSITORY_HEAD = "a" * 40
+
+
 def source_evidence() -> dict:
     return copy.deepcopy(RIGHTS.load_register()["bindings"]["corpus"]["source"])
 
@@ -79,6 +83,7 @@ def make_package(base: Path, document: dict) -> Path:
     (package / "screener.mp4").write_bytes(screener)
     (package / "stills/origin-2017.jpg").write_bytes(origin)
     (package / "provenance/passage-score.wav").write_bytes(score)
+    (package / "provenance/audio-render.json").write_bytes(AUDIO_RENDER_RECEIPT_BYTES)
     for name, payload in generated_stills.items():
         (package / name).write_bytes(payload)
     for binding in document["package_text"]:
@@ -86,7 +91,6 @@ def make_package(base: Path, document: dict) -> Path:
         (package / binding["destination"]).write_bytes(source.read_bytes())
 
     submission = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
-    audio_sources = submission["package"]["audio"]["source_recordings"]
     origin_source = submission["package"]["origin_still"]["source_sha256"]
     source_tree = RIGHTS.expected_delivery_source_sha256("film")
     renderer_source_tree = RIGHTS.expected_renderer_source_sha256("film")
@@ -100,6 +104,7 @@ def make_package(base: Path, document: dict) -> Path:
         "duration": 390.0,
         "corpus_tier": "film",
     }
+    audio_identity = fixture_audio_identity(digest_bytes(score))
     text_items = []
     for binding in document["package_text"]:
         payload = (package / binding["destination"]).read_bytes()
@@ -115,36 +120,31 @@ def make_package(base: Path, document: dict) -> Path:
         "title": "Rights contract test",
         **passage,
         "source_tree_sha256": source_tree,
+        "repository_head": REPOSITORY_HEAD,
+        "sound": copy.deepcopy(audio_identity),
         "items": [
             {
                 "name": "master.mov",
                 "bytes": len(master),
                 "sha256": digest_bytes(master),
-                "sound": {
-                    "sources": audio_sources,
-                    "score_sha256": digest_bytes(score),
-                    "bank_fingerprint": "test-bank",
-                },
+                "sound": copy.deepcopy(audio_identity),
             },
             {
                 "name": "screener.mp4",
                 "bytes": len(screener),
                 "sha256": digest_bytes(screener),
-                "sound": {
-                    "sources": audio_sources,
-                    "score_sha256": digest_bytes(score),
-                    "bank_fingerprint": "test-bank",
-                },
+                "sound": copy.deepcopy(audio_identity),
             },
             {
                 "name": "provenance/passage-score.wav",
                 "bytes": len(score),
                 "sha256": digest_bytes(score),
-                "sound": {
-                    "sources": audio_sources,
-                    "score_sha256": digest_bytes(score),
-                    "bank_fingerprint": "test-bank",
-                },
+                "sound": copy.deepcopy(audio_identity),
+            },
+            {
+                "name": "provenance/audio-render.json",
+                "bytes": len(AUDIO_RENDER_RECEIPT_BYTES),
+                "sha256": digest_bytes(AUDIO_RENDER_RECEIPT_BYTES),
             },
             {
                 "name": "stills/origin-2017.jpg",
@@ -217,13 +217,12 @@ def make_package(base: Path, document: dict) -> Path:
     score_receipt = producer_receipt(
         "score",
         {
-            "schema": "danse.score.receipt.v1",
+            "schema": "danse.score.receipt.v2",
             "sha256": digest_bytes(score),
             "t0": passage["t0"],
             "t1": passage["t1"],
             "duration": passage["duration"],
-            "bank_fingerprint": "test-bank",
-            "sources": audio_sources,
+            **audio_identity,
         },
     )
     producers = [
@@ -311,7 +310,9 @@ def make_package(base: Path, document: dict) -> Path:
     production = {
         "schema": "danse.delivery.production.v1",
         "source_tree_sha256": source_tree,
+        "repository_head": REPOSITORY_HEAD,
         "passage": passage,
+        "sound": copy.deepcopy(audio_identity),
         "producers": producers,
         "outputs": outputs,
     }
@@ -331,11 +332,28 @@ def make_package(base: Path, document: dict) -> Path:
     return package
 
 
-def fixture_audio_identity() -> dict:
-    submission = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
+def fixture_audio_identity(master_sha256: str | None = None) -> dict:
+    master_sha256 = master_sha256 or digest_bytes(b"rights-test-score-source")
     return {
-        "bank_fingerprint": "test-bank",
-        "sources": submission["package"]["audio"]["source_recordings"],
+        "profile": RIGHTS.COMPETITION_AUDIO_PROFILE,
+        "audio_uses_sha256": RIGHTS.AUDIO_USES_SHA256,
+        "score_file_sha256": digest_bytes(b"fixture-score-contract-file"),
+        "score_contract_sha256": digest_bytes(b"fixture-score-contract-value"),
+        "choreography_file_sha256": digest_bytes(b"fixture-choreography-file"),
+        "choreography_contract_sha256": digest_bytes(b"fixture-choreography-contract"),
+        "midi_sha256": RIGHTS.ADAPTED_DELIBES_MIDI_SHA256,
+        "adaptation_sha256": RIGHTS.DELIBES_ADAPTATION_SHA256,
+        "toolchain_sha256": digest_bytes(b"fixture-toolchain"),
+        "mix_sha256": digest_bytes(b"fixture-mix"),
+        "soundfont_sha256": RIGHTS.MUSESCORE_GENERAL_SF3_SHA256,
+        "audio_render_receipt_sha256": digest_bytes(AUDIO_RENDER_RECEIPT_BYTES),
+        "master_sha256": master_sha256,
+        "sources": list(RIGHTS.COMPETITION_SOURCE_IDS),
+        "stems": [
+            {"id": stem_id, "sha256": digest_bytes(f"fixture-stem:{stem_id}".encode())}
+            for stem_id in RIGHTS.COMPETITION_STEM_IDS
+        ],
+        "credit": RIGHTS.REQUIRED_DELIBES_CREDIT,
     }
 
 
@@ -494,13 +512,219 @@ class RightsContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         receipt = json.loads(result.stdout)
         self.assertEqual(receipt["status"], "ready")
-        self.assertEqual(receipt["inventory"]["assets"], len(RIGHTS.EXPECTED_CATEGORIES))
+        self.assertEqual(receipt["inventory"]["assets"], len(self.document["assets"]))
         self.assertEqual(
             {asset["category"] for asset in self.document["assets"]},
             RIGHTS.EXPECTED_CATEGORIES,
         )
         self.assertEqual(receipt["register"]["sha256"], RIGHTS.sha256(RIGHTS.REGISTER))
         self.assertEqual(receipt["register"]["schema_sha256"], RIGHTS.sha256(RIGHTS.SCHEMA))
+
+    def test_delibes_source_license_and_soundfont_custody_is_exact_not_clearance(self) -> None:
+        evidence = RIGHTS.load_json(
+            ROOT / RIGHTS.DELIBES_CUSTODY_PATH,
+            "selected Delibes custody evidence",
+        )
+        self.assertEqual(evidence["status"], "custody-only")
+        self.assertEqual(evidence["required_credit"], RIGHTS.REQUIRED_DELIBES_CREDIT)
+        self.assertEqual(evidence["clearance"]["state"], "pending")
+        self.assertEqual(
+            evidence["soundfont"]["soundfont_sha256"],
+            RIGHTS.MUSESCORE_GENERAL_SF3_SHA256,
+        )
+        self.assertEqual(
+            evidence["soundfont"]["notice"],
+            {
+                "path": RIGHTS.MUSESCORE_GENERAL_NOTICE_PATH,
+                "sha256": RIGHTS.MUSESCORE_GENERAL_NOTICE_SHA256,
+            },
+        )
+        self.assertEqual(
+            [(row["path"], row["sha256"]) for row in evidence["source_arrangements"]],
+            list(RIGHTS.DELIBES_SOURCE_FILES),
+        )
+        for relative, expected in (
+            *RIGHTS.DELIBES_SOURCE_FILES,
+            (RIGHTS.MUSESCORE_GENERAL_NOTICE_PATH, RIGHTS.MUSESCORE_GENERAL_NOTICE_SHA256),
+        ):
+            self.assertEqual(RIGHTS.sha256(ROOT / relative), expected)
+
+        assets = {asset["id"]: asset for asset in self.document["assets"]}
+        self.assertEqual(
+            assets["paul-de-bra-source-arrangements"]["license"]["spdx"],
+            "CC-BY-4.0",
+        )
+        self.assertEqual(assets["musescore-general-soundfont"]["license"]["spdx"], "MIT")
+        self.assertEqual(
+            assets["selected-music"]["public_credit"]["label"],
+            RIGHTS.REQUIRED_DELIBES_CREDIT,
+        )
+        for asset_id in (
+            "delibes-public-domain-compositions",
+            "paul-de-bra-source-arrangements",
+            "adapted-delibes-midi",
+            "musescore-general-soundfont",
+        ):
+            use = assets[asset_id]["uses"][0]
+            self.assertEqual(use["required_for"], [])
+            self.assertEqual(use["status"], "blocked")
+            self.assertIsNone(use["evidence"])
+        music_gate = next(
+            gate for gate in self.document["human_gates"] if gate["id"] == "music-cleared"
+        )
+        self.assertEqual(music_gate["state"], "pending")
+        self.assertIsNone(music_gate["evidence"])
+
+    def test_delibes_custody_rejects_license_credit_and_clearance_mutations(self) -> None:
+        evidence = RIGHTS.load_json(
+            ROOT / RIGHTS.DELIBES_CUSTODY_PATH,
+            "selected Delibes custody evidence",
+        )
+        tracked = RIGHTS.tracked_paths(ROOT)
+
+        def custody_errors(candidate: dict) -> list[str]:
+            with mock.patch.object(RIGHTS, "load_json", return_value=candidate):
+                return RIGHTS._validate_delibes_custody(ROOT, self.document, tracked)
+
+        mutations = []
+        wrong_source = copy.deepcopy(evidence)
+        wrong_source["source_arrangements"][0]["sha256"] = "0" * 64
+        mutations.append((wrong_source, "Paul De Bra source"))
+        wrong_license = copy.deepcopy(evidence)
+        wrong_license["source_arrangements"][1]["license"]["url"] = "https://example.invalid/"
+        mutations.append((wrong_license, "CC BY 4.0"))
+        wrong_credit = copy.deepcopy(evidence)
+        wrong_credit["required_credit"] = "Music credit omitted."
+        mutations.append((wrong_credit, "required credit"))
+        false_clearance = copy.deepcopy(evidence)
+        false_clearance["clearance"]["state"] = "cleared"
+        mutations.append((false_clearance, "falsely changes the clearance gate"))
+        wrong_notice = copy.deepcopy(evidence)
+        wrong_notice["soundfont"]["notice"]["sha256"] = "f" * 64
+        mutations.append((wrong_notice, "soundfont license custody"))
+        for candidate, expected in mutations:
+            with self.subTest(expected=expected):
+                errors = custody_errors(candidate)
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+        wrong_asset = copy.deepcopy(self.document)
+        selected = next(asset for asset in wrong_asset["assets"] if asset["id"] == "selected-music")
+        selected["public_credit"]["label"] = "Incomplete credit"
+        errors = RIGHTS._validate_delibes_custody(ROOT, wrong_asset, tracked)
+        self.assertTrue(any("exact required credit" in error for error in errors), errors)
+
+        missing_source = copy.deepcopy(self.document)
+        arrangement = next(
+            asset
+            for asset in missing_source["assets"]
+            if asset["id"] == "paul-de-bra-source-arrangements"
+        )
+        arrangement["provenance"] = arrangement["provenance"][:-1]
+        errors = RIGHTS._validate_delibes_custody(ROOT, missing_source, tracked)
+        self.assertTrue(any("both exact sources" in error for error in errors), errors)
+
+    def test_delibes_custody_rejects_same_name_replacement_source_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tracked = {
+                RIGHTS.DELIBES_CUSTODY_PATH,
+                RIGHTS.MUSESCORE_GENERAL_NOTICE_PATH,
+                *(path for path, _ in RIGHTS.DELIBES_SOURCE_FILES),
+            }
+            for relative in tracked:
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            source_path = root / RIGHTS.DELIBES_SOURCE_FILES[0][0]
+            source_path.write_bytes(b"same filename, unrelated arrangement bytes\n")
+            errors = RIGHTS._validate_delibes_custody(root, self.document, tracked)
+            self.assertTrue(any("source digest drifted" in error for error in errors), errors)
+
+    def test_audio_use_profiles_quarantine_private_grains_and_bind_licenses(self) -> None:
+        tracked = RIGHTS.tracked_paths(ROOT)
+        audio_uses = RIGHTS.load_json(ROOT / RIGHTS.AUDIO_USES_PATH, "audio-use profiles")
+        competition = audio_uses["profiles"][RIGHTS.COMPETITION_AUDIO_PROFILE]
+        hybrid = audio_uses["profiles"][RIGHTS.HYBRID_AUDIO_PROFILE]
+        self.assertTrue(competition["package_eligible"])
+        self.assertFalse(hybrid["package_eligible"])
+        self.assertEqual(
+            [row["id"] for row in competition["declared_sources"]],
+            list(RIGHTS.COMPETITION_SOURCE_IDS),
+        )
+        self.assertEqual(competition["required_stems"], list(RIGHTS.COMPETITION_STEM_IDS))
+        self.assertNotIn(
+            "private-grain-bank",
+            {row["kind"] for row in competition["declared_sources"]},
+        )
+        room = next(
+            asset for asset in self.document["assets"] if asset["id"] == "room-source-recordings"
+        )
+        self.assertEqual(room["uses"][0]["required_for"], [])
+        for rule_id in ("moving-image", "score-source", "audio-render-receipt"):
+            rule = next(rule for rule in self.document["package_rules"] if rule["id"] == rule_id)
+            requirements = [(row["asset"], row["use"]) for row in rule["requirements"]]
+            self.assertNotIn(RIGHTS.HYBRID_AUDIO_REQUIREMENT, requirements)
+            self.assertEqual(
+                [row for row in requirements if row in RIGHTS.COMPETITION_AUDIO_REQUIREMENTS],
+                list(RIGHTS.COMPETITION_AUDIO_REQUIREMENTS),
+            )
+
+        real_load_json = RIGHTS.load_json
+
+        def profile_errors(candidate: dict) -> list[str]:
+            def load_candidate(path: Path, label: str, **kwargs) -> dict:
+                if Path(path) == ROOT / RIGHTS.AUDIO_USES_PATH:
+                    return candidate
+                return real_load_json(path, label, **kwargs)
+
+            with mock.patch.object(RIGHTS, "load_json", side_effect=load_candidate):
+                return RIGHTS._validate_audio_use_profiles(ROOT, self.document, tracked)
+
+        private_competition = copy.deepcopy(audio_uses)
+        private_competition["profiles"][RIGHTS.COMPETITION_AUDIO_PROFILE][
+            "declared_sources"
+        ].append(
+            {
+                "id": "apartment-grain-bank",
+                "kind": "private-grain-bank",
+                "path": "sound/sources.json",
+                "custody": "ignored-private-optional",
+            }
+        )
+        errors = profile_errors(private_competition)
+        self.assertTrue(any("forbidden private" in error for error in errors), errors)
+
+        eligible_hybrid = copy.deepcopy(audio_uses)
+        eligible_hybrid["profiles"][RIGHTS.HYBRID_AUDIO_PROFILE]["package_eligible"] = True
+        errors = profile_errors(eligible_hybrid)
+        self.assertTrue(any("package ineligible" in error for error in errors), errors)
+
+    def test_competition_sound_identity_rejects_profile_source_stem_and_credit_substitution(self) -> None:
+        identity = fixture_audio_identity()
+        self.assertEqual(RIGHTS._audio_identity_blockers(identity, "fixture"), [])
+        mutations = []
+        wrong_profile = copy.deepcopy(identity)
+        wrong_profile["profile"] = RIGHTS.HYBRID_AUDIO_PROFILE
+        mutations.append((wrong_profile, "package-eligible competition-classical"))
+        private_source = copy.deepcopy(identity)
+        private_source["sources"].append("apartment-grain-bank")
+        mutations.append((private_source, "exact competition-classical sources"))
+        reordered_stems = copy.deepcopy(identity)
+        reordered_stems["stems"][0], reordered_stems["stems"][1] = (
+            reordered_stems["stems"][1],
+            reordered_stems["stems"][0],
+        )
+        mutations.append((reordered_stems, "reordered stem"))
+        wrong_credit = copy.deepcopy(identity)
+        wrong_credit["credit"] = "Music by Léo Delibes."
+        mutations.append((wrong_credit, "exact required Delibes credit"))
+        wrong_notice_chain = copy.deepcopy(identity)
+        wrong_notice_chain["toolchain_sha256"] = "not-a-digest"
+        mutations.append((wrong_notice_chain, "toolchain_sha256"))
+        for candidate, expected in mutations:
+            with self.subTest(expected=expected):
+                blockers = RIGHTS._audio_identity_blockers(candidate, "fixture")
+                self.assertTrue(any(expected in blocker for blocker in blockers), blockers)
 
     def test_tracked_release_manifest_reserves_every_rights_row_without_inventing_clearance(self) -> None:
         manifest = json.loads((ROOT / "release/manifest.json").read_text(encoding="utf-8"))
@@ -946,7 +1170,7 @@ class RightsContractTest(unittest.TestCase):
             package = make_package(Path(temporary), candidate)
             blockers, identity = validate_fixture_package(candidate, package)
             self.assertEqual(blockers, [])
-            self.assertEqual(identity["items"], 10 + len(candidate["package_text"]))
+            self.assertEqual(identity["items"], 11 + len(candidate["package_text"]))
 
             (package / "master.mov").write_bytes(b"tampered")
             blockers, _ = validate_fixture_package(candidate, package)
@@ -1072,7 +1296,7 @@ class RightsContractTest(unittest.TestCase):
             self.assertIsNone(identity["schema"])
             self.assertNotIn("/Users/", RIGHTS.canonical_json(identity))
 
-    def test_package_audio_binds_manifested_score_hydrated_bank_and_rule_ids(self) -> None:
+    def test_package_audio_binds_identical_competition_identity_and_rule_ids(self) -> None:
         candidate = copy.deepcopy(self.document)
         clear_requirements(candidate)
         with tempfile.TemporaryDirectory() as temporary:
@@ -1080,17 +1304,88 @@ class RightsContractTest(unittest.TestCase):
             manifest_path = package / "manifest.json"
             manifest = json.loads(manifest_path.read_text())
             master = next(item for item in manifest["items"] if item["name"] == "master.mov")
-            master["sound"]["score_sha256"] = "c" * 64
-            master["sound"]["bank_fingerprint"] = "invented-bank"
+            manifest["sound"]["master_sha256"] = "c" * 64
+            master["sound"]["credit"] = "Invented incomplete music credit."
             manifest_path.write_text(json.dumps(manifest))
             blockers, _ = validate_fixture_package(candidate, package)
             self.assertTrue(any("manifested score source" in item for item in blockers), blockers)
-            self.assertTrue(any("hydrated grain bank" in item for item in blockers), blockers)
+            self.assertTrue(any("does not copy the manifest sound identity" in item for item in blockers), blockers)
+            self.assertTrue(any("canonical competition audio render" in item for item in blockers), blockers)
+
+            receipt_package = make_package(Path(temporary) / "receipt", candidate)
+            production_path = receipt_package / RIGHTS.PRODUCTION_RECEIPT
+            production = json.loads(production_path.read_text())
+            score_producer = next(row for row in production["producers"] if row["kind"] == "score")
+            score_receipt_path = receipt_package / score_producer["receipt"]["path"]
+            score_receipt = json.loads(score_receipt_path.read_text())
+            score_receipt["profile"] = RIGHTS.HYBRID_AUDIO_PROFILE
+            score_receipt_path.write_text(json.dumps(score_receipt, indent=2) + "\n")
+            score_producer["receipt"]["sha256"] = RIGHTS.sha256(score_receipt_path)
+            production_path.write_text(json.dumps(production, indent=2) + "\n")
+            receipt_manifest_path = receipt_package / "manifest.json"
+            receipt_manifest = json.loads(receipt_manifest_path.read_text())
+            receipt_manifest["production"]["sha256"] = RIGHTS.sha256(production_path)
+            receipt_manifest_path.write_text(json.dumps(receipt_manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, receipt_package)
+            self.assertTrue(any("score producer" in item and "package-eligible" in item for item in blockers), blockers)
+            self.assertTrue(any("does not copy the manifest sound identity" in item for item in blockers), blockers)
 
             renamed = copy.deepcopy(candidate)
             next(rule for rule in renamed["package_rules"] if rule["id"] == "moving-image")["id"] = "film"
             blockers, _ = validate_fixture_package(renamed, make_package(Path(temporary) / "renamed", renamed))
             self.assertTrue(any("missing required package rule moving-image" in item for item in blockers), blockers)
+
+    def test_package_audio_render_receipt_is_durable_and_digest_bound(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            receipt = package / "provenance/audio-render.json"
+            replacement = b'{"schema":"danse.audio.render.v1","fixture":"substituted"}\n'
+            receipt.write_bytes(replacement)
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            item = next(
+                row
+                for row in manifest["items"]
+                if row["name"] == "provenance/audio-render.json"
+            )
+            item["bytes"] = len(replacement)
+            item["sha256"] = digest_bytes(replacement)
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(
+                any("audio-render receipt does not bind" in item for item in blockers),
+                blockers,
+            )
+
+            missing = make_package(Path(temporary) / "missing", candidate)
+            missing_manifest_path = missing / "manifest.json"
+            missing_manifest = json.loads(missing_manifest_path.read_text())
+            missing_manifest["items"] = [
+                row
+                for row in missing_manifest["items"]
+                if row["name"] != "provenance/audio-render.json"
+            ]
+            missing_manifest_path.write_text(json.dumps(missing_manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, missing)
+            self.assertTrue(
+                any("missing required audio-render receipt artifact" in item for item in blockers),
+                blockers,
+            )
+
+    def test_package_repository_head_is_typed_and_copied_to_production(self) -> None:
+        candidate = copy.deepcopy(self.document)
+        clear_requirements(candidate)
+        with tempfile.TemporaryDirectory() as temporary:
+            package = make_package(Path(temporary), candidate)
+            manifest_path = package / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["repository_head"] = "not-a-git-object-id"
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+            blockers, _ = validate_fixture_package(candidate, package)
+            self.assertTrue(any("no exact repository head" in item for item in blockers), blockers)
+            self.assertTrue(any("different repository head" in item for item in blockers), blockers)
 
     def test_package_media_cannot_be_substituted_with_a_self_rehashed_manifest(self) -> None:
         candidate = copy.deepcopy(self.document)
@@ -1650,14 +1945,14 @@ class RightsContractTest(unittest.TestCase):
             self.assertEqual(opt_out_identity["values"]["archive-library-choice"], "opt-out")
             self.assertNotEqual(include_identity["sha256"], opt_out_identity["sha256"])
 
-    def test_frozen_submission_terms_and_fixture_music_state_are_exactly_bound(self) -> None:
+    def test_frozen_submission_terms_and_selected_music_state_are_exactly_bound(self) -> None:
         submission = yaml.safe_load((ROOT / self.document["bindings"]["submission"]["source"]["path"]).read_text())
         term_ids = {row["id"] for row in submission["terms"]}
         self.assertTrue(set(self.document["bindings"]["submission"]["required_terms"]) <= term_ids)
         music = yaml.safe_load((ROOT / self.document["bindings"]["music"]["source"]["path"]).read_text())
-        self.assertEqual(music["artistic_gate"]["status"], "pending")
-        self.assertEqual(music["works"][0]["role"], "fixture")
-        self.assertEqual(music["works"][0]["selection"]["status"], "not-selected")
+        self.assertEqual(music["artistic_gate"]["status"], "accepted")
+        self.assertEqual(music["works"][0]["role"], "repertoire")
+        self.assertEqual(music["works"][0]["selection"]["status"], "selected")
 
 
 if __name__ == "__main__":

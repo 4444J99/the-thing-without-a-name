@@ -176,6 +176,7 @@
 
 <script type="module">
 import * as Arrival from "./arrival.js";
+import * as Choreography from "./engine/choreography.js";
 import * as Corpus from "./engine/corpus.js";
 import * as Program from "./engine/program.js";
 import * as MusicalScore from "./engine/score.js";
@@ -198,7 +199,9 @@ import { InteractionController } from "./interaction/controller.js";
 let river = Arrival.arrive(location.hash);
 let shifted = river.shifted;
 let program = Arrival.modeOf(location.hash) === "free" ? null : await Program.load();
-const scoreUrl = new URLSearchParams(location.search).get("score");
+const query = new URLSearchParams(location.search);
+const scoreUrl = query.get("score");
+const choreographyUrl = query.get("choreography");
 let scoreLoadFailure = null;
 const musicalScore = scoreUrl
   ? await MusicalScore.loadOptional(scoreUrl, (error) => {
@@ -226,6 +229,12 @@ setHudVisible(false);
 hudToggle.addEventListener("click", () => setHudVisible(hud.hidden));
 
 const corpus = await Corpus.load();
+const choreography = choreographyUrl && musicalScore
+  ? await Choreography.load(choreographyUrl, { score: musicalScore, corpus })
+  : null;
+if (musicalScore?.release_status !== "fixture-only" && musicalScore && !choreography) {
+  throw new Error("a production music score requires ?choreography=<contract>");
+}
 const baseRenderer = new Renderer(canvas, corpus);
 await corpus.prime(baseRenderer.gl, {
   onProgress: (p) => { el("bar").firstElementChild.style.width = `${p * 100}%`; },
@@ -283,6 +292,7 @@ function frame() {
     quantise: RECAST,
     stream: river.stream,
     score: program ? musicalScore : null,
+    choreography: program ? choreography : null,
     matteK,
   });
 
@@ -456,9 +466,15 @@ addEventListener("keydown", async (e) => {
   // has to ask the passage where its own movements start.
   if (program && /^[1-9]$/.test(key)) {
     const t = at();
-    const p = Program.passageAt(program, river.seed, t, river.stream);
-    const m = Program.movementsIn(program, river.seed, p.index, river.stream)[Number(key) - 1];
-    if (m) jump(p.t0 + m.t0);
+    const p = Program.passageAt(program, river.seed, t, river.stream, musicalScore);
+    if (choreography && musicalScore) {
+      const movement = program.movements[Number(key) - 1];
+      const phraseIndex = choreography.phrase_assignments.findIndex((row) => row.movement_id === movement?.id);
+      if (phraseIndex >= 0) jump(p.t0 + musicalScore.phrases[phraseIndex].start_second);
+    } else {
+      const m = Program.movementsIn(program, river.seed, p.index, river.stream, musicalScore)[Number(key) - 1];
+      if (m) jump(p.t0 + m.t0);
+    }
   }
 });
 
@@ -468,6 +484,7 @@ addEventListener("pagehide", () => interaction.stop(at()));
 window.danse = {
   corpus, renderer, baseRenderer, interaction, frameAt, hex, jump,
   score: musicalScore,
+  choreography,
   get program() { return program; },
   get t() { return at(); }, set t(v) { jump(v); },
   get river() { return river; },

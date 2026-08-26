@@ -151,6 +151,9 @@ export function compileRoomBus(score, declaredPassage) {
   score = validateScore(score);
   const passage = { ...validatePassage(declaredPassage) };
   const nominalSeconds = Number(score.time.duration_seconds);
+  if (score.time.passage_mapping === "native-tempo" && Math.abs(passage.seconds - nominalSeconds) > 1e-6) {
+    throw new RangeError(`native-tempo room passage must be exactly ${nominalSeconds} seconds`);
+  }
   const absoluteScale = passage.seconds / nominalSeconds;
   const sourceScale = 1 / nominalSeconds;
   const stems = new Map(score.orchestration.map((stem) => [stem.id, stem]));
@@ -300,7 +303,7 @@ export function validateRoomBus(bus) {
   const bad = (message) => { throw new TypeError(`room events: ${message}`); };
   if (!isObject(bus) || bus.schema !== ROOM_BUS_SCHEMA) bad(`unknown schema ${bus?.schema}`);
   if (bus.semantics !== "authored-start-events") bad("semantics must be authored-start-events");
-  if (!["fixture-only", "artistic-gate-required", "diagnostic-only"].includes(bus.release_status)) {
+  if (!["fixture-only", "artistic-gate-required", "production-selected", "diagnostic-only"].includes(bus.release_status)) {
     bad("release_status is invalid");
   }
   const passage = bus.identity?.passage;

@@ -30,8 +30,8 @@ FIXTURE_FILES = (
     "release/manifest.json",
     "release/manifest.schema.json",
     "release/evidence/live-interaction-replay-20260804.json",
-    "opportunities/omega-20260826.json",
-    "opportunities/omega-20260826.receipt.json",
+    "opportunities/omega-20260826-2.json",
+    "opportunities/omega-20260826-2.receipt.json",
     "opportunities/source-evidence-20260826.json",
     "opportunities/opportunity.schema.json",
     "scripts/check-opportunities.py",
@@ -294,7 +294,7 @@ class ProductionManifestTest(unittest.TestCase):
     def test_snapshot_binding_uses_final_merged_freeze_and_source_evidence(self) -> None:
         binding = self.manifest["opportunity_snapshot"]
         self.assertEqual(binding["sha256"], CONTRACT.EXPECTED_OPPORTUNITY_SHA256)
-        self.assertEqual(binding["snapshot_id"], "omega-20260826")
+        self.assertEqual(binding["snapshot_id"], "omega-20260826-2")
         self.assertEqual(binding["frozen_at"], CONTRACT.EXPECTED_OPPORTUNITY_FROZEN_AT)
         self.assertEqual(
             binding["source_evidence_sha256"],
@@ -305,7 +305,7 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(screendance["consumer_contract"]["schema"], "danse.submission.v2")
         self.assertEqual(
             screendance["consumer_contract"]["canonical_sha256"],
-            "0897bc3228273a16e48fdd0bc4a503b39227dae0c5bc2f56f3b7e5bb1f372e79",
+            "14fce7f2be58a62c1ee46fe3ed9cf53bbf7d9290a6bf73acdd8496a0396e6de3",
         )
 
     def test_installation_binding_consumes_reference_contract_without_clearing_gates(self) -> None:
@@ -314,7 +314,7 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(binding["status"], "reference-only")
         self.assertEqual(
             binding["spec_contract_sha256"],
-            "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3",
+            "51eb2a53965901c7d0024bb12fb1f38c4847a68e7b23897bc2bbd5910832e99e",
         )
         self.assertFalse(binding["physical_predicates_satisfied"])
         self.assertFalse(binding["issue_14_can_close"])
@@ -394,7 +394,7 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(self.receipt["release"]["manifest"]["path"], "release/manifest.json")
         self.assertEqual(
             self.receipt["release"]["opportunity_snapshot"]["path"],
-            "opportunities/omega-20260826.json",
+            "opportunities/omega-20260826-2.json",
         )
         self.assertEqual(
             self.receipt["release"]["source_evidence"]["sha256"],

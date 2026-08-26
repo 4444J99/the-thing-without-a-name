@@ -31,7 +31,7 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -47,6 +47,29 @@ PHASES = ("package", "uploaded", "submitted")
 OWNED_SECTIONS = ("requirements", "approvals", "terms")
 
 VIDEO_SUFFIXES = {".mov", ".mp4", ".mxf", ".m4v"}
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+GIT_OID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+AUDIO_IDENTITY_HASH_FIELDS = (
+    "audio_uses_sha256",
+    "score_file_sha256",
+    "score_contract_sha256",
+    "choreography_file_sha256",
+    "choreography_contract_sha256",
+    "midi_sha256",
+    "adaptation_sha256",
+    "toolchain_sha256",
+    "mix_sha256",
+    "soundfont_sha256",
+    "audio_render_receipt_sha256",
+    "master_sha256",
+)
+AUDIO_SOUND_FIELDS = (
+    "profile",
+    *AUDIO_IDENTITY_HASH_FIELDS,
+    "sources",
+    "stems",
+    "credit",
+)
 
 
 class Report:
@@ -207,6 +230,234 @@ def manifest_items(root: Path) -> dict[str, dict]:
         for item in read_manifest(root).get("items", [])
         if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
+
+
+def safe_contract_file(root: Path, relative: object, label: str) -> Path:
+    """Resolve one regular repository/package file without following links."""
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise ValueError(f"{label} has no safe relative path")
+    pure = PurePosixPath(relative)
+    if pure.is_absolute() or "." in pure.parts or ".." in pure.parts:
+        raise ValueError(f"{label} escapes its contract root")
+    current = root.resolve()
+    for part in pure.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{label} traverses a symlink")
+    if not current.is_file():
+        raise ValueError(f"{label} is missing")
+    try:
+        current.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{label} escapes its contract root") from exc
+    return current
+
+
+def read_contract_json(root: Path, relative: object, label: str) -> tuple[dict, Path]:
+    path = safe_contract_file(root, relative, label)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not readable JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is not a JSON object")
+    return value, path
+
+
+def competition_audio_profile(spec: dict) -> tuple[dict, str, list[str]]:
+    """Load the digest-bound usage manifest selected by the submission register."""
+    errors: list[str] = []
+    reference = spec.get("usage_contract")
+    if not isinstance(reference, dict) or set(reference) != {
+        "path",
+        "sha256",
+        "schema",
+        "profile",
+    }:
+        return {}, "", ["submission audio has no typed usage contract"]
+    try:
+        uses, path = read_contract_json(HERE.parent, reference.get("path"), "audio usage contract")
+    except ValueError as exc:
+        return {}, "", [str(exc)]
+    actual = sha256(path)
+    if reference.get("sha256") != actual or not HEX64.fullmatch(str(reference.get("sha256", ""))):
+        errors.append("audio usage contract digest is missing or stale")
+    if uses.get("schema") != reference.get("schema") or reference.get("schema") != "danse.audio.uses.v1":
+        errors.append("audio usage contract schema has drifted")
+    profile_id = reference.get("profile")
+    if profile_id != uses.get("competition_profile") or profile_id != "competition-classical":
+        errors.append("submission does not select the canonical competition-classical profile")
+    profiles = uses.get("profiles")
+    profile = profiles.get(profile_id) if isinstance(profiles, dict) else None
+    if not isinstance(profile, dict):
+        errors.append("competition-classical profile is absent")
+        profile = {}
+    if profile.get("package_eligible") is not True:
+        errors.append("competition-classical profile is package-ineligible")
+    declared = profile.get("declared_sources")
+    required_stems = profile.get("required_stems")
+    forbidden = profile.get("forbidden_source_kinds")
+    if (
+        not isinstance(declared, list)
+        or not all(
+            isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and isinstance(row.get("kind"), str)
+            for row in declared
+        )
+        or not isinstance(required_stems, list)
+        or not all(isinstance(value, str) for value in required_stems)
+        or not isinstance(forbidden, list)
+        or not all(isinstance(value, str) for value in forbidden)
+    ):
+        errors.append("competition-classical sources, stems, or forbidden kinds are malformed")
+    elif {row["kind"] for row in declared} & set(forbidden):
+        errors.append("competition-classical profile admits a forbidden source kind")
+    hybrid = spec.get("hybrid_apartment")
+    hybrid_profile = profiles.get("hybrid-apartment") if isinstance(profiles, dict) else None
+    if (
+        not isinstance(hybrid, dict)
+        or hybrid.get("profile") != "hybrid-apartment"
+        or hybrid.get("package_eligible") is not False
+        or not isinstance(hybrid_profile, dict)
+        or hybrid_profile.get("package_eligible") is not False
+    ):
+        errors.append("hybrid-apartment must remain explicitly package-ineligible")
+    return profile, actual, errors
+
+
+def competition_sound_errors(
+    sound: object,
+    spec: dict,
+    profile: dict,
+    audio_uses_sha256: str,
+) -> list[str]:
+    """Validate the full competition sound identity without accepting aliases."""
+    if not isinstance(sound, dict):
+        return ["manifest has no typed competition sound identity"]
+    errors: list[str] = []
+    if set(sound) != set(AUDIO_SOUND_FIELDS):
+        errors.append("sound identity has fields outside its typed contract")
+    if sound.get("profile") != "competition-classical":
+        errors.append("sound identity selects a package-ineligible or unknown profile")
+    for field in AUDIO_IDENTITY_HASH_FIELDS:
+        if not isinstance(sound.get(field), str) or not HEX64.fullmatch(sound[field]):
+            errors.append(f"sound identity has no exact {field}")
+    if sound.get("audio_uses_sha256") != audio_uses_sha256:
+        errors.append("sound identity names a different audio-use contract")
+    declared = profile.get("declared_sources") if isinstance(profile, dict) else None
+    expected_sources = [row.get("id") for row in declared] if isinstance(declared, list) else []
+    if sound.get("sources") != expected_sources:
+        errors.append("sound identity does not name the declared competition sources")
+    by_id = {
+        row.get("id"): row
+        for row in declared or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    if sound.get("midi_sha256") != (by_id.get("delibes-chamber-midi") or {}).get("sha256"):
+        errors.append("sound identity names a different adapted MIDI")
+    if sound.get("soundfont_sha256") != (by_id.get("musescore-general-sf3") or {}).get("sha256"):
+        errors.append("sound identity names a different soundfont")
+    stems = sound.get("stems")
+    expected_stems = profile.get("required_stems") if isinstance(profile, dict) else None
+    if not isinstance(stems, list) or not isinstance(expected_stems, list) or len(stems) != len(expected_stems):
+        errors.append("sound identity has no exact stem census")
+    else:
+        for stem, expected_id in zip(stems, expected_stems, strict=True):
+            if (
+                not isinstance(stem, dict)
+                or set(stem) != {"id", "sha256"}
+                or stem.get("id") != expected_id
+                or not isinstance(stem.get("sha256"), str)
+                or not HEX64.fullmatch(stem["sha256"])
+            ):
+                errors.append("sound identity has a malformed or reordered stem")
+                break
+    if sound.get("credit") != spec.get("credit"):
+        errors.append("sound identity does not carry the exact approved Delibes credit")
+    return errors
+
+
+def copied_score_receipt(root: Path, manifest: dict, spec: dict) -> tuple[dict, list[str]]:
+    """Resolve the one copied v2 score receipt through production.json."""
+    errors: list[str] = []
+    reference = manifest.get("production")
+    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+        return {}, ["manifest has no exact production receipt reference"]
+    if reference.get("path") != spec.get("production_receipt"):
+        errors.append("manifest names a noncanonical production receipt")
+    try:
+        production, production_path = read_contract_json(
+            root,
+            reference.get("path"),
+            "package production receipt",
+        )
+    except ValueError as exc:
+        return {}, [*errors, str(exc)]
+    if reference.get("sha256") != sha256(production_path):
+        errors.append("package production receipt digest is stale")
+    repository_head = manifest.get("repository_head")
+    if not isinstance(repository_head, str) or not GIT_OID.fullmatch(repository_head):
+        errors.append("package manifest has no exact repository head")
+    if production.get("repository_head") != repository_head:
+        errors.append("package production receipt names a different repository head")
+    if production.get("sound") != manifest.get("sound"):
+        errors.append("package production receipt does not equal manifest.sound")
+    producers = production.get("producers")
+    score_rows = [
+        row
+        for row in producers or []
+        if isinstance(row, dict) and row.get("kind") == "score"
+    ]
+    if not isinstance(producers, list) or len(score_rows) != 1:
+        return {}, [*errors, "production receipt does not name exactly one score producer"]
+    receipt_reference = score_rows[0].get("receipt")
+    if not isinstance(receipt_reference, dict) or set(receipt_reference) != {"path", "sha256"}:
+        return {}, [*errors, "score producer has no exact copied receipt"]
+    relative = receipt_reference.get("path")
+    if not isinstance(relative, str) or not relative.startswith("provenance/producer-receipts/"):
+        errors.append("score producer receipt is outside its package boundary")
+    try:
+        receipt, receipt_path = read_contract_json(root, relative, "copied score receipt")
+    except ValueError as exc:
+        return {}, [*errors, str(exc)]
+    if receipt_reference.get("sha256") != sha256(receipt_path):
+        errors.append("copied score receipt digest is stale")
+    return receipt, errors
+
+
+def durable_audio_render_receipt_errors(
+    root: Path,
+    manifest: dict,
+    spec: dict,
+    items: dict[str, dict],
+) -> list[str]:
+    """Authenticate the package copy of the otherwise ignored render receipt."""
+    errors: list[str] = []
+    relative = spec.get("audio_render_receipt")
+    try:
+        receipt, path = read_contract_json(root, relative, "packaged audio-render receipt")
+    except ValueError as exc:
+        return [str(exc)]
+    item = items.get(relative) if isinstance(relative, str) else None
+    if not isinstance(item, dict):
+        return ["audio-render receipt is absent from the manifest"]
+    actual = sha256(path)
+    if item.get("sha256") != actual:
+        errors.append("audio-render receipt manifest digest is stale")
+    if item.get("bytes") != path.stat().st_size:
+        errors.append("audio-render receipt manifest byte count is stale")
+    manifest_sound = manifest.get("sound")
+    expected = (
+        manifest_sound.get("audio_render_receipt_sha256")
+        if isinstance(manifest_sound, dict)
+        else None
+    )
+    if item.get("sha256") != expected:
+        errors.append("audio-render receipt does not equal manifest.sound identity")
+    if receipt.get("schema") != "danse.audio.render.v1":
+        errors.append("packaged audio-render receipt has the wrong schema")
+    return errors
 
 
 # ── register-level checks (no package needed) ──────────────────────────────────
@@ -672,64 +923,131 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
         )
 
     manifest = read_manifest(root)
-    sources = set((manifest.get("sound") or {}).get("sources") or [])
-    expected = set(spec["source_recordings"])
+    profile, audio_uses_digest, profile_errors = competition_audio_profile(spec)
+    expected_sources = [
+        row.get("id")
+        for row in profile.get("declared_sources", [])
+        if isinstance(row, dict)
+    ]
     rep.add(
         "audio",
-        "registered apartment sources only",
-        PASS if sources == expected else FAIL,
-        f"{len(sources)}/{len(expected)} exact sources · bank {(manifest.get('sound') or {}).get('bank_fingerprint', 'missing')}",
+        "package-eligible competition-classical usage profile",
+        FAIL if profile_errors else PASS,
+        "; ".join(profile_errors)
+        if profile_errors
+        else f"{len(expected_sources)} declared sources · {len(profile.get('required_stems', []))} required stems",
     )
 
+    manifest_sound = manifest.get("sound")
+    identity_errors = competition_sound_errors(
+        manifest_sound,
+        spec,
+        profile,
+        audio_uses_digest,
+    )
     items = manifest_items(root)
-    audio_paths = [path for stem in ("master", "midnight-moment", "trailer", "screener", "reel") if (path := find_one(root, stem))]
-    stale: list[str] = []
-    fingerprints: set[str] = set()
-    score_digests: set[str] = set()
+    audio_paths = [
+        path
+        for stem in ("master", "midnight-moment", "trailer", "screener", "reel")
+        if (path := find_one(root, stem))
+    ]
+    surface_errors: list[str] = list(identity_errors)
+    if not audio_paths:
+        surface_errors.append("no audio artifact staged")
     for path in audio_paths:
-        item = items.get(path.name) or {}
-        sound = item.get("sound") if isinstance(item.get("sound"), dict) else {}
-        fingerprint = sound.get("bank_fingerprint")
-        score_digest = sound.get("score_sha256")
-        errors: list[str] = []
-        if (
-            set(sound.get("sources") or []) != expected
-            or not isinstance(fingerprint, str)
-            or not fingerprint
-            or not isinstance(score_digest, str)
-            or not score_digest
-        ):
-            errors.append("score receipt")
-        else:
-            fingerprints.add(fingerprint)
-            score_digests.add(score_digest)
+        item = items.get(path.name)
+        if not isinstance(item, dict):
+            surface_errors.append(f"{path.name} is absent from the manifest")
+            continue
+        if item.get("sound") != manifest_sound:
+            surface_errors.append(f"{path.name} has a different sound identity")
         if item.get("sha256") != sha256(path):
-            errors.append("digest")
+            surface_errors.append(f"{path.name} digest is stale")
         if path.stem == "screener":
             info = probe(path)
             passage_seconds = manifest.get("duration")
-            duration_matches = bool(
+            if not (
                 info
                 and isinstance(passage_seconds, (int, float))
+                and not isinstance(passage_seconds, bool)
                 and abs(info.get("seconds", -1) - passage_seconds) <= 0.1
-            )
-            if not duration_matches:
-                errors.append("passage duration")
-        if errors:
-            stale.append(f"{path.name} ({', '.join(errors)})")
-    consistent = not stale and len(fingerprints) == 1 and len(score_digests) == 1 and bool(audio_paths)
-    if consistent:
-        detail = f"{len(audio_paths)} artifact(s) · bank {next(iter(fingerprints))}"
-    elif not audio_paths:
-        detail = "no audio artifact staged"
+            ):
+                surface_errors.append(f"{path.name} passage duration is stale")
+
+    score_relative = spec.get("score_source")
+    score_item = items.get(score_relative) if isinstance(score_relative, str) else None
+    try:
+        score_path = safe_contract_file(root, score_relative, "manifested score source")
+    except ValueError as exc:
+        score_path = None
+        surface_errors.append(str(exc))
+    if not isinstance(score_item, dict):
+        surface_errors.append("score source is absent from the manifest")
     else:
-        conflicts = []
-        if len(fingerprints) != 1:
-            conflicts.append("mixed bank fingerprints")
-        if len(score_digests) != 1:
-            conflicts.append("mixed score digests")
-        detail = f"missing/stale: {', '.join(stale + conflicts)}"
-    rep.add("audio", "per-artifact score provenance", PASS if consistent else FAIL, detail)
+        if score_item.get("sound") != manifest_sound:
+            surface_errors.append("score source has a different sound identity")
+        if score_path is not None and score_item.get("sha256") != sha256(score_path):
+            surface_errors.append("score source manifest digest is stale")
+        if isinstance(manifest_sound, dict) and (
+            score_item.get("sha256") != manifest_sound.get("master_sha256")
+        ):
+            surface_errors.append("score source does not equal the rendered audio master")
+    rep.add(
+        "audio",
+        "identical timed-audio sound identity",
+        FAIL if surface_errors else PASS,
+        "; ".join(surface_errors[:6])
+        if surface_errors
+        else f"{len(audio_paths) + 1} timed artifact(s) share one full identity",
+    )
+
+    audio_render_errors = durable_audio_render_receipt_errors(
+        root,
+        manifest,
+        spec,
+        items,
+    )
+    rep.add(
+        "audio",
+        "durable audio-render receipt identity",
+        FAIL if audio_render_errors else PASS,
+        "; ".join(audio_render_errors[:6])
+        if audio_render_errors
+        else f"{spec.get('audio_render_receipt')} · exact manifested bytes",
+    )
+
+    receipt, receipt_errors = copied_score_receipt(root, manifest, spec)
+    expected_receipt_fields = {
+        "schema",
+        "sha256",
+        "t0",
+        "t1",
+        "duration",
+        *AUDIO_SOUND_FIELDS,
+    }
+    if set(receipt) != expected_receipt_fields:
+        receipt_errors.append("copied score receipt has fields outside its v2 contract")
+    if receipt.get("schema") != spec.get("score_receipt_schema"):
+        receipt_errors.append("copied score receipt has the wrong schema")
+    receipt_sound = {field: receipt.get(field) for field in AUDIO_SOUND_FIELDS}
+    if receipt_sound != manifest_sound:
+        receipt_errors.append("copied score receipt does not equal manifest.sound")
+    sound_master_sha256 = (
+        manifest_sound.get("master_sha256") if isinstance(manifest_sound, dict) else None
+    )
+    if receipt.get("sha256") != sound_master_sha256:
+        receipt_errors.append("copied score receipt does not bind the rendered master WAV")
+    for field in ("t0", "t1", "duration"):
+        if receipt.get(field) != manifest.get(field):
+            receipt_errors.append(f"copied score receipt has a different {field}")
+    rep.add(
+        "audio",
+        "copied score receipt v2 identity",
+        FAIL if receipt_errors else PASS,
+        "; ".join(receipt_errors[:6])
+        if receipt_errors
+        else f"{spec.get('score_receipt_schema')} · master {sound_master_sha256[:16]}…",
+    )
 
 
 def check_text(spec: dict, root: Path, rep: Report) -> None:

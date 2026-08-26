@@ -33,9 +33,9 @@ class RegistryFixture:
     def __init__(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "repo"
-        self.snapshot = self.root / "opportunities/omega-20260826.json"
+        self.snapshot = self.root / "opportunities/omega-20260826-2.json"
         self.schema = self.root / "opportunities/opportunity.schema.json"
-        self.receipt = self.root / "opportunities/omega-20260826.receipt.json"
+        self.receipt = self.root / "opportunities/omega-20260826-2.receipt.json"
         self.evidence = self.root / "opportunities/source-evidence-20260826.json"
         self.consumer = self.root / "submission/screendance-2027.yaml"
         for source, target in (
@@ -59,6 +59,16 @@ class RegistryFixture:
 
 
 class ProductionRegistryTest(unittest.TestCase):
+    def test_same_day_predecessor_remains_byte_for_byte_historical_evidence(self) -> None:
+        self.assertEqual(
+            CHECK.digest(ROOT / "opportunities/omega-20260826.json"),
+            "91404ef677066de002819abd69d2fa2f320b4b215c3f80551e0a40edd2b6f667",
+        )
+        self.assertEqual(
+            CHECK.digest(ROOT / "opportunities/omega-20260826.receipt.json"),
+            "0f55ba2784bbe28659107d0e473d68f35bcd1f57ffa0bd7f547fdb5e55b9dfbe",
+        )
+
     def test_exact_production_snapshot_and_consumers_validate(self) -> None:
         snapshot, receipt = CHECK.validate_all()
         self.assertEqual(len(snapshot["opportunities"]), 17)
@@ -257,7 +267,7 @@ class RegistryFailureTest(unittest.TestCase):
         with self.assertRaisesRegex(CHECK.RegistryError, "traverses a symlink"):
             CHECK.safe_file(
                 self.fixture.root,
-                "opportunities/omega-20260826.json",
+                "opportunities/omega-20260826-2.json",
                 "receipt snapshot path",
             )
 

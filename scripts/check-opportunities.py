@@ -23,9 +23,9 @@ import jsonschema
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-SNAPSHOT = ROOT / "opportunities" / "omega-20260826.json"
+SNAPSHOT = ROOT / "opportunities" / "omega-20260826-2.json"
 SCHEMA = ROOT / "opportunities" / "opportunity.schema.json"
-RECEIPT = ROOT / "opportunities" / "omega-20260826.receipt.json"
+RECEIPT = ROOT / "opportunities" / "omega-20260826-2.receipt.json"
 EVIDENCE = ROOT / "opportunities" / "source-evidence-20260826.json"
 CONSUMER = ROOT / "submission" / "screendance-2027.yaml"
 

@@ -6,10 +6,10 @@ WITH the score and WITHOUT it, at the same absolute time, and measures
 the pixel difference. Every number here is a picture first: the contact
 sheet shows the pair, and the PSNR is the number under it.
 
-- score contract: `0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d`
+- score contract: `f58a3a29a6fed5ecaa2e8580553841c852ad1d7aa63b16f054c5be08ffd580a4`
 - seed: `0x12345678`, stream: `7`, passage: 0 (t0=0s)
 - tier `screen` at 1024×768 on ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)
-- contact sheet: `score-to-motion-frames.png` (sha256 `41eaaefa904b496e`)
+- contact sheet: `score-to-motion-frames.png` (sha256 `2e7c4e21e1897a69`)
 - determinism: the WITH frame at t=0.0s rendered in a fresh process is **byte-identical** (`21afe5e36bf9` vs `21afe5e36bf9`). The instrument reports real differences or nothing; a rerun of the same input proves it.
 
 ## Why there is no identical control

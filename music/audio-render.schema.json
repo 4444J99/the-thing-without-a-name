@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://danse.example/schemas/audio-render.v1.json",
+  "title": "Danse deterministic audio render receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "profile", "inputs", "outputs", "normalization", "verification", "runtime"],
+  "properties": {
+    "schema": {"const": "danse.audio.render.v1"},
+    "profile": {"const": "competition-classical"},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "score",
+        "choreography",
+        "midi",
+        "adaptation",
+        "toolchain",
+        "mix",
+        "audio_uses",
+        "soundfont",
+        "fluidsynth_executable",
+        "ffmpeg_executable"
+      ],
+      "properties": {
+        "score": {
+          "allOf": [
+            {"$ref": "#/$defs/contractSource"},
+            {
+              "type": "object",
+              "required": ["duration_seconds"],
+              "properties": {"duration_seconds": {"type": "number", "exclusiveMinimum": 0}}
+            }
+          ]
+        },
+        "choreography": {"$ref": "#/$defs/contractSource"},
+        "midi": {"$ref": "#/$defs/source"},
+        "adaptation": {"$ref": "#/$defs/source"},
+        "toolchain": {"$ref": "#/$defs/source"},
+        "mix": {"$ref": "#/$defs/source"},
+        "audio_uses": {"$ref": "#/$defs/source"},
+        "soundfont": {"$ref": "#/$defs/source"},
+        "fluidsynth_executable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "version"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "version": {"const": "2.6.0"}
+          }
+        },
+        "ffmpeg_executable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "version"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "version": {"const": "9.0.1"}
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stems", "pre_normalized_master", "master"],
+      "properties": {
+        "stems": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"$ref": "#/$defs/audioOutput"}
+        },
+        "pre_normalized_master": {
+          "allOf": [
+            {"$ref": "#/$defs/audioOutput"},
+            {
+              "type": "object",
+              "required": ["polyphonic_frames"],
+              "properties": {"polyphonic_frames": {"type": "integer", "minimum": 1}}
+            }
+          ]
+        },
+        "master": {
+          "allOf": [
+            {"$ref": "#/$defs/audioOutput"},
+            {
+              "type": "object",
+              "required": ["polyphonic_frames"],
+              "properties": {"polyphonic_frames": {"type": "integer", "minimum": 1}}
+            }
+          ]
+        }
+      }
+    },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "method",
+        "limiter",
+        "ffmpeg",
+        "targets",
+        "first_pass",
+        "application_filter",
+        "normalization_type",
+        "output"
+      ],
+      "properties": {
+        "schema": {"const": "danse.audio.normalization.v1"},
+        "method": {"const": "ffmpeg-loudnorm-two-pass"},
+        "limiter": {"const": "ffmpeg-loudnorm-dynamic-true-peak"},
+        "ffmpeg": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "executable_sha256"],
+          "properties": {
+            "version": {"const": "9.0.1"},
+            "executable_sha256": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["integrated_lufs", "tolerance_lu", "target_true_peak_dbtp", "max_true_peak_dbtp", "lra_lu"],
+          "properties": {
+            "integrated_lufs": {"const": -16.0},
+            "tolerance_lu": {"const": 0.5},
+            "target_true_peak_dbtp": {"const": -1.1},
+            "max_true_peak_dbtp": {"const": -1.0},
+            "lra_lu": {"const": 11.0}
+          }
+        },
+        "first_pass": {"$ref": "#/$defs/loudnessMeasurement"},
+        "application_filter": {"type": "string", "minLength": 1},
+        "normalization_type": {"const": "dynamic"},
+        "output": {
+          "allOf": [
+            {"$ref": "#/$defs/loudnessMeasurement"},
+            {
+              "type": "object",
+              "properties": {
+                "integrated_lufs": {"minimum": -16.5, "maximum": -15.5},
+                "true_peak_dbtp": {"maximum": -1.0}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repeat_master_sha256",
+        "deterministic",
+        "non_silent",
+        "stems_non_silent",
+        "polyphonic",
+        "normalization_deterministic",
+        "loudness_in_target",
+        "true_peak_in_target",
+        "duration_matches_score",
+        "seek_safe",
+        "seek_probes"
+      ],
+      "properties": {
+        "repeat_master_sha256": {"$ref": "#/$defs/sha256"},
+        "deterministic": {"const": true},
+        "non_silent": {"const": true},
+        "stems_non_silent": {"const": true},
+        "polyphonic": {"const": true},
+        "normalization_deterministic": {"const": true},
+        "loudness_in_target": {"const": true},
+        "true_peak_in_target": {"const": true},
+        "duration_matches_score": {"const": true},
+        "seek_safe": {"const": true},
+        "seek_probes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start_frame", "frames", "sha256", "repeat_sha256", "equal"],
+            "properties": {
+              "start_frame": {"type": "integer", "minimum": 0},
+              "frames": {"type": "integer", "minimum": 1},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "repeat_sha256": {"$ref": "#/$defs/sha256"},
+              "equal": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "platform"],
+      "properties": {
+        "python": {"type": "string", "minLength": 1},
+        "platform": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "contractSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "contract_sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "contract_sha256": {"$ref": "#/$defs/sha256"},
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "audioOutput": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "frames",
+        "sample_rate",
+        "channels",
+        "duration_seconds",
+        "peak_sample",
+        "rms_sample",
+        "non_silent"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "frames": {"type": "integer", "minimum": 1},
+        "sample_rate": {"const": 48000},
+        "channels": {"const": 2},
+        "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "peak_sample": {"type": "integer", "minimum": 32, "maximum": 32767},
+        "rms_sample": {"type": "number", "minimum": 1},
+        "non_silent": {"const": true},
+        "polyphonic_frames": {"type": "integer", "minimum": 1}
+      }
+    },
+    "loudnessMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integrated_lufs", "true_peak_dbtp", "lra_lu", "threshold_lufs"],
+      "properties": {
+        "integrated_lufs": {"type": "number"},
+        "true_peak_dbtp": {"type": "number"},
+        "lra_lu": {"type": "number", "minimum": 0},
+        "threshold_lufs": {"type": "number"}
+      }
+    }
+  }
+}

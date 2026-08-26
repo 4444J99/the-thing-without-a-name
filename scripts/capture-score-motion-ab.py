@@ -48,7 +48,10 @@ def emit(seed: int, stream: int, passage_index: int) -> dict:
       import { state } from './engine/clock.js';
       import { scoreAt } from './engine/score.js';
       import { planWebAudio } from './sound/web_audio.mjs';
-      const score = JSON.parse(fs.readFileSync('music/score.json'));
+      // The tracked receipt is a historical affine-fixture predicate. Production
+      // delivery uses the native-tempo score/choreography receipt instead.
+      const scorePath = process.env.DANSE_FIXTURE_SCORE || 'music/score.json';
+      const score = JSON.parse(fs.readFileSync(scorePath));
       const program = JSON.parse(fs.readFileSync('render/program.json'));
       const seed = SEED, stream = STREAM, index = PASSAGE;
       const passage = passageAt(program, seed, 0, stream);

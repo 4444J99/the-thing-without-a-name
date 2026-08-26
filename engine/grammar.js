@@ -162,17 +162,19 @@ function solo(corpus, seed, t) {
  * cropped to the body. So this cut builds what the material actually supports
  * rather than reaching for a face that was never in evidence.
  */
-function figure(corpus, seed, t, { minConfidence = 0.1, rate = 1 } = {}) {
+function figure(corpus, seed, t, { minConfidence = 0.1, rate = 1, hostId = null } = {}) {
   const articulate = (n) => corpus.usable().filter((f) => Object.keys(f.joints ?? {}).length >= n);
   const hosts = articulate(8).length ? articulate(8) : articulate(6);
   if (!hosts.length) return [];
-  const hostId = corpus.choose(
-    hosts.map((f) => ({ id: f.id, weight: Object.keys(f.joints).length })),
-    seed,
-    Math.floor(t / 23),
-    901,
-  );
-  const host = corpus.byId.get(hostId);
+  const chosenHostId = hostId && hosts.some((frame) => frame.id === hostId)
+    ? hostId
+    : corpus.choose(
+      hosts.map((f) => ({ id: f.id, weight: Object.keys(f.joints).length })),
+      seed,
+      Math.floor(t / 23),
+      901,
+    );
+  const host = corpus.byId.get(chosenHostId);
 
   const joints = Object.entries(host.joints).filter(([, j]) => j[2] >= minConfidence);
   if (!joints.length) return [];
@@ -333,6 +335,99 @@ function bands(corpus, seed, t, { count = 14, rate = 1 } = {}) {
   return cast(cells, corpus, seed, t, rate);
 }
 
+// ── score-led choreography ────────────────────────────────────────────────────
+
+function coherentLayers(current, next, blend) {
+  if (!current) return [];
+  if (!next || next === current || blend <= 0) return [{ frame: current, weight: 1 }];
+  return [{ frame: current, weight: 1 - blend }, { frame: next, weight: blend }];
+}
+
+function coherent(cells, current, next, blend, { opacity = 1, namespace = 0 } = {}) {
+  const layers = coherentLayers(current, next, blend);
+  if (!layers.length) return [];
+  return cells.map((cell, index) => ({
+    ...cell,
+    renderId: namespace + index,
+    layers,
+    gain: [1, 1, 1],
+    lift: [0, 0, 0],
+    solved: false,
+    untreated: true,
+    opacity,
+  }));
+}
+
+function authoredCut(corpus, seed, cut, movement, current, next, blend, geometryFrame, options = {}) {
+  if (cut === "black") return [];
+  if (cut === "score" && movement === "ASSEMBLY") {
+    return score(corpus).map((cell, index) => ({
+      ...cell,
+      renderId: (options.namespace ?? 0) + index,
+      opacity: options.opacity ?? 1,
+    }));
+  }
+  if (cut === "solo") {
+    return coherent([{ id: 0, rect: [0, 0, 1, 1] }], current, next, blend, options);
+  }
+  if (cut === "score") {
+    return coherent(score(corpus), current, next, blend, options);
+  }
+  const topologySeed = hash(seed, CUTS.indexOf(cut), 0x6d71);
+  if (cut === "figure") {
+    const body = figure(corpus, topologySeed, 0, { rate: 0, hostId: geometryFrame });
+    const cells = body.length ? body : [{ id: 0, rect: [0, 0, 1, 1] }];
+    return coherent(cells, current, next, blend, options);
+  }
+  if (cut === "bands") return coherent(bands(corpus, topologySeed, 0, { rate: 0 }), current, next, blend, options);
+  return coherent(grid(corpus, topologySeed, 0, { rate: 0 }), current, next, blend, options);
+}
+
+/** One coherent photographic pair across every fragment.
+ *
+ * A topology change is represented by two stable casts whose opacities cross
+ * continuously for the declared bar. No fragment is recast at the boundary.
+ */
+function choreographed(corpus, seed, pose) {
+  const progress = pose.blend;
+  if (pose.transition.kind === "topology") {
+    const leaving = authoredCut(
+      corpus,
+      seed,
+      pose.current_cut_mode,
+      pose.movement_id,
+      pose.current_source_frame_id,
+      pose.current_source_frame_id,
+      0,
+      pose.current_geometry_frame_id,
+      { opacity: pose.next_cut_mode === "black" ? 1 : 1 - progress, namespace: 0 },
+    );
+    if (pose.next_cut_mode === "black") return leaving;
+    const arriving = authoredCut(
+      corpus,
+      seed,
+      pose.next_cut_mode,
+      pose.next_movement_id,
+      pose.next_source_frame_id,
+      pose.next_source_frame_id,
+      0,
+      pose.next_geometry_frame_id,
+      { opacity: progress, namespace: 100000 },
+    );
+    return [...leaving, ...arriving];
+  }
+  return authoredCut(
+    corpus,
+    seed,
+    pose.cut_mode,
+    pose.movement_id,
+    pose.current_source_frame_id,
+    pose.next_source_frame_id,
+    progress,
+    pose.current_geometry_frame_id,
+  );
+}
+
 // ── selection ──────────────────────────────────────────────────────────────────
 
 /** The cut in force at (seed, t).
@@ -341,7 +436,8 @@ function bands(corpus, seed, t, { count = 14, rate = 1 } = {}) {
  * BE the composite, not a generated approximation of it, so the score is served
  * whenever the room is folded shut.
  */
-export function cells(corpus, seed, t, { reveal = 0, cut = null, rate = 1 } = {}) {
+export function cells(corpus, seed, t, { reveal = 0, cut = null, rate = 1, pose = null } = {}) {
+  if (pose) return choreographed(corpus, seed, pose);
   const chosen = cut ?? cutAt(seed, t, reveal);
   if (chosen === "black") return [];
   if (chosen === "score") {

@@ -1020,9 +1020,9 @@ def verify_artifact(output: Path, expected_commit: str | None = None) -> dict:
             or record["bytes"] < 0
         ):
             raise ReleaseError(f"release artifact installation {key} binding is invalid")
-    if release["opportunity_snapshot"]["path"] != "opportunities/omega-20260826.json":
+    if release["opportunity_snapshot"]["path"] != "opportunities/omega-20260826-2.json":
         raise ReleaseError("release artifact points at a non-canonical opportunity snapshot")
-    if release["opportunity_receipt"]["path"] != "opportunities/omega-20260826.receipt.json":
+    if release["opportunity_receipt"]["path"] != "opportunities/omega-20260826-2.receipt.json":
         raise ReleaseError("release artifact points at a non-canonical opportunity receipt")
     if release["source_evidence"]["path"] != "opportunities/source-evidence-20260826.json":
         raise ReleaseError("release artifact points at a non-canonical source-evidence manifest")

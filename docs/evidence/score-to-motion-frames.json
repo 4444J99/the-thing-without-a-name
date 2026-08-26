@@ -1,6 +1,6 @@
 {
   "schema": "danse.evidence.score-to-motion-frames.v1",
-  "contract": "0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d",
+  "contract": "f58a3a29a6fed5ecaa2e8580553841c852ad1d7aa63b16f054c5be08ffd580a4",
   "seed": "0x12345678",
   "stream": 7,
   "passage": {
@@ -14,7 +14,7 @@
   "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)",
   "source": "score-to-motion-ab.json",
   "contact_sheet": "score-to-motion-frames.png",
-  "contact_sheet_sha256": "41eaaefa904b496e36377a19b72ef2899780b8618bede18a418583457433dce4",
+  "contact_sheet_sha256": "2e7c4e21e1897a6916499b2640d8896e1ce61cbf98a2455d2f8485bd5c543b34",
   "determinism": {
     "absolute_second": 0.0,
     "mode": "with",
@@ -53,8 +53,8 @@
       "id": "DIVISION",
       "movement": "DIVISION",
       "score_delta_max": 0.030885,
-      "psnr_db": 25.33026692101714,
-      "with_sha256": "33af625140af1ca3190d3937ed2a3c48d5eaeb71e67cf7ecc15682773870e3f2",
+      "psnr_db": 25.330264612431463,
+      "with_sha256": "f2d0c7eb2779cae2489b51a0bd472661d77411caf4a736a2bf48f8b28fcd8710",
       "without_sha256": "c8dd1cea0f2b582fb09e1149c1f1efc10584f2e60ecdfe4f6b8d7b7a409cd30a"
     },
     {
@@ -63,8 +63,8 @@
       "id": "PHRASE",
       "movement": "PHRASE",
       "score_delta_max": 0.153312,
-      "psnr_db": 11.712072467469438,
-      "with_sha256": "5a9fabbf03bde1b96a6c40760e18069373a4e5e537c57f8c2774ce105d4ecda5",
+      "psnr_db": 11.712072158855108,
+      "with_sha256": "1fa18b618b715e483e86bca341bae58cfa36164f7f5adece1f366a10df953b4a",
       "without_sha256": "f3d6e2670630d53f1c366ae4fc5f4701a6560ec6159274dcdb08504029286624"
     },
     {
@@ -73,8 +73,8 @@
       "id": "phrase-accent-a",
       "movement": "PHRASE",
       "score_delta_max": 0.225905,
-      "psnr_db": 11.622757674416702,
-      "with_sha256": "0550dd5bb598025e69c7f480cc6fc5a8f7753b5ef6f4ba9b0b45d49836d78b9b",
+      "psnr_db": 11.622757550193068,
+      "with_sha256": "ab71a3ac3ee1f20e9758bad9a80864e6ec0799685b1aa577688237fe9d4a25d2",
       "without_sha256": "3fe3f06a67bdef346ced61c19eb8f61bcf9a37bf8adeeeeed69609fc1d2cca90"
     },
     {

@@ -5,7 +5,7 @@ without the score clock. `score_delta` is exactly the choreography the score
 contributes; the image alone (`without_score`) is the control. `audio.notes` is
 what `planWebAudio` schedules in the same 250 ms window.
 
-- score contract: `0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d`
+- score contract: `f58a3a29a6fed5ecaa2e8580553841c852ad1d7aa63b16f054c5be08ffd580a4`
 - seed: `0x12345678`, stream: `7`
 - passage: `0` (t0=0s, 362.367024s) over 390 source seconds
 

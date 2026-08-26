@@ -1,0 +1,95 @@
+{
+  "schema": "danse.music.adaptation.v1",
+  "id": "delibes-screendance-suite",
+  "sources": [
+    {
+      "id": "sylvia-valse-lente",
+      "path": "music/sources/Valse-Lente-Delibes.mscz",
+      "sha256": "76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70",
+      "arranger": "Paul De Bra",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "reference_duration_seconds": 154
+    },
+    {
+      "id": "coppelia-valse",
+      "path": "music/sources/Valse-Coppelia.mscz",
+      "sha256": "86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7",
+      "arranger": "Paul De Bra",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "reference_duration_seconds": 203
+    }
+  ],
+  "exports": [
+    {
+      "source_id": "sylvia-valse-lente",
+      "path": ".work/music/Valse-Lente-Delibes.mid",
+      "sha256": "3c3aa0859fc4ed4017b4bf93fa2b23e34f3eefb7f27b8b52768fa12d04499026",
+      "custody": "hydrated-intermediate",
+      "exporter": "MuseScore 4.7.4",
+      "post_write_exit_anomaly": 134
+    },
+    {
+      "source_id": "coppelia-valse",
+      "path": ".work/music/Valse-Coppelia.mid",
+      "sha256": "075a3121923e1b7bce17cf5ce2cca65cd01afe9cf988008be8a71b8ebeb58f88",
+      "custody": "hydrated-intermediate",
+      "exporter": "MuseScore 4.7.4",
+      "post_write_exit_anomaly": 134
+    }
+  ],
+  "generator": {
+    "path": "music/adapt_delibes.py",
+    "sha256": "ca61e287ff584f6c16c309346a21e0f4a1e5b8df8b45c9b252598c9e419652bf"
+  },
+  "output": {
+    "path": "music/delibes-screendance-suite.mid",
+    "sha256": "a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199",
+    "format": 1,
+    "ticks_per_quarter": 480,
+    "tracks": 8,
+    "duration_ticks": 426240,
+    "duration_seconds": 350.896343125,
+    "timing_mode": "native-tempo",
+    "minimum_tick_closures": 150
+  },
+  "movements": [
+    {"id": "SYLVIA", "start_tick": 0, "duration_ticks": 150240, "duration_seconds": 149.152297125},
+    {"id": "COPPELIA", "start_tick": 150240, "duration_ticks": 272160, "duration_seconds": 197.744046},
+    {"id": "SIGNATURE", "start_tick": 422400, "duration_ticks": 3840, "duration_seconds": 4.0, "silent": true}
+  ],
+  "instrumentation": [
+    {"id": "violin-i", "midi_track": 1, "channel": 0, "program": 40},
+    {"id": "violin-ii", "midi_track": 2, "channel": 1, "program": 40},
+    {"id": "viola", "midi_track": 3, "channel": 2, "program": 41},
+    {"id": "cello", "midi_track": 4, "channel": 3, "program": 42},
+    {"id": "contrabass", "midi_track": 5, "channel": 4, "program": 43},
+    {
+      "id": "triangle",
+      "midi_track": 6,
+      "channel": 9,
+      "note": 81,
+      "source_annotation_ticks": [11520, 24480, 37440, 50400, 89280]
+    },
+    {"id": "timpani", "midi_track": 7, "channel": 5, "program": 47, "volume_controller": 100}
+  ],
+  "markers": {
+    "movement_prefix": "movement:",
+    "phrase_prefix": "phrase:",
+    "cue_pattern": "cue:<id>:(cue|accent):<0..127>",
+    "phrase_count": 38,
+    "cue_count": 11,
+    "global_dynamics": {"controller": 11, "track": 1, "channel": 0}
+  },
+  "changes": [
+    "Mapped five accordion voices to violin I, violin II, viola, cello, and contrabass.",
+    "Translated five non-playing Sylvia triangle annotations into explicit GM triangle accents.",
+    "Retained the declared Coppelia timpani performance.",
+    "Restored the source-exported timpani mixer volume from CC7 zero to an explicit CC7 value of 100.",
+    "Added phrase, movement, restrained visual-cue, and CC11 dynamic markers.",
+    "Clamped 150 positive written notes quantized by MuseScore to same-tick closures to the minimum one-tick MIDI duration.",
+    "Appended the existing four-second silent SIGNATURE without altering musical-event timing."
+  ],
+  "credit": "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix."
+}

@@ -1,0 +1,72 @@
+{
+  "schema": "danse.audio.toolchain.v1",
+  "id": "delibes-fluid-2.6.0",
+  "musescore": {
+    "version": "4.7.4",
+    "executable_path": "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
+    "executable_sha256": "af14e9220b0cce348639ef78bed4d91c7db703af7a9b49fad7ecf392d1108dd0",
+    "role": "source-score export only",
+    "post_write_exit_anomaly": 134,
+    "receipt_rule": "Accept only structurally complete exports with the exact adaptation.json digest; never accept process exit status alone."
+  },
+  "fluidsynth": {
+    "version": "2.6.0",
+    "executable_path": "/opt/homebrew/bin/fluidsynth",
+    "executable_sha256": "e95021e0fcd60f3b5bf34837ad1249a139a22f456dbb5bc60029723260ead456",
+    "settings": {
+      "sample_rate": 48000,
+      "sample_format": "s16",
+      "audio_channels": 2,
+      "cpu_cores": 1,
+      "gain": 0.5,
+      "reverb": false,
+      "chorus": false,
+      "midi_bank_select": "gm",
+      "lock_memory": false
+    }
+  },
+  "ffmpeg": {
+    "version": "9.0.1",
+    "executable_path": "/opt/homebrew/bin/ffmpeg",
+    "executable_sha256": "cebe04356214a938aec846e4fc423de3fc18eda07f64e34e56d55f9963473a20",
+    "role": "deterministic two-pass EBU R128 loudness normalization and true-peak limiting",
+    "settings": {
+      "method": "ffmpeg-loudnorm-two-pass",
+      "target_lufs": -16.0,
+      "tolerance_lu": 0.5,
+      "target_true_peak_dbtp": -1.1,
+      "max_true_peak_dbtp": -1.0,
+      "target_lra_lu": 11.0,
+      "linear": false,
+      "output_sample_rate": 48000,
+      "output_sample_format": "s16"
+    }
+  },
+  "soundfont": {
+    "path": ".work/music/MuseScore_General.sf3",
+    "sha256": "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3",
+    "custody": "hydrated-local",
+    "source_url": "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3",
+    "license": "MIT",
+    "license_notice": {
+      "path": "music/licenses/MuseScore_General_License.md",
+      "sha256": "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4"
+    }
+  },
+  "midi": {
+    "path": "music/delibes-screendance-suite.mid",
+    "sha256": "a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199"
+  },
+  "adaptation": {
+    "path": "music/adaptation.json",
+    "sha256": "19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21"
+  },
+  "mix": {
+    "path": "music/delibes-mix.json",
+    "sha256": "5d9780bfc51d9b2261dd7ef60f84ed40d778b3852c76c402ca8422ec3160b6cd"
+  },
+  "renderer": {
+    "path": "sound/render_music.py",
+    "sha256": "e0959a458f96916f1b732303c527f914a68e6202d96f3feaea52911908e15d66"
+  }
+}

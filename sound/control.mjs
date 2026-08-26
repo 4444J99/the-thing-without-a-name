@@ -26,6 +26,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fromData } from "../engine/corpus.js";
+import { validate as validateChoreography } from "../engine/choreography.js";
 import { step } from "../engine/engine.js";
 import { captureOf, passageAt, validate } from "../engine/program.js";
 import { camera, scatter, viewDepth } from "../engine/room.js";
@@ -67,6 +68,7 @@ function args(argv) {
     out: null,
     from: 0,
     score: null,
+    choreography: null,
     room: "sound/room-layout.json",
   };
   for (let i = 0; i < argv.length; i += 2) {
@@ -93,6 +95,9 @@ validate(program);
 let musicalScore = null;
 let musicalScorePath = null;
 let musicalScoreFileSha256 = null;
+let choreography = null;
+let choreographyPath = null;
+let choreographyFileSha256 = null;
 let roomLayouts = null;
 let roomLayoutsPath = null;
 if (opt.score) {
@@ -111,6 +116,7 @@ if (opt.score) {
   const bytes = fs.readFileSync(musicalScorePath);
   musicalScore = validateScore(JSON.parse(bytes.toString("utf8")));
   musicalScoreFileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  Object.defineProperty(musicalScore, "fileSha256", { value: musicalScoreFileSha256, enumerable: false });
 
   const lexicalRoomPath = path.resolve(DANSE, opt.room);
   if (!inside(DANSE, lexicalRoomPath)) throw new Error("--room must stay inside the Danse repository");
@@ -123,9 +129,30 @@ if (opt.score) {
 
 
 const corpusDir = path.join(DANSE, "corpus");
-const manifest = readJSON(path.join(corpusDir, "manifest.json"));
-const solved = manifest.score ? readJSON(path.join(corpusDir, manifest.score)) : null;
-const corpus = fromData(`${corpusDir}/`, manifest, solved);
+const manifestBytes = fs.readFileSync(path.join(corpusDir, "manifest.json"));
+const manifest = JSON.parse(manifestBytes.toString("utf8"));
+const solvedBytes = manifest.score ? fs.readFileSync(path.join(corpusDir, manifest.score)) : null;
+const solved = solvedBytes ? JSON.parse(solvedBytes.toString("utf8")) : null;
+const corpus = fromData(`${corpusDir}/`, manifest, solved, {
+  manifest_sha256: crypto.createHash("sha256").update(manifestBytes).digest("hex"),
+  score_sha256: solvedBytes ? crypto.createHash("sha256").update(solvedBytes).digest("hex") : null,
+});
+
+if (opt.choreography) {
+  if (!musicalScore) throw new Error("--choreography requires --score");
+  const lexicalPath = path.resolve(DANSE, opt.choreography);
+  if (!inside(DANSE, lexicalPath)) throw new Error("--choreography must stay inside the Danse repository");
+  const stat = fs.lstatSync(lexicalPath);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("--choreography must be a regular file, not a symlink");
+  choreographyPath = fs.realpathSync(lexicalPath);
+  if (!inside(DANSE_REAL, choreographyPath)) throw new Error("--choreography resolves outside the Danse repository");
+  const bytes = fs.readFileSync(choreographyPath);
+  choreographyFileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  choreography = validateChoreography(JSON.parse(bytes.toString("utf8")), { score: musicalScore, corpus });
+}
+if (musicalScore?.release_status !== "fixture-only" && musicalScore && !choreography) {
+  throw new Error("a production --score requires --choreography");
+}
 
 const seed = opt.seed === null ? (program.seed ?? 0) : Number(opt.seed);
 if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
@@ -142,11 +169,11 @@ if (cap.seconds > 0) {
   t0 = from;
   t1 = from + cap.seconds;
 } else {
-  let at = passageAt(program, seed, from, opt.stream);
+  let at = passageAt(program, seed, from, opt.stream, musicalScore);
   t0 = at.t0;
   t1 = at.t0;
   for (let k = 0; k < cap.passages; k++) {
-    at = passageAt(program, seed, t1 + 1e-6, opt.stream);
+    at = passageAt(program, seed, t1 + 1e-6, opt.stream, musicalScore);
     t1 = at.t0 + at.seconds;
   }
 }
@@ -155,9 +182,14 @@ const dt = opt.rate > 0 ? 1 / opt.rate : null;
 // Provenance for an uncropped passage recording: at its boundary the ONE
 // movement is exactly one untouched source photograph. Metadata-only callers
 // use rate 0, avoiding a full 9,000-step control render just to resolve a span.
-const opening = step(corpus, seed, t0, program, { quantise: 0, stream: opt.stream, score: musicalScore }).cast;
+const opening = step(corpus, seed, t0, program, {
+  quantise: 0,
+  stream: opt.stream,
+  score: musicalScore,
+  choreography,
+}).cast;
 const origin = opening.length === 1 ? opening[0].layers?.[0]?.frame ?? null : null;
-const caughtPassage = passageAt(program, seed, t0, opt.stream);
+const caughtPassage = passageAt(program, seed, t0, opt.stream, musicalScore);
 
 const frames = [];
 let previous = null; // cell id -> frame id, for spotting a re-cast
@@ -169,18 +201,20 @@ for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
     quantise: 0,
     stream: opt.stream,
     score: musicalScore,
+    choreography,
   });
   const view = camera(state.divergence, state.azimuth, state.elevation);
 
   // Every plane, placed exactly where the renderer will place it.
   const placed = cast.map((cell) => {
-    const p = scatter(cell.rect, cell.id, seed, state.spread);
+    const id = cell.renderId ?? cell.id;
+    const p = scatter(cell.rect, id, seed, state.spread);
     const [x0, y0, x1, y1] = cell.rect;
     return {
-      id: cell.id,
+      id,
       frame: cell.layers?.[0]?.frame ?? null,
       z: viewDepth(view.view, p.position),
-      opacity: p.opacity,
+      opacity: p.opacity * (cell.opacity ?? 1) * (state.sceneOpacity ?? 1),
       area: (x1 - x0) * (y1 - y0),
       // Where the plane sits across the frame, -1 to +1. The score pans on this,
       // so the stereo image IS the arrangement rather than a decoration of it.
@@ -203,7 +237,7 @@ for (let i = 0; dt !== null && t0 + i * dt < t1; i++) {
   // mean the same thing within one cut, so a cut change is not 256 events.
   const now = new Map(placed.map((p) => [p.id, p.frame]));
   const events = [];
-  if (previous && state.cut === previousCut) {
+  if (!choreography && previous && state.cut === previousCut) {
     for (const [id, frame] of now) {
       if (previous.has(id) && previous.get(id) !== frame) {
         const p = placed.find((q) => q.id === id);
@@ -251,7 +285,7 @@ const roomBuses = [];
 if (musicalScore) {
   let cursor = t0;
   while (cursor < t1) {
-    const passage = passageAt(program, seed, cursor, opt.stream);
+    const passage = passageAt(program, seed, cursor, opt.stream, musicalScore);
     const end = Math.min(t1, passage.t0 + passage.seconds);
     musicEvents.push(
       ...eventsBetween(musicalScore, cursor, end, { t0: passage.t0, seconds: passage.seconds }),
@@ -280,7 +314,7 @@ const payload = {
   rate: opt.rate,
   t0,
   t1,
-  duration: round(t1 - t0, 4),
+  duration: round(t1 - t0, 9),
   origin,
   voices: VOICES,
   layout: { v: ["z", "opacity", "area", "x"], e: ["z", "area", "x"] },
@@ -301,6 +335,15 @@ const payload = {
           layout_identity: roomLayouts.identity,
           buses: roomBuses,
         },
+        ...(choreography
+          ? {
+              choreography: {
+                path: portableRelative(DANSE_REAL, choreographyPath),
+                file_sha256: choreographyFileSha256,
+                identity: choreography.identity,
+              },
+            }
+          : {}),
       }
     : {}),
   frames,

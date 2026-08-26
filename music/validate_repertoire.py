@@ -33,6 +33,7 @@ RIGHTS_STATUSES = {
     "licensed",
     "restricted",
     "unverified",
+    "pending-render",
     "not-applicable",
 }
 SELECTABLE = {
@@ -40,7 +41,10 @@ SELECTABLE = {
     "edition": {"not-applicable", "project-authored", "public-domain", "licensed"},
     "arrangement_midi": {"project-authored", "licensed"},
     "performance": {"project-authored", "licensed"},
-    "recording": {"project-authored", "licensed"},
+    # Selection is an artistic decision, not a false recording receipt.  A
+    # selected score may wait on its deterministic render; delivery rejects
+    # pending-render until a digest-bound audio receipt replaces it.
+    "recording": {"project-authored", "licensed", "pending-render"},
     "samples": {"none", "project-authored", "licensed"},
 }
 VISUAL_CHANNELS = {"divergence", "spread", "azimuth", "elevation", "projK", "turnover"}
@@ -189,6 +193,7 @@ def validate_document(
     *,
     root: Path = ROOT,
     check_derived: bool = True,
+    require_hydrated: bool = False,
 ) -> list[str]:
     errors = validate_schema_instance(register)
 
@@ -239,7 +244,13 @@ def validate_document(
             if row.get("source") is not None:
                 source(row.get("source"), f"{location}.evidence[{index}].source", required=False)
 
-    def source(value: Any, location: str, *, required: bool) -> tuple[str, str] | None:
+    def source(
+        value: Any,
+        location: str,
+        *,
+        required: bool,
+        allow_hydrated: bool = False,
+    ) -> tuple[str, str] | None:
         if value is None:
             if required:
                 error(location, "is required")
@@ -254,6 +265,38 @@ def validate_document(
             error(f"{location}.sha256", "must be a lowercase SHA-256 digest")
             return None
         normalized = Path(relative).as_posix()
+        custody = row.get("custody")
+        if custody == "hydrated-local":
+            if not allow_hydrated:
+                error(f"{location}.custody", "hydrated-local is not allowed for this provenance layer")
+                return relative, digest
+            if not normalized.startswith(".work/"):
+                error(f"{location}.path", "hydrated-local bytes must live below .work/")
+            if tracked is not None and normalized in tracked:
+                error(f"{location}.path", "hydrated-local bytes must remain untracked")
+            if not isinstance(row.get("source_url"), str) or not row["source_url"].strip():
+                error(f"{location}.source_url", "must identify the hydration source")
+            notice = row.get("license_notice")
+            source(notice, f"{location}.license_notice", required=True)
+            candidate = root / relative
+            if not candidate.exists():
+                if require_hydrated:
+                    error(f"{location}.path", f"required hydrated bytes are absent: {relative}")
+                return relative, digest
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                error(f"{location}.path", f"does not resolve to hydrated source bytes: {relative}")
+                return relative, digest
+            if candidate.is_symlink() or not candidate.is_file() or not _inside(root.resolve(), resolved):
+                error(f"{location}.path", "must be a regular file inside the repository")
+                return relative, digest
+            actual = sha256(candidate)
+            if actual != digest:
+                error(f"{location}.sha256", f"declares {digest}, actual {actual}")
+            return relative, digest
+        if custody is not None:
+            error(f"{location}.custody", f"unknown custody {custody!r}")
         if tracked is None or normalized not in tracked:
             error(f"{location}.path", "must be tracked by Git and available in a clean checkout")
             return relative, digest
@@ -323,6 +366,17 @@ def validate_document(
                 if not isinstance(license_id, str) or not license_id.strip():
                     error(f"{location}.{layer_name}.license", "must identify the license for licensed material")
             evidence(layer, f"{location}.{layer_name}")
+            sources = layer.get("sources")
+            if sources is not None:
+                if not isinstance(sources, list) or not sources:
+                    error(f"{location}.{layer_name}.sources", "must contain one or more tracked sources")
+                else:
+                    for source_index, source_value in enumerate(sources):
+                        source(
+                            source_value,
+                            f"{location}.{layer_name}.sources[{source_index}]",
+                            required=True,
+                        )
 
         composition = layer_rows["composition"]
         for field in ("title", "composer", "date"):
@@ -349,6 +403,11 @@ def validate_document(
             f"{location}.recording.source",
             required=recording.get("status") in {"project-authored", "licensed"},
         )
+        source(
+            recording.get("render_contract"),
+            f"{location}.recording.render_contract",
+            required=recording.get("status") == "pending-render",
+        )
 
         samples = layer_rows["samples"]
         items = samples.get("items")
@@ -361,7 +420,12 @@ def validate_document(
                 error(f"{location}.samples.items", "must identify source bytes when sample status is not none")
             for item_index, item_value in enumerate(items):
                 item = mapping(item_value, f"{location}.samples.items[{item_index}]")
-                source(item.get("source"), f"{location}.samples.items[{item_index}].source", required=True)
+                source(
+                    item.get("source"),
+                    f"{location}.samples.items[{item_index}].source",
+                    required=True,
+                    allow_hydrated=True,
+                )
                 if not item.get("license"):
                     error(f"{location}.samples.items[{item_index}].license", "is required")
 
@@ -456,12 +520,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("register", nargs="?", type=Path, default=DEFAULT_REGISTER)
     parser.add_argument("--allow-stale-derived", action="store_true", help="skip derived artifact byte checks")
+    parser.add_argument("--require-hydrated", action="store_true", help="require and hash all hydrated-local bytes")
     args = parser.parse_args()
     try:
         register = load_register(args.register)
     except (OSError, yaml.YAMLError) as exc:
         parser.error(str(exc))
-    errors = [*validate_schema_document(), *validate_document(register, check_derived=not args.allow_stale_derived)]
+    errors = [
+        *validate_schema_document(),
+        *validate_document(
+            register,
+            check_derived=not args.allow_stale_derived,
+            require_hydrated=args.require_hydrated,
+        ),
+    ]
     if errors:
         for row in errors:
             print(f"FAIL: {row}")

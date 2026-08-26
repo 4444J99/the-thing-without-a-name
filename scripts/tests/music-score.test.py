@@ -90,15 +90,31 @@ def compact_events(events: list[dict]) -> list[dict]:
 class MusicScoreContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.score = load_score()
-        cls.register = load_register()
         cls.program = json.loads((ROOT / "render/program.json").read_text())
+        cls.production_score = load_score()
+        cls.production_register = load_register()
+        cls.register = load_register(ROOT / "music/fixtures/repertoire.yaml")
+        cls.score = compile_contract(copy.deepcopy(cls.register), cls.program, "generated-contract-study")
+        cls._fixture_directory = tempfile.TemporaryDirectory(dir=ROOT / "music/fixtures")
+        cls.fixture_score_path = Path(cls._fixture_directory.name) / "score.json"
+        cls.fixture_score_path.write_bytes(output_bytes(cls.score))
+        cls._prior_fixture_env = os.environ.get("DANSE_FIXTURE_SCORE")
+        os.environ["DANSE_FIXTURE_SCORE"] = str(cls.fixture_score_path)
 
-    def test_fixture_register_compiler_and_all_tracked_digests_are_current(self) -> None:
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._prior_fixture_env is None:
+            os.environ.pop("DANSE_FIXTURE_SCORE", None)
+        else:
+            os.environ["DANSE_FIXTURE_SCORE"] = cls._prior_fixture_env
+        cls._fixture_directory.cleanup()
+
+    def test_fixture_and_production_registers_compile_with_separate_release_semantics(self) -> None:
         commands = (
             (sys.executable, "music/generate_fixture_midi.py", "--check"),
             (sys.executable, "music/compile_score.py", "--check"),
             (sys.executable, "music/validate_repertoire.py"),
+            (sys.executable, "music/validate_repertoire.py", "music/fixtures/repertoire.yaml", "--allow-stale-derived"),
         )
         for command in commands:
             with self.subTest(command=command):
@@ -108,16 +124,17 @@ class MusicScoreContractTest(unittest.TestCase):
         self.assertEqual(self.score["artistic_gate"]["status"], "pending")
         self.assertEqual(self.register["works"][0]["selection"]["status"], "not-selected")
         self.assertEqual(self.score["identity"]["midi_sha256"], sha256(ROOT / "music/fixtures/generated-study.mid"))
+        self.assertEqual(self.score["time"]["passage_mapping"], "restart-and-affine-stretch")
+        self.assertEqual(self.production_score["release_status"], "production-selected")
+        self.assertEqual(self.production_score["time"]["passage_mapping"], "native-tempo")
+        self.assertEqual(self.production_score["identity"]["midi_sha256"], sha256(ROOT / "music/delibes-screendance-suite.mid"))
         identity_source = copy.deepcopy(self.score)
         declared_contract = identity_source["identity"].pop("contract_sha256")
         self.assertEqual(declared_contract, canonical_sha256(identity_source))
         schema = json.loads((ROOT / "music/score.schema.json").read_text())
         self.assertEqual(schema["properties"]["schema"]["const"], "danse.music.score.v1")
-        self.assertEqual(
-            self.register["works"][0]["derived_artifacts"][0]["sha256"],
-            sha256(ROOT / "music/score.json"),
-        )
         self.assertTrue(all(type(beat["tick"]) is int for beat in self.score["beats"]))
+        self.assertTrue(all(type(beat["tick"]) is int for beat in self.production_score["beats"]))
 
     def test_cli_success_diagnostics_accept_external_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -144,7 +161,7 @@ class MusicScoreContractTest(unittest.TestCase):
         first = output_bytes(compile_contract(copy.deepcopy(self.register), self.program, "generated-contract-study"))
         second = output_bytes(compile_contract(copy.deepcopy(self.register), self.program, "generated-contract-study"))
         self.assertEqual(first, second)
-        self.assertEqual(first, (ROOT / "music/score.json").read_bytes())
+        self.assertEqual(first, self.fixture_score_path.read_bytes())
 
     def test_python_validator_reports_missing_and_malformed_lookup_as_value_errors(self) -> None:
         malformed = []
@@ -325,7 +342,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = """
           import fs from 'node:fs';
           import { contractSha256, validate } from './engine/score.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           const declared = score.identity.contract_sha256;
           const actual = contractSha256(score);
           score.notes[0].pitch += 1;
@@ -346,7 +363,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = f"""
           import fs from 'node:fs';
           import {{ scoreAt, validate }} from './engine/score.js';
-          const score = validate(JSON.parse(fs.readFileSync('music/score.json')));
+          const score = validate(JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE)));
           const window = {json.dumps(window)};
           const compact = (state) => ({{
             source: Number(state.source_second.toFixed(8)),
@@ -375,7 +392,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = """
           import fs from 'node:fs';
           import { scoreAt } from './engine/score.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           score.beats[8].index = 7;
           console.log(JSON.stringify(scoreAt(score, 4.25).beat.phase));
         """
@@ -414,7 +431,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = f"""
           import fs from 'node:fs';
           import {{ eventsBetween }} from './engine/score.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           const window = {json.dumps(window)};
           const compact = (events) => events.map((event) => ({{
             type: event.type,
@@ -442,7 +459,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = """
           import fs from 'node:fs';
           import { scoreAt } from './engine/score.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           score.cues[3].second = 128.25;
           score.cues[3].end_second = 128.5;
           score.lookup.buckets[128].recast = 1;
@@ -476,7 +493,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = """
           import fs from 'node:fs';
           import { eventsBetween } from './engine/score.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           const guard = (rows) => {
             let reads = 0;
             const proxy = new Proxy(rows, {
@@ -577,7 +594,7 @@ class MusicScoreContractTest(unittest.TestCase):
           import { passageAt } from './engine/program.js';
           import { validate } from './engine/score.js';
           import { scheduleWebAudio } from './sound/web_audio.mjs';
-          const score = validate(JSON.parse(fs.readFileSync('music/score.json')));
+          const score = validate(JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE)));
           const program = JSON.parse(fs.readFileSync('render/program.json'));
           const passage = passageAt(program, 0x12345678, 0, 7);
           const t = passage.t0 + (128 / 390) * passage.seconds;
@@ -615,7 +632,7 @@ class MusicScoreContractTest(unittest.TestCase):
           import { state, turnover } from './engine/clock.js';
           import { passageAt } from './engine/program.js';
           const program = JSON.parse(fs.readFileSync('render/program.json'));
-          const baselineScore = JSON.parse(fs.readFileSync('music/score.json'));
+          const baselineScore = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           const heldScore = JSON.parse(JSON.stringify(baselineScore));
           heldScore.cues[3].visual.hold = true;
           const seed = 0x12345678;
@@ -655,11 +672,11 @@ class MusicScoreContractTest(unittest.TestCase):
         self.assertEqual(payload["material"][1], payload["material"][2])
 
     def test_control_and_segment_receipts_emit_score_and_source_identity_without_local_paths(self) -> None:
-        result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
+        result = run("node", "sound/control.mjs", "--rate", "0", "--score", str(self.fixture_score_path))
         self.assertEqual(result.returncode, 0, result.stderr)
         control = json.loads(result.stdout)
         self.assertEqual(control["music"]["identity"], self.score["identity"])
-        self.assertEqual(control["music"]["score_file_sha256"], sha256(ROOT / "music/score.json"))
+        self.assertEqual(control["music"]["score_file_sha256"], sha256(self.fixture_score_path))
         self.assertEqual(len(control["music"]["events"]), len(self.score["cues"]) + len(self.score["notes"]))
         self.assertTrue(all(stem["midi_source_sha256"] == self.score["identity"]["midi_sha256"] for stem in control["music"]["stems"]))
 
@@ -675,12 +692,12 @@ class MusicScoreContractTest(unittest.TestCase):
             height=180,
             fps=30,
             segment_frames=60,
-            score="music/score.json",
+            score=str(self.fixture_score_path),
         )
         with mock.patch.object(offline, "source_tree_sha256", return_value="fixture-tree"):
             receipt = offline.segment_identity(args, 0, 60)
         identity = receipt["inputs"]["music_score"]
-        self.assertEqual(identity["path"], "music/score.json")
+        self.assertEqual(identity["path"], self.fixture_score_path.relative_to(ROOT).as_posix())
         self.assertEqual(identity["contract_sha256"], self.score["identity"]["contract_sha256"])
         self.assertNotIn(str(ROOT), json.dumps(identity))
         self.assertTrue(all(set(stem) == {"id", "midi_source_sha256", "audio_source_sha256"} for stem in identity["stems"]))
@@ -726,7 +743,7 @@ class MusicScoreContractTest(unittest.TestCase):
         script = """
           import fs from 'node:fs';
           import { scheduleWebAudio } from './sound/web_audio.mjs';
-          const fixture = JSON.parse(fs.readFileSync('music/score.json'));
+          const fixture = JSON.parse(fs.readFileSync(process.env.DANSE_FIXTURE_SCORE));
           let created = 0;
           const context = {
             currentTime: 0,
@@ -790,7 +807,7 @@ class MusicScoreContractTest(unittest.TestCase):
 
     def test_python_renderer_exposes_the_same_event_plan_and_fails_closed_on_uncleared_stems(self) -> None:
         score_renderer = load_module("danse_fixture_score_renderer_test", ROOT / "sound/score.py")
-        control_result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
+        control_result = run("node", "sound/control.mjs", "--rate", "0", "--score", str(self.fixture_score_path))
         self.assertEqual(control_result.returncode, 0, control_result.stderr)
         control = json.loads(control_result.stdout)
         plan = score_renderer.music_event_plan(control)

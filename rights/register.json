@@ -26,12 +26,12 @@
     "music": {
       "source": {
         "path": "music/repertoire.yaml",
-        "sha256": "cdf3d772e7f2ac4dc05eecfb86cf50e5910a27e60e3161ccac7b0f81ddff74df",
-        "summary": "Layered composition, edition, arrangement, performance, recording, and sample register."
+        "sha256": "091bee7bc2fd9b544b530b8dbbaa31dfa0996601c1b64bdfe0425ba93345715d",
+        "summary": "Selected Delibes suite with separately evidenced composition, edition, arrangement/MIDI, performance, recording, and sample layers."
       },
       "schema": "danse.music.repertoire.v1",
       "works": 1,
-      "artistic_gate": "pending"
+      "artistic_gate": "accepted"
     },
     "pose_vendor": {
       "source": {
@@ -47,7 +47,7 @@
     "submission": {
       "source": {
         "path": "submission/screendance-2027.yaml",
-        "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed",
+        "sha256": "52923932cefc4980d52d239465ee99acf8d4650def4148572a2275e2309e949b",
         "summary": "Frozen ScreenDance package requirements, approvals, and published legal terms."
       },
       "schema": "danse.submission.v2",
@@ -220,7 +220,7 @@
       "state": "pending",
       "evidence": null,
       "attestation": {"key": "music-cleared", "kind": "boolean", "values": [true]},
-      "note": "The current generated fixture is not selectable repertoire and cannot clear a release."
+      "note": "The selected Delibes contracts are not artistic approval or final clearance; music-license and credit review, durable package binding, and the human decision remain unresolved."
     },
     {
       "id": "press-stills-cleared",
@@ -402,7 +402,7 @@
       "public_credit": {"state": "not-required", "label": null, "note": "This row records a use choice rather than a contributor credit."},
       "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Published archive-library opt-in or opt-out choice."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "52923932cefc4980d52d239465ee99acf8d4650def4148572a2275e2309e949b", "summary": "Published archive-library opt-in or opt-out choice."}
       ],
       "uses": [
         {"id": "festival-archive", "medium": "festival-archive", "required_for": ["submitted"], "territory": "pending", "term": "pending", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "conditional_exclusion": {"gate": "archive-library-choice", "value": "opt-out"}, "note": "Include requires cleared archive scope; the registered opt-out decision excludes this use."}
@@ -419,7 +419,7 @@
       "public_credit": {"state": "not-required", "label": null, "note": "No font bytes are distributed."},
       "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
       "provenance": [
-        {"path": "index.html", "sha256": "6217c8a430abd368bb8a611d615f7adc3f8c0ff74ed793a8dc744efb76ed2a7b", "summary": "System-only CSS font stack in the live artwork."}
+        {"path": "index.html", "sha256": "adb3c8f104f10134cd2ba5bcb81be239ea29636ae5e8d91e2f697c77185d9450", "summary": "System-only CSS font stack in the live artwork."}
       ],
       "uses": [
         {"id": "no-font-binary", "medium": "software-distribution", "required_for": [], "territory": "not-applicable", "term": "not-applicable", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "excluded", "evidence": null, "note": "The exclusion is enforced by artifact inventory tests."}
@@ -446,20 +446,21 @@
     {
       "id": "room-source-recordings",
       "category": "recording",
-      "description": "The two private source recordings declared by exact basename and SHA-256 in the ScreenDance package register.",
+      "description": "The optional private apartment grain-bank sources reserved for the post-filing hybrid profile; they are forbidden from the package-eligible competition-classical profile.",
       "disposition": "blocked",
       "rights_holder": "Anthony J. Padavano",
       "license": null,
-      "public_credit": {"state": "pending", "label": "Source recordings — Anthony J. Padavano", "note": "Ownership claim and final sound credit remain unapproved."},
+      "public_credit": {"state": "pending", "label": "Optional apartment source recordings — Anthony J. Padavano", "note": "This hybrid-only source credit and ownership claim remain unapproved."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Exact source recording names and byte digests; no private location."},
-        {"path": "submission/text/rights_declaration.txt", "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5", "summary": "Unapproved tracked ownership claim; not completion evidence."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "52923932cefc4980d52d239465ee99acf8d4650def4148572a2275e2309e949b", "summary": "Hybrid-only private source names and byte digests, explicitly package-ineligible and without private locations."},
+        {"path": "submission/text/rights_declaration.txt", "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5", "summary": "Unapproved tracked ownership claim; not completion evidence."},
+        {"path": "sound/audio-uses.json", "sha256": "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831", "summary": "Usage manifest confines the private grain bank to the package-ineligible hybrid-apartment profile."}
       ],
       "uses": [
-        {"id": "delivery-audio", "medium": "audio", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact rendered score and rights declaration are pending."}
+        {"id": "hybrid-apartment-grains", "medium": "audio", "required_for": [], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Only the package-ineligible post-filing hybrid may request these ignored private sources; exact bytes, permission, credit, and render receipts remain pending."}
       ],
-      "blocker": "Validate hydrated source bytes and approve the authorship declaration against the exact package."
+      "blocker": "Before any hybrid render, validate the ignored private grain-bank bytes and approve authorship, use scope, and credit without changing the submitted competition capture."
     },
     {
       "id": "press-still-set",
@@ -471,7 +472,7 @@
       "public_credit": {"state": "pending", "label": null, "note": "No still selection or final caption and credit package exists."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Still dimensions and unlimited official-selection promotional term."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "52923932cefc4980d52d239465ee99acf8d4650def4148572a2275e2309e949b", "summary": "Still dimensions and unlimited official-selection promotional term."}
       ],
       "uses": [
         {"id": "press", "medium": "press", "required_for": ["public", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No selected source digest or clearance receipt."},
@@ -480,21 +481,106 @@
       "blocker": "Select exact still bytes and clear the depicted performer, pictured objects, worldwide perpetual promotion, captions, and credits."
     },
     {
-      "id": "selected-music",
+      "id": "delibes-public-domain-compositions",
       "category": "music",
-      "description": "Future selected composition, edition, arrangement or MIDI, performance, recording, samples, and score-derived bytes.",
-      "disposition": "blocked",
+      "description": "The selected Valse lente from Sylvia and Valse from Coppélia compositions by Léo Delibes, kept separate from arrangement, performance, recording, sample, and mix rights.",
+      "disposition": "public-domain-with-provenance",
       "rights_holder": null,
       "license": null,
-      "public_credit": {"state": "pending", "label": null, "note": "No repertoire is selected and no public music credit can be generated."},
-      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "public_credit": {"state": "pending", "label": "Music — Léo Delibes", "note": "Composition credit wording remains subject to the combined music-credit review."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
       "provenance": [
-        {"path": "music/repertoire.yaml", "sha256": "cdf3d772e7f2ac4dc05eecfb86cf50e5910a27e60e3161ccac7b0f81ddff74df", "summary": "Fixture-only layered rights register with pending artistic gate."}
+        {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "Public-safe custody record for the two compositions, historical-edition evidence, exact arrangement sources, licenses, soundfont notice, and pending clearance gate."}
       ],
       "uses": [
-        {"id": "score-audio", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "A generated contract fixture is not releasable repertoire."}
+        {"id": "competition-composition", "medium": "film", "required_for": [], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "allowed", "archive": "allowed", "status": "blocked", "evidence": null, "note": "Composition provenance is recorded, but the exact competition package and music-clearance decision do not yet exist."}
       ],
-      "blocker": "Anthony must select and accept repertoire; every music layer and exact byte must then validate independently."
+      "blocker": "Preserve the exact score and audio identities in the package, then complete credit and human music-clearance review before shipping."
+    },
+    {
+      "id": "paul-de-bra-source-arrangements",
+      "category": "music",
+      "description": "The exact Paul De Bra source arrangements for the selected Sylvia and Coppélia movements, separately identified from the project-authored adapted MIDI.",
+      "disposition": "licensed",
+      "rights_holder": "Paul De Bra",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "name": "Creative Commons Attribution 4.0 International",
+        "evidence": {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "Digest-bound custody record names the arranger, license URL, source pages, IMSLP evidence pages, exact files, and required credit."}
+      },
+      "public_credit": {"state": "pending", "label": "Source arrangements — Paul De Bra (CC BY 4.0)", "note": "The required combined credit is selected but not yet human-approved against the exact package."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
+      "provenance": [
+        {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "Public-safe source and license custody record."},
+        {"path": "music/sources/Valse-Lente-Delibes.mscz", "sha256": "76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70", "summary": "Exact selected Paul De Bra Sylvia source arrangement."},
+        {"path": "music/sources/Valse-Coppelia.mscz", "sha256": "86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7", "summary": "Exact selected Paul De Bra Coppélia source arrangement."}
+      ],
+      "uses": [
+        {"id": "competition-arrangement", "medium": "film", "required_for": [], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "allowed", "archive": "allowed", "status": "blocked", "evidence": null, "note": "The CC BY 4.0 source custody is exact, but attribution review and package binding remain pending."}
+      ],
+      "blocker": "Preserve the source-to-adapted-MIDI identity chain in the final package and approve the required CC BY 4.0 credit."
+    },
+    {
+      "id": "adapted-delibes-midi",
+      "category": "music",
+      "description": "The project-authored chamber adaptation and sequencing of the two exact Paul De Bra sources, including phrase, movement, dynamic, and restrained visual-cue markers.",
+      "disposition": "owned",
+      "rights_holder": "Anthony J. Padavano",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Adaptation, sequencing, cue markers, and mix — Anthony J. Padavano", "note": "Exact adapted MIDI custody is recorded; transformation-credit wording and artist approval remain pending."},
+      "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
+      "provenance": [
+        {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "The custody record fixes the two source arrangements and required transformation credit; it is not adapted-MIDI clearance evidence."},
+        {"path": "music/delibes-screendance-suite.mid", "sha256": "a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb0f80ee67980f199", "summary": "Exact project-authored chamber MIDI selected by the competition audio profile."},
+        {"path": "music/adaptation.json", "sha256": "19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21", "summary": "Typed adaptation receipt binds sources, exporter intermediates, generator, output, native timing, instruments, markers, changes, and credit."},
+        {"path": "sound/audio-uses.json", "sha256": "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831", "summary": "Competition profile declares this MIDI as the sole project-authored performance source."}
+      ],
+      "uses": [
+        {"id": "competition-midi", "medium": "film", "required_for": [], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "The tracked contracts declare exact MIDI, score, and choreography identities; the package predicate still requires their agreement with the final deterministic render receipt, durable package binding, transformation review, credit, and clearance."}
+      ],
+      "blocker": "Preserve this exact MIDI, score, choreography, and deterministic-audio chain in package receipts, then complete transformation review and the human music-clearance decision."
+    },
+    {
+      "id": "musescore-general-soundfont",
+      "category": "recording",
+      "description": "MuseScore_General.sf3 is the declared deterministic competition sound source; its expected SHA-256 and tracked MIT-family notice are recorded, while exact-byte presence remains package-gated because the hydrated soundfont is not committed.",
+      "disposition": "licensed",
+      "rights_holder": "MuseScore_General, FluidR3, and named upstream sample contributors",
+      "license": {
+        "spdx": "MIT",
+        "name": "MIT License",
+        "evidence": {"path": "music/licenses/MuseScore_General_License.md", "sha256": "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4", "summary": "Tracked MuseScore_General and FluidR3 license notice with acknowledgements and MIT terms."}
+      },
+      "public_credit": {"state": "pending", "label": "Soundfont — MuseScore_General (MIT)", "note": "The expected hydrated-byte identity is declared; the package predicate still requires its final-render agreement, durable presence, and approved notice placement."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "Custody record binds the official documentation URL and exact local notice."},
+        {"path": "music/licenses/MuseScore_General_License.md", "sha256": "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4", "summary": "Exact tracked MIT-family soundfont license and attribution notice."},
+        {"path": "sound/audio-uses.json", "sha256": "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831", "summary": "Competition profile pins the expected hydrated SF3 digest and notice identity."}
+      ],
+      "uses": [
+        {"id": "competition-soundfont", "medium": "audio", "required_for": [], "territory": "worldwide", "term": "perpetual", "expires": null, "promotion": "allowed", "archive": "allowed", "status": "blocked", "evidence": null, "note": "The expected SHA-256 and tracked license notice exist; final-render agreement, durable package presence, package-loudness acceptance, and human notice review remain package-gated."}
+      ],
+      "blocker": "Preserve the exact soundfont digest and tracked notice through the durable package receipt, then complete notice and credit review."
+    },
+    {
+      "id": "selected-music",
+      "category": "music",
+      "description": "The selected two-movement Delibes suite as adapted, performed, rendered, mixed, and synchronized for the competition film; component composition, arrangement, MIDI, and soundfont rights remain separately inventoried.",
+      "disposition": "blocked",
+      "rights_holder": "Anthony J. Padavano and applicable source rights holders",
+      "license": null,
+      "public_credit": {"state": "pending", "label": "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix.", "note": "Exact required wording is recorded, but source/license review, artist approval, and package binding remain pending."},
+      "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
+      "provenance": [
+        {"path": "music/repertoire.yaml", "sha256": "091bee7bc2fd9b544b530b8dbbaa31dfa0996601c1b64bdfe0425ba93345715d", "summary": "Selected Delibes repertoire register with component rights kept separate and durable package binding still pending."},
+        {"path": "rights/evidence/delibes-source-license-custody.json", "sha256": "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543", "summary": "Exact public-safe custody for the selected source arrangements, composition evidence, licenses, soundfont notice, and required credit."},
+        {"path": "sound/audio-uses.json", "sha256": "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831", "summary": "Usage manifest makes competition-classical the only package-eligible profile and excludes private grains, DAW instruments, and unverified downloads."}
+      ],
+      "uses": [
+        {"id": "score-audio", "medium": "film", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Source custody alone does not clear the adapted MIDI, deterministic render, final mix, synchronization, attribution, or film use."}
+      ],
+      "blocker": "Preserve every music-layer identity in the package, complete attribution and license review, and obtain the artist's music-clearance decision."
     },
     {
       "id": "mediapipe-pose-runtime",
@@ -576,7 +662,10 @@
         {"asset": "photographic-corpus", "use": "film"},
         {"asset": "dancer-performance-likeness", "use": "film"},
         {"asset": "poster-wall-and-pictured-objects", "use": "film"},
-        {"asset": "room-source-recordings", "use": "delivery-audio"},
+        {"asset": "delibes-public-domain-compositions", "use": "competition-composition"},
+        {"asset": "paul-de-bra-source-arrangements", "use": "competition-arrangement"},
+        {"asset": "adapted-delibes-midi", "use": "competition-midi"},
+        {"asset": "musescore-general-soundfont", "use": "competition-soundfont"},
         {"asset": "selected-music", "use": "score-audio"}
       ]
     },
@@ -585,7 +674,21 @@
       "pattern": "^provenance/passage-score\\.wav$",
       "requirements": [
         {"asset": "final-cut-derived-media", "use": "delivery"},
-        {"asset": "room-source-recordings", "use": "delivery-audio"},
+        {"asset": "delibes-public-domain-compositions", "use": "competition-composition"},
+        {"asset": "paul-de-bra-source-arrangements", "use": "competition-arrangement"},
+        {"asset": "adapted-delibes-midi", "use": "competition-midi"},
+        {"asset": "musescore-general-soundfont", "use": "competition-soundfont"},
+        {"asset": "selected-music", "use": "score-audio"}
+      ]
+    },
+    {
+      "id": "audio-render-receipt",
+      "pattern": "^provenance/audio-render\\.json$",
+      "requirements": [
+        {"asset": "delibes-public-domain-compositions", "use": "competition-composition"},
+        {"asset": "paul-de-bra-source-arrangements", "use": "competition-arrangement"},
+        {"asset": "adapted-delibes-midi", "use": "competition-midi"},
+        {"asset": "musescore-general-soundfont", "use": "competition-soundfont"},
         {"asset": "selected-music", "use": "score-audio"}
       ]
     },
@@ -619,8 +722,8 @@
   "release_rules": [
     {"media_id": "press-still-primary", "destination": "media/assets/press-still-primary.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
     {"media_id": "project-social-card", "destination": "media/assets/project-social-card.webp", "required_for": ["public", "release"], "requirements": [{"asset": "press-still-set", "use": "press"}, {"asset": "photographic-corpus", "use": "still"}, {"asset": "dancer-performance-likeness", "use": "still"}, {"asset": "poster-wall-and-pictured-objects", "use": "still"}]},
-    {"media_id": "accessible-trailer", "destination": "media/assets/accessible-trailer.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
-    {"media_id": "score-driven-master", "destination": "media/assets/score-driven-master.mov", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "room-source-recordings", "use": "delivery-audio"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "accessible-trailer", "destination": "media/assets/accessible-trailer.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "delibes-public-domain-compositions", "use": "competition-composition"}, {"asset": "paul-de-bra-source-arrangements", "use": "competition-arrangement"}, {"asset": "adapted-delibes-midi", "use": "competition-midi"}, {"asset": "musescore-general-soundfont", "use": "competition-soundfont"}, {"asset": "selected-music", "use": "score-audio"}]},
+    {"media_id": "score-driven-master", "destination": "media/assets/score-driven-master.mov", "required_for": ["release"], "requirements": [{"asset": "final-cut-derived-media", "use": "delivery"}, {"asset": "photographic-corpus", "use": "film"}, {"asset": "dancer-performance-likeness", "use": "film"}, {"asset": "poster-wall-and-pictured-objects", "use": "film"}, {"asset": "delibes-public-domain-compositions", "use": "competition-composition"}, {"asset": "paul-de-bra-source-arrangements", "use": "competition-arrangement"}, {"asset": "adapted-delibes-midi", "use": "competition-midi"}, {"asset": "musescore-general-soundfont", "use": "competition-soundfont"}, {"asset": "selected-music", "use": "score-audio"}]},
     {"media_id": "installation-proof", "destination": "media/assets/installation-proof.mp4", "required_for": ["public", "release"], "requirements": [{"asset": "installation-documentation", "use": "release-proof"}]}
   ],
   "credit_rules": [
