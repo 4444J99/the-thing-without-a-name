@@ -30,9 +30,9 @@ FIXTURE_FILES = (
     "release/manifest.json",
     "release/manifest.schema.json",
     "release/evidence/live-interaction-replay-20260804.json",
-    "opportunities/omega-20260804.json",
-    "opportunities/omega-20260804.receipt.json",
-    "opportunities/source-evidence-20260804.json",
+    "opportunities/omega-20260826.json",
+    "opportunities/omega-20260826.receipt.json",
+    "opportunities/source-evidence-20260826.json",
     "opportunities/opportunity.schema.json",
     "scripts/check-opportunities.py",
     "submission/screendance-2027.yaml",
@@ -294,7 +294,7 @@ class ProductionManifestTest(unittest.TestCase):
     def test_snapshot_binding_uses_final_merged_freeze_and_source_evidence(self) -> None:
         binding = self.manifest["opportunity_snapshot"]
         self.assertEqual(binding["sha256"], CONTRACT.EXPECTED_OPPORTUNITY_SHA256)
-        self.assertEqual(binding["snapshot_id"], "omega-20260804")
+        self.assertEqual(binding["snapshot_id"], "omega-20260826")
         self.assertEqual(binding["frozen_at"], CONTRACT.EXPECTED_OPPORTUNITY_FROZEN_AT)
         self.assertEqual(
             binding["source_evidence_sha256"],
@@ -305,7 +305,7 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(screendance["consumer_contract"]["schema"], "danse.submission.v2")
         self.assertEqual(
             screendance["consumer_contract"]["canonical_sha256"],
-            "d35ba2dd373271158df2138f150ec0a9cb4e4a075407b3f2da29929ed7334872",
+            "0897bc3228273a16e48fdd0bc4a503b39227dae0c5bc2f56f3b7e5bb1f372e79",
         )
 
     def test_installation_binding_consumes_reference_contract_without_clearing_gates(self) -> None:
@@ -394,7 +394,7 @@ class ProductionManifestTest(unittest.TestCase):
         self.assertEqual(self.receipt["release"]["manifest"]["path"], "release/manifest.json")
         self.assertEqual(
             self.receipt["release"]["opportunity_snapshot"]["path"],
-            "opportunities/omega-20260804.json",
+            "opportunities/omega-20260826.json",
         )
         self.assertEqual(
             self.receipt["release"]["source_evidence"]["sha256"],

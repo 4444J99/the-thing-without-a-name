@@ -47,7 +47,7 @@
     "submission": {
       "source": {
         "path": "submission/screendance-2027.yaml",
-        "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d",
+        "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed",
         "summary": "Frozen ScreenDance package requirements, approvals, and published legal terms."
       },
       "schema": "danse.submission.v2",
@@ -64,7 +64,7 @@
       "id": "synopsis-short-text",
       "source": {
         "path": "submission/text/synopsis_short.txt",
-        "sha256": "eb35ec0c36f482f11df0b03c3d33eb07178143293bf4151b73b2e61f7ed9dbd8",
+        "sha256": "f90c7d47959f2d99892c67f202024cdecc8f934468bd1fb696090dbfa5496a30",
         "summary": "Tracked short synopsis copied byte-for-byte into a staged package."
       },
       "destination": "text/synopsis_short.txt",
@@ -74,7 +74,7 @@
       "id": "synopsis-long-text",
       "source": {
         "path": "submission/text/synopsis_long.txt",
-        "sha256": "bdee56cb19f27bc062a67b1324252c17f422d1bd5a3e44d07e11377d8b761979",
+        "sha256": "900591f164306fae6d2534c2bd08f8e3050f1e6b86b37be3f9cb1da28993e393",
         "summary": "Tracked long synopsis copied byte-for-byte into a staged package."
       },
       "destination": "text/synopsis_long.txt",
@@ -84,7 +84,7 @@
       "id": "artist-statement-text",
       "source": {
         "path": "submission/text/artist_statement.txt",
-        "sha256": "fc2da2a7873b42b9ed71b4bba6af0f31f36fc2b69fd2839550dc8bfa0fda3881",
+        "sha256": "6a89bcdba7e75a2ec4f4af0c03c8e57569e98393ea2c9f1396cab9fa13c16b53",
         "summary": "Tracked artist statement copied byte-for-byte into a staged package."
       },
       "destination": "text/artist_statement.txt",
@@ -104,7 +104,7 @@
       "id": "rights-declaration-text",
       "source": {
         "path": "submission/text/rights_declaration.txt",
-        "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53",
+        "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5",
         "summary": "Tracked authorship declaration whose claims require explicit human approval."
       },
       "destination": "text/rights_declaration.txt",
@@ -114,7 +114,7 @@
       "id": "technical-note-text",
       "source": {
         "path": "submission/text/technical_note.txt",
-        "sha256": "5e152ea4d4f101f987a950b0ba9a2528e7dcabfd3b7f2e9f199c2e0ac259eaa5",
+        "sha256": "c744c75db4e739e468630b6a9f26ccc69b640893288ba4677af97fb9c1d84f05",
         "summary": "Tracked technical note copied byte-for-byte into a staged package."
       },
       "destination": "text/technical_note.txt",
@@ -325,7 +325,7 @@
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
         {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exact publishable derivative corpus identity."},
-        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Unapproved tracked ownership claim; not completion evidence."}
+        {"path": "submission/text/rights_declaration.txt", "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5", "summary": "Unapproved tracked ownership claim; not completion evidence."}
       ],
       "uses": [
         {"id": "interactive", "medium": "interactive-site", "required_for": ["public", "release"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "pending", "archive": "not-applicable", "status": "blocked", "evidence": null, "note": "Rights declaration and depicted-person/object gates remain open."},
@@ -381,7 +381,7 @@
       "public_credit": {"state": "pending", "label": null, "note": "No object-by-object credit or legal disposition is approved."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "README.md", "sha256": "d139c14fad1df1d5b233a1fbd4f545a7b9be591673107ece06509a54ca671f07", "summary": "Public project description records the framed poster wall."},
+        {"path": "README.md", "sha256": "fd92549226d8a229ec5beb9633a5772f7b0bc29ba0d881fb4db5d87d8ab08d91", "summary": "Public project description records the framed poster wall."},
         {"path": "corpus/manifest.json", "sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371", "summary": "Exact visual source inventory to be reviewed."}
       ],
       "uses": [
@@ -402,7 +402,7 @@
       "public_credit": {"state": "not-required", "label": null, "note": "This row records a use choice rather than a contributor credit."},
       "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Published archive-library opt-in or opt-out choice."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Published archive-library opt-in or opt-out choice."}
       ],
       "uses": [
         {"id": "festival-archive", "medium": "festival-archive", "required_for": ["submitted"], "territory": "pending", "term": "pending", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "conditional_exclusion": {"gate": "archive-library-choice", "value": "opt-out"}, "note": "Include requires cleared archive scope; the registered opt-out decision excludes this use."}
@@ -419,7 +419,7 @@
       "public_credit": {"state": "not-required", "label": null, "note": "No font bytes are distributed."},
       "private_evidence": {"state": "not-required", "custodian": null, "receipt": null},
       "provenance": [
-        {"path": "index.html", "sha256": "38b9a7850cd4b553c5da1880acdcade36ba473c38eb9a95222a21d0d76db1d03", "summary": "System-only CSS font stack in the live artwork."}
+        {"path": "index.html", "sha256": "6217c8a430abd368bb8a611d615f7adc3f8c0ff74ed793a8dc744efb76ed2a7b", "summary": "System-only CSS font stack in the live artwork."}
       ],
       "uses": [
         {"id": "no-font-binary", "medium": "software-distribution", "required_for": [], "territory": "not-applicable", "term": "not-applicable", "expires": null, "promotion": "not-applicable", "archive": "not-applicable", "status": "excluded", "evidence": null, "note": "The exclusion is enforced by artifact inventory tests."}
@@ -453,8 +453,8 @@
       "public_credit": {"state": "pending", "label": "Source recordings — Anthony J. Padavano", "note": "Ownership claim and final sound credit remain unapproved."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Exact source recording names and byte digests; no private location."},
-        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Unapproved tracked ownership claim; not completion evidence."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Exact source recording names and byte digests; no private location."},
+        {"path": "submission/text/rights_declaration.txt", "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5", "summary": "Unapproved tracked ownership claim; not completion evidence."}
       ],
       "uses": [
         {"id": "delivery-audio", "medium": "audio", "required_for": ["package", "uploaded", "submitted", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "Exact rendered score and rights declaration are pending."}
@@ -471,7 +471,7 @@
       "public_credit": {"state": "pending", "label": null, "note": "No still selection or final caption and credit package exists."},
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
-        {"path": "submission/screendance-2027.yaml", "sha256": "7972d6a4d0f4f93317226e9ac1ef7876da31cd28a42823c69672e8a2b737459d", "summary": "Still dimensions and unlimited official-selection promotional term."}
+        {"path": "submission/screendance-2027.yaml", "sha256": "a062edcbea55d122772876cfd7a0c3ef73a0a0fdedf47794e7c692b725214bed", "summary": "Still dimensions and unlimited official-selection promotional term."}
       ],
       "uses": [
         {"id": "press", "medium": "press", "required_for": ["public", "release"], "territory": "pending", "term": "pending", "expires": null, "promotion": "pending", "archive": "pending", "status": "blocked", "evidence": null, "note": "No selected source digest or clearance receipt."},
@@ -528,7 +528,7 @@
       "private_evidence": {"state": "not-recorded", "custodian": "Anthony J. Padavano", "receipt": null},
       "provenance": [
         {"path": "submission/text/bio.txt", "sha256": "82fc477f95b586bae2747844d8852fd3f5cbb11cc9529d108eb8e4322a2a7f45", "summary": "Tracked biography source."},
-        {"path": "submission/text/rights_declaration.txt", "sha256": "beae615ffc5eb1b81553f43f2040f96056d98a67efc42522ba91688dacb95a53", "summary": "Tracked rights declaration source."}
+        {"path": "submission/text/rights_declaration.txt", "sha256": "86532bceb79f745cf24e1f579c0dd00108afb39e86696208668f9b62ab0801a5", "summary": "Tracked rights declaration source."}
       ],
       "uses": [
         {"id": "package-copy", "medium": "text", "required_for": ["package", "uploaded", "submitted"], "territory": "worldwide", "term": "project-duration", "expires": null, "promotion": "not-applicable", "archive": "pending", "status": "blocked", "evidence": null, "note": "Biography and rights claims require human approval."},

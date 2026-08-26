@@ -33,10 +33,10 @@ class RegistryFixture:
     def __init__(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "repo"
-        self.snapshot = self.root / "opportunities/omega-20260804.json"
+        self.snapshot = self.root / "opportunities/omega-20260826.json"
         self.schema = self.root / "opportunities/opportunity.schema.json"
-        self.receipt = self.root / "opportunities/omega-20260804.receipt.json"
-        self.evidence = self.root / "opportunities/source-evidence-20260804.json"
+        self.receipt = self.root / "opportunities/omega-20260826.receipt.json"
+        self.evidence = self.root / "opportunities/source-evidence-20260826.json"
         self.consumer = self.root / "submission/screendance-2027.yaml"
         for source, target in (
             (CHECK.SNAPSHOT, self.snapshot),
@@ -62,7 +62,7 @@ class ProductionRegistryTest(unittest.TestCase):
     def test_exact_production_snapshot_and_consumers_validate(self) -> None:
         snapshot, receipt = CHECK.validate_all()
         self.assertEqual(len(snapshot["opportunities"]), 17)
-        self.assertEqual(len(snapshot["ranked_actions"]), 8)
+        self.assertEqual(len(snapshot["ranked_actions"]), 6)
         self.assertEqual(receipt["snapshot"]["sha256"], CHECK.digest(CHECK.SNAPSHOT))
 
     def test_every_plan_target_has_one_explicit_disposition(self) -> None:
@@ -74,13 +74,13 @@ class ProductionRegistryTest(unittest.TestCase):
         self.assertEqual(by_id["mignolo-screendance-2026"]["disposition"], "conflicted")
         self.assertEqual(by_id["miami-dade-tdc-2026-q2"]["disposition"], "blocked")
 
-    def test_live_oolite_extension_is_preserved_as_a_human_gate(self) -> None:
+    def test_elapsed_oolite_extension_is_preserved_without_a_live_queue_claim(self) -> None:
         snapshot = CHECK.validate_registry()
         by_id = {entry["id"]: entry for entry in snapshot["opportunities"]}
         for entry_id in ("oolite-ellies-creator-2027", "oolite-studio-residency-2027"):
             entry = by_id[entry_id]
             self.assertEqual(entry["deadline_at"], "2026-08-03T23:59:00-04:00")
-            self.assertEqual(entry["disposition"], "blocked")
+            self.assertEqual(entry["disposition"], "closed")
             self.assertTrue(entry["human_gates"])
             self.assertTrue(all(gate["status"] == "required" for gate in entry["human_gates"]))
 
@@ -244,9 +244,9 @@ class RegistryFailureTest(unittest.TestCase):
 
     def test_live_queue_expires_without_mutating_frozen_snapshot(self) -> None:
         snapshot = self.validate_registry()
-        CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-08-04T03:58:00+00:00"))
+        CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-09-01T01:58:00+00:00"))
         with self.assertRaisesRegex(CHECK.RegistryError, "issue #22 must publish a successor"):
-            CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-08-04T04:00:00+00:00"))
+            CHECK.validate_operational(snapshot, datetime.fromisoformat("2026-09-01T02:00:00+00:00"))
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_receipt_path_cannot_follow_a_symlink(self) -> None:
@@ -257,7 +257,7 @@ class RegistryFailureTest(unittest.TestCase):
         with self.assertRaisesRegex(CHECK.RegistryError, "traverses a symlink"):
             CHECK.safe_file(
                 self.fixture.root,
-                "opportunities/omega-20260804.json",
+                "opportunities/omega-20260826.json",
                 "receipt snapshot path",
             )
 

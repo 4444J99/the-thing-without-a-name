@@ -1,0 +1,204 @@
+{
+  "schema": "danse.source-evidence.v1",
+  "capture_started_at": "2026-08-04T02:30:14Z",
+  "capture_completed_at": "2026-08-26T18:16:20Z",
+  "capture_contract": {
+    "transport": "HTTPS GET",
+    "redirects": "followed",
+    "content_encoding": "decoded",
+    "user_agent": "Danse source-evidence capture/1.0",
+    "digest": "SHA-256 of response body bytes after HTTP content decoding",
+    "retention": "Digest-only public-response receipt; response bodies are not vendored."
+  },
+  "responses": [
+    {
+      "url": "https://cinedans.nl/p/welcome_entries",
+      "final_url": "https://cinedans.nl/p/welcome_entries",
+      "captured_at": "2026-08-04T02:30:14Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 29162,
+      "sha256": "b127f91aead8b87e22fcf8bbe799b3d7fb80fe01ad39da95a9f5cbc48ceaa624"
+    },
+    {
+      "url": "https://eyebeam.org/2026-residents/",
+      "final_url": "https://eyebeam.org/2026-residents/",
+      "captured_at": "2026-08-04T02:30:14Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 66578,
+      "sha256": "f274a2f02cdfc9e28a169c52223c379293cf8f3a593b24dfcd64967197a7cd7e"
+    },
+    {
+      "url": "https://filmchief.com/festivals/cinedans/download/2027/Terms%20and%20Conditions%20Cinedans%202027.pdf?v=1",
+      "final_url": "https://filmchief.com/festivals/cinedans/download/2027/Terms%20and%20Conditions%20Cinedans%202027.pdf?v=1",
+      "captured_at": "2026-08-04T02:30:17Z",
+      "http_status": 200,
+      "content_type": "application/pdf",
+      "bytes": 238580,
+      "sha256": "6b885fea1f96cc6805e89f10d85bd21930d83832d260bec03495b7f690acb9b5"
+    },
+    {
+      "url": "https://icamiami.org/about/",
+      "final_url": "https://icamiami.org/about/",
+      "captured_at": "2026-08-04T02:30:18Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 121989,
+      "sha256": "2e2b6a4a3a9b43d20915c6ac527464af8b603921289a5f9e42e7c458be91584d"
+    },
+    {
+      "url": "https://knightfoundation.org/knight-arts-challenge/kacm/",
+      "final_url": "https://knightfoundation.org/articles/feature/kacmreport/",
+      "captured_at": "2026-08-04T02:30:18Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 42745,
+      "sha256": "b77a9f629469f1bd143f38fcb859554fc101dff2a4f7ba8231b4287df2bc01c4"
+    },
+    {
+      "url": "https://miamilightproject.com/news/here-now-2027-submissions-open/",
+      "final_url": "https://miamilightproject.com/news/here-now-2027-submissions-open/",
+      "captured_at": "2026-08-04T02:30:19Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 229275,
+      "sha256": "31662f6f64ca3f0ff01209aab00ac5c7cf4dd12752bc819541df5481436ffc25"
+    },
+    {
+      "url": "https://miamilightproject.com/program/screen-dance-2027/",
+      "final_url": "https://miamilightproject.com/program/screen-dance-2027/",
+      "captured_at": "2026-08-26T18:16:20Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 212853,
+      "sha256": "651dbfb220bf1766c616096dcf5fa4f33a634a7f276d81107677de7b08614b9b"
+    },
+    {
+      "url": "https://miamilightproject.submittable.com/submit",
+      "final_url": "https://miamilightproject.submittable.com/submit",
+      "captured_at": "2026-08-26T18:16:20Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 26710,
+      "sha256": "68ed60b3a3cfeb56f1861c44065e0e40111420ced37919fa1abdf77efb73708a"
+    },
+    {
+      "url": "https://oolitearts.org/ellies-open-calls/",
+      "final_url": "https://oolitearts.org/ellies-open-calls/",
+      "captured_at": "2026-08-04T02:30:21Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 213902,
+      "sha256": "3a48e168434f7513fb4484f069e1d0d671ec3e8dcedffe2fcbb1fc264e4160d4"
+    },
+    {
+      "url": "https://oolitearts.org/studio-residency/",
+      "final_url": "https://oolitearts.org/studio-residency/",
+      "captured_at": "2026-08-04T02:30:21Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 179464,
+      "sha256": "3861d60b085f15091f6914788fc9bf785dff8756b89689685114c3d05faef471"
+    },
+    {
+      "url": "https://thebass.org/about/",
+      "final_url": "https://thebass.org/about/",
+      "captured_at": "2026-08-04T02:30:22Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 123294,
+      "sha256": "76a0fe0d4b466ab760df2da88e13b7e88d1009189328b2ee975d59c259725684"
+    },
+    {
+      "url": "https://www.bacfl.org/air-programs",
+      "final_url": "https://www.bacfl.org/air-programs",
+      "captured_at": "2026-08-04T02:30:22Z",
+      "http_status": 200,
+      "content_type": "text/html;charset=utf-8",
+      "bytes": 279697,
+      "sha256": "49ab1e44cba2cc846f5da20121f4d5fc1f2e05efa63215f1fd62c4cc0ab01998"
+    },
+    {
+      "url": "https://www.locustprojects.org/for-artists/submissions/exhibition-open-call.html",
+      "final_url": "https://www.locustprojects.org/for-artists/submissions/exhibition-open-call.html",
+      "captured_at": "2026-08-04T02:30:24Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 23333,
+      "sha256": "dff73e07845f65ad611eb9b893c477e8b50d7fa94628b3c9468336005ca368ec"
+    },
+    {
+      "url": "https://www.miamidadearts.org/artist-access-art-grants-program",
+      "final_url": "https://www.miamidadearts.org/artist-access-art-grants-program",
+      "captured_at": "2026-08-04T02:30:25Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 52320,
+      "sha256": "8db35455f22aadda0559e8cfbd2a3979910b692183d86cd1063f857cf7b51167"
+    },
+    {
+      "url": "https://www.miamidadearts.org/node/16041",
+      "final_url": "https://www.miamidadearts.org/node/16041",
+      "captured_at": "2026-08-04T02:30:25Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 57827,
+      "sha256": "c6d4bc26f5022683488a64f85c2debb41ece8e2ef42b9de3e82539b8dd1a0234"
+    },
+    {
+      "url": "https://www.mignolo.art/screendance",
+      "final_url": "https://www.mignolo.art/screendance",
+      "captured_at": "2026-08-04T02:30:26Z",
+      "http_status": 200,
+      "content_type": "text/html;charset=utf-8",
+      "bytes": 442221,
+      "sha256": "6810acb46ad77b35fdce9789ce373595b14794f7bb38390f844d5fdacfe01fac"
+    },
+    {
+      "url": "https://www.newjerseystage.com/articles2/2026/04/20/mignolo-international-screendance-festival-is-accepting-submissions/",
+      "final_url": "https://www.newjerseystage.com/articles2/2026/04/20/mignolo-international-screendance-festival-is-accepting-submissions/",
+      "captured_at": "2026-08-04T02:30:27Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 17979,
+      "sha256": "36a27dbb0652e84ef38dd2cbf20f984bd577f9d9b0d6e97574ee797420cf2191"
+    },
+    {
+      "url": "https://www.superblue.com/artists",
+      "final_url": "https://www.superblue.com/artists",
+      "captured_at": "2026-08-04T02:30:27Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 64446,
+      "sha256": "648fe54e0fb6f7f7adda351a1375b95614c7aac34cf6be7cc2836f1c67548118"
+    },
+    {
+      "url": "https://www.superblue.com/faq",
+      "final_url": "https://www.superblue.com/faq",
+      "captured_at": "2026-08-04T02:30:27Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 158096,
+      "sha256": "70051541b2f4f6b3d18df06b142dd604ab822f0c66ccdf91d495398aca7223b1"
+    },
+    {
+      "url": "https://www.timessquarenyc.org/arts/submit-an-arts-proposal",
+      "final_url": "https://www.timessquarenyc.org/arts/submit-an-arts-proposal",
+      "captured_at": "2026-08-04T02:30:28Z",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 136398,
+      "sha256": "933318ffd1eb77dbde844aad118b94c7c42be947265354a262096a9dea345106"
+    },
+    {
+      "url": "https://www.wavemakergrants.org/",
+      "final_url": "https://www.wavemakergrants.org/",
+      "captured_at": "2026-08-04T02:30:29Z",
+      "http_status": 200,
+      "content_type": "text/html;charset=utf-8",
+      "bytes": 171437,
+      "sha256": "4283ba39ba41b4d0e4617f63c4e3b54ea56b12c028fe3ce72c568365e4e524e2"
+    }
+  ]
+}

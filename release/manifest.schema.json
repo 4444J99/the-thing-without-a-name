@@ -112,8 +112,8 @@
       ],
       "properties": {
         "path": {"$ref": "#/$defs/path"},
-        "snapshot_id": {"const": "omega-20260804"},
-        "frozen_at": {"const": "2026-08-04T02:32:44Z"},
+        "snapshot_id": {"const": "omega-20260826"},
+        "frozen_at": {"const": "2026-08-26T18:16:30Z"},
         "sha256": {"$ref": "#/$defs/sha256"},
         "receipt_path": {"$ref": "#/$defs/path"},
         "receipt_sha256": {"$ref": "#/$defs/sha256"},

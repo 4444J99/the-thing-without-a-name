@@ -235,9 +235,9 @@ def check_deadline(reg: dict, phase: str, rep: Report, now: datetime | None = No
             f"passed {abs(days):.1f} days ago; the submitted attestation owns historical filing proof",
         )
     else:
-        # The register's wall is already the cautious reading of an ambiguous
-        # "EST" on a date when Miami runs EDT. Report against that, never against
-        # the stated string.
+        # The register's wall is an internal filing buffer chosen ahead of both
+        # conflicting official statements. It is not a conversion of either one.
+        # Report against that operational wall, never against the stated string.
         rep.add("deadline", "hard wall", PASS, f"{days:.1f} days left → {wall:%a %d %b %H:%M %Z}")
 
     target = datetime.fromisoformat(d["target_file_date"] + "T12:00:00").replace(tzinfo=zone)

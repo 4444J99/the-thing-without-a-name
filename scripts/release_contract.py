@@ -18,11 +18,11 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = Path("release/manifest.json")
 SCHEMA = Path("release/manifest.schema.json")
 RELEASE_SCHEMA = "danse.release.v1"
-EXPECTED_OPPORTUNITY_ID = "omega-20260804"
-EXPECTED_OPPORTUNITY_FROZEN_AT = "2026-08-04T02:32:44Z"
-EXPECTED_OPPORTUNITY_SHA256 = "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e"
-EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "3a2d3b9eaed6f14f869fc08fa2e0baf02b868116ec0e1b206f23c1ec3e2a94ee"
-EXPECTED_SOURCE_EVIDENCE_SHA256 = "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37"
+EXPECTED_OPPORTUNITY_ID = "omega-20260826"
+EXPECTED_OPPORTUNITY_FROZEN_AT = "2026-08-26T18:16:30Z"
+EXPECTED_OPPORTUNITY_SHA256 = "91404ef677066de002819abd69d2fa2f320b4b215c3f80551e0a40edd2b6f667"
+EXPECTED_OPPORTUNITY_RECEIPT_SHA256 = "0f55ba2784bbe28659107d0e473d68f35bcd1f57ffa0bd7f547fdb5e55b9dfbe"
+EXPECTED_SOURCE_EVIDENCE_SHA256 = "7e9ba1c74f8ac78df116ada8c94d8af4e7d04813f2a3c026693258cd6c974bc8"
 LIVE_INTERACTION_EVIDENCE_PATH = "release/evidence/live-interaction-replay-20260804.json"
 LIVE_INTERACTION_COMMENT_BODY_SHA256 = "4cc41f9ed353c92c27b172907800b123c7b4e85ef4ba7165ed210133f40952bf"
 LIVE_INTERACTION_DEPLOYED_COMMIT = "f19244afbce94015e78b7f746b07d267ed9e67ae"
@@ -259,9 +259,9 @@ def validate_opportunity_binding(root: Path, manifest: dict[str, Any]) -> None:
     if binding["source_evidence_sha256"] != EXPECTED_SOURCE_EVIDENCE_SHA256:
         raise ReleaseError("release manifest does not consume the reviewed source-evidence digest")
     expected_paths = {
-        "path": "opportunities/omega-20260804.json",
-        "receipt_path": "opportunities/omega-20260804.receipt.json",
-        "source_evidence_path": "opportunities/source-evidence-20260804.json",
+        "path": "opportunities/omega-20260826.json",
+        "receipt_path": "opportunities/omega-20260826.receipt.json",
+        "source_evidence_path": "opportunities/source-evidence-20260826.json",
     }
     for key, expected in expected_paths.items():
         if binding[key] != expected:

@@ -4,11 +4,11 @@ The canonical Danse source repository.
 
 A room that never repeats, built from one afternoon.
 
-On **20 June 2017**, 161 photographs of a dancer were made in a single session — an
+On **20 June 2017**, 161 photographs were made during one dancer session — an
 apartment room with a row of framed classic-horror posters standing against the wall,
-carpet, a guitar. The camera barely moved. On **25 July 2017** three of those frames
-were cut apart by hand and recomposed into a tiled composite: fragments of her, at
-different scales and opacities, over one continuous room.
+carpet, a guitar. The camera barely moved. On **25 July 2017**, material from that
+session was cut apart by hand and recomposed into a tiled composite: fragments of her,
+at different scales and opacities, over one continuous room.
 
 Then it sat for nine years.
 
@@ -129,7 +129,9 @@ shareable permalinks, and multi-projector sync for free.
 
 Measured, not assumed — and it changed the design:
 
-- **161 of 162 frames carry a person matte** at 11–18% coverage, quality 0.987–0.998.
+- The tracked corpus contains **162 records: 161 registered raw photographs and one
+  unregistered archival composite**. Of the raw photographs, 160 carry a person matte
+  and `IMG_1570` is dancer-free; the archival composite also carries a person matte.
 - **Body-pose detection finds joints in only 65**, and never reaches 8 confident ones.
   The histogram says why: knees 40%, ankles 37%, hips 35% — then shoulders 3%, faces 2%.
   **The shoot frames legs.** There is no upper body for a whole-person model to anchor on.
@@ -139,17 +141,18 @@ Measured, not assumed — and it changed the design:
 - **The camera is locked off.** The poster row sits at identical pixel coordinates across
   frames, which makes registration nearly free and is exactly why the 2017 hand-cuts
   aligned so cleanly.
-- **The 2017 composite is registered to the room to within 0.4% of frame height.** Its
-  horizontal seams (0.4622, 0.4857) land on the poster-rail transition measured
-  independently from the one dancer-free frame (0.4661, 0.4886). The artist's own rule
-  was *cut on the architecture* — so the engine derives its bands from the room rather
-  than inventing a grid.
+- **Although the archival composite is not a registered raw camera frame, its
+  architecture aligns to the room to within 0.4% of frame height.** Its horizontal
+  seams (0.4622, 0.4857) land on the poster-rail transition measured independently from
+  the dancer-free `IMG_1570` (0.4661, 0.4886). The artist's own rule was *cut on the
+  architecture* — so the engine derives its bands from the room rather than inventing
+  a grid.
 
 ## The 2017 piece, solved
 
 Before evolving it, recreate it. Stage 3 does not approximate the composite — it **solves
-it back into a score**: which of the 162 frames each region was cut from, and what
-treatment was applied. The model per rectangle is
+it back into a score** against the 162-record corpus: which source record each region
+was drawn from, and what treatment was applied. The model per rectangle is
 
 ```
 C  =  gain · S  +  lift          (per colour channel, least squares)
@@ -167,7 +170,7 @@ came back as the 2017 hand-treatment in the two numbers a shader takes.
 | rectangles | 32 | 64 | 128 | 256 | 384 | 512 |
 |---|---|---|---|---|---|---|
 | **PSNR (dB)** | 25.98 | 29.29 | 31.18 | 32.27 | 33.11 | 33.59 |
-| **frames used** | 21 | 34 | 48 | 77 | 90 | 110 |
+| **sources used** | 21 | 34 | 48 | 77 | 90 | 110 |
 
 Reading the curve: the piece is *about a hundred rectangles* — past that, fidelity is
 bought a fifth of a dB at a time. Which is a statement about how much grammar the engine
@@ -176,9 +179,9 @@ actually needs.
 ![reconstruction](reference/reconstruction-comparison.png)
 
 *Left, the 2017 composite as it was cut by hand. Centre, the same picture re-derived from
-the 162 originals by the solver at 256 rectangles — 32.3 dB. Right, where each region came
-from. The middle panel is not a filter applied to the left one: every pixel in it was
-fetched from a photograph and placed by a number.*
+the 162-record corpus by the solver at 256 rectangles — 32.3 dB. Right, where each region
+came from. The middle panel is not a filter applied to the left one: every output region
+is resolved through declared source layers and placed by a number.*
 
 What the solve found:
 
@@ -186,8 +189,9 @@ What the solve found:
   The composite is not a mosaic of opaque tiles; roughly a third of its area is two
   photographs superimposed, and a one-source model produces *diagonal* residual ridges
   where a translucent limb crosses the frame beneath it.
-- **77 distinct frames of 162 are in play** — but the distribution is steep. `IMG_1611`
-  alone accounts for 17.5% of the picture and `IMG_1615` another 14.3%.
+- **77 distinct corpus sources are in play: 76 registered raw photographs and the
+  unregistered archival composite.** The distribution is steep: `IMG_1611` alone
+  accounts for 17.5% of the picture and `IMG_1615` another 14.3%.
 - **The major horizontal band edges land at 0.500 and 0.799** of frame height. Stage 2's
   independent seam measurement of the same composite said 0.486 and 0.802, and the room's
   own poster rail — measured on the one dancer-free frame — sits at 0.489. Three
@@ -195,8 +199,8 @@ What the solve found:
 
 ![provenance](reference/score-2017-provenance.png)
 
-*The provenance map: one hue per source frame. This is the piece's genome — which instant
-of that afternoon each region was drawn from. It is also the fastest correctness check
+*The provenance map: one hue per source record. The current solve draws on 76 registered
+raw photographs and the archival composite. It is also the fastest correctness check
 available: a real solve reads as flat contiguous plates, a failed one reads as noise.*
 
 ## The projection holds — go/no-go
@@ -241,7 +245,7 @@ three cut-geometries over that identical operation —
 
 | Work | Corpus | Cut |
 |---|---|---|
-| **danse** | 162 frames, one locked-off room | rectangular grid, aligned to the room's architecture |
+| **danse** | 161 registered raw photographs + 1 archival composite | rectangular grid, aligned to the room's architecture |
 | **noonlight** | 21 frames, one face turning | polygonal shards with white kerf, over sky |
 | **b/w remix** | supplied frames, one face | staggered bands keyed to anatomy — eyes, lips, hair, arm |
 
@@ -262,7 +266,7 @@ animating it toward `0` is literally its undoing.
   interaction/ bounded local pose, fallback, receipt replay · vendored runtime/model
   probe.html   projection go/no-go       interaction-test.html   browser contract
   engine/      gl · mat4 · rng · room · room-events · grammar · renderer · corpus · clock · program
-  music/       layered repertoire provenance · MIDI compiler · immutable fixture score
+  music/       layered repertoire provenance · MIDI compiler · fixture and production score contracts
   sound/       shared room-event bus · stereo/WebAudio/offline/multichannel plans
   installation/ reference twin · calibration/evidence contracts · foreground recovery runtime
   corpus/      score-2017.json · manifest.json · plates/ · masks/
@@ -319,12 +323,17 @@ done.sh --package <package-root> --phase submitted
 
 Run media commands in a Python environment providing NumPy, SciPy, Pillow, and
 Playwright. `deliver.py --preflight` reports missing modules, the Metal Chrome
-surface, the film tier, the two-source grain bank, and the registered origin
+surface, the film tier, declared audio dependencies, and the registered origin
 photograph without creating output directories.
 
-The score-clock implementation is fixture-only until repertoire and its exact
-source layers are selected and cleared. See [`music/README.md`](music/README.md)
-for the opt-in query/render paths and the explicit remaining artistic gate.
+The ScreenDance capture is being hardened around two selected Delibes movements at
+native tempo: *Valse lente* from *Sylvia* and *Valse* from *Coppélia*, followed by the
+four-second black signature. Selection is not final-cut approval: the exact score,
+choreography, MIDI, rendered audio, toolchain, and artist decision must all agree before
+the package can pass. Music credit: “Music by Léo Delibes. Source arrangements by Paul
+De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include
+instrumentation, sequencing, cue markers, and mix.” See
+[`music/README.md`](music/README.md) for the score and provenance contracts.
 The deterministic spatial bus and its reference-only speaker maps are documented
 in [`sound/ROOM_EVENTS.md`](sound/ROOM_EVENTS.md); they do not claim cleared audio
 bytes, venue approval, or a completed physical room test.

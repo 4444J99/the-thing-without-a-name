@@ -1,13 +1,14 @@
 # Frozen opportunity registry
 
-`omega-20260804.json` is the immutable source snapshot for the Alpha → Omega
-release. It dispositions every target named in the tracked plan, records facts as
+`omega-20260826.json` is the current immutable source snapshot for the Alpha →
+Omega release. It supersedes, but does not rewrite, the preserved August 4
+snapshot. It dispositions every target named in the tracked plan, records facts as
 `verified`, `unstated`, `not-applicable`, or `conflicted`, and keeps every account
 action, fee, agreement, and public send behind an explicit human gate.
 
 The snapshot does not contact live sites during a build. The raw public responses
-were hashed in `source-evidence-20260804.json`; the snapshot binds that manifest,
-and `omega-20260804.receipt.json` binds the snapshot. Response bodies are not
+were hashed in `source-evidence-20260826.json`; the snapshot binds that manifest,
+and `omega-20260826.receipt.json` binds the snapshot. Response bodies are not
 vendored. `submission/screendance-2027.yaml` consumes that exact SHA-256 identity
 for issue #2, and issue #12 must cite the same identity from the future release
 manifest. Its snapshot-binding block also names the IANA shipping timezone; the

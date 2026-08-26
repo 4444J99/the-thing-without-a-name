@@ -2642,7 +2642,7 @@ class DeliveryContractTest(unittest.TestCase):
 
     def test_submitted_phase_explains_elapsed_target_without_reopening_it(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
-        now = datetime(2026, 8, 25, 12, tzinfo=ZoneInfo("America/New_York"))
+        now = datetime(2026, 9, 2, 12, tzinfo=ZoneInfo("America/New_York"))
         report = CHECK.Report()
         CHECK.check_deadline(reg, "submitted", report, now=now)
         target = next(row for row in report.rows if row[1] == "target file date")

@@ -19,11 +19,11 @@
 
 schema: danse.submission.v2
 opportunity_snapshot:
-  snapshot_id: omega-20260804
-  path: opportunities/omega-20260804.json
-  sha256: "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e"
-  receipt: opportunities/omega-20260804.receipt.json
-  frozen_at: "2026-08-04T02:32:44Z"
+  snapshot_id: omega-20260826
+  path: opportunities/omega-20260826.json
+  sha256: "91404ef677066de002819abd69d2fa2f320b4b215c3f80551e0a40edd2b6f667"
+  receipt: opportunities/omega-20260826.receipt.json
+  frozen_at: "2026-08-26T18:16:30Z"
   opportunity_id: screendance-miami-2027
   timezone: America/New_York
 call: ScreenDance Miami Festival 2027
@@ -33,15 +33,17 @@ program_page: https://miamilightproject.com/program/screen-dance-2027/
 phone: "305.576.4350"
 
 deadline:
-  status: verified
-  stated: "Monday, August 31, 2026 at 11:00 PM EST"
-  source: submittable
-  checked: 2026-07-30
-  # The trap: on 31 August, Miami is on EDT (UTC-4), not EST (UTC-5). If the portal
-  # is configured to a literal EST the cutoff lands at 22:00 local. We treat 22:00
-  # America/New_York as the hard wall and never test the ambiguity.
+  status: conflicted
+  stated: "Submittable: Monday, August 31, 2026 at 11:00 PM EST; program page: 11:59 PM"
+  sources: [submittable, program-page]
+  checked: 2026-08-26
+  # These are conflicting official statements, not a timezone conversion. Literal
+  # 11:00 PM EST is midnight EDT on this date. The earlier 10:00 PM local wall is a
+  # deliberately conservative internal filing buffer that leaves at least one hour
+  # before either published reading; it does not assert how Submittable is configured.
   hard_wall: "2026-08-31T22:00:00-04:00"
-  target_file_date: "2026-08-20"   # file in the 20–24 Aug window, not on the wall
+  upload_target: "2026-08-31T18:00:00-04:00"
+  target_file_date: "2026-08-31"
 
 decision:
   notification: "end of October 2026"

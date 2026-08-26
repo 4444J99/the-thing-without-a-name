@@ -6,7 +6,7 @@
  * `candidates()` answers "who is standing in this part of the room?" out of that
  * index alone, and the picture is fetched only once the choice is made.
  *
- * Two tiers exist because 162 photographs at screen resolution is 22 MB and a
+ * Two tiers exist because 162 corpus records at screen resolution is 22 MB and a
  * gallery machine should not stare at a blank wall for 22 MB. `browse` (512px) is
  * the whole corpus, small enough to ship eagerly; `screen` (1024px) arrives per
  * frame, on demand, and swaps in mid-render. `plate()` therefore never blocks and
@@ -17,10 +17,11 @@
 import { texture } from "./gl.js";
 import { hash } from "./rng.js";
 
-/** Because every frame came from one locked-off camera, all 162 photographs are
- *  already registered to each other and to the room. That is what lets a plane
- *  showing IMG_1611 and a plane showing IMG_1588 sample through one projector
- *  matrix and still line up: the registration was done in 2017, by not moving. */
+/** The 161 raw photographs came from one locked-off camera and are registered to
+ *  each other and to the room; the archival composite is explicitly unregistered
+ *  and withheld from generated cuts. That is what lets a plane showing IMG_1611
+ *  and a plane showing IMG_1588 sample through one projector matrix and still line
+ *  up: the raw-source registration was done in 2017, by not moving. */
 /** The tiers the web bundle ships. The manifest is authoritative and may declare
  *  more — the offline renderer builds a `film` tier at full camera resolution
  *  (~250 MB, local-only, never in git), and asks for it by name. */
@@ -275,8 +276,8 @@ class Corpus {
       const share = (w * h) / cellArea; // how much of the CELL she fills
       if (share < minOverlap) continue;
 
-      // Frames the 2017 solve drew on are weighted up but never made exclusive —
-      // the piece is supposed to reach past the three frames he cut by hand.
+      // Registered raw photographs the 2017 solve drew on are weighted up but
+      // never made exclusive — authored motifs may reach across the full shoot.
       out.push({ id: f.id, weight: share * (1 + weightScore * Math.min(1, f.score_area * 5)) });
     }
     out.sort((a, b) => b.weight - a.weight);

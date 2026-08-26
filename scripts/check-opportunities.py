@@ -23,10 +23,10 @@ import jsonschema
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-SNAPSHOT = ROOT / "opportunities" / "omega-20260804.json"
+SNAPSHOT = ROOT / "opportunities" / "omega-20260826.json"
 SCHEMA = ROOT / "opportunities" / "opportunity.schema.json"
-RECEIPT = ROOT / "opportunities" / "omega-20260804.receipt.json"
-EVIDENCE = ROOT / "opportunities" / "source-evidence-20260804.json"
+RECEIPT = ROOT / "opportunities" / "omega-20260826.receipt.json"
+EVIDENCE = ROOT / "opportunities" / "source-evidence-20260826.json"
 CONSUMER = ROOT / "submission" / "screendance-2027.yaml"
 
 FACT_STATUSES = ("verified", "unstated", "not-applicable", "conflicted")
@@ -402,8 +402,8 @@ def validate_registry(
         "locust-projects-main-gallery": ("watch", "2025-11-16"),
         "miami-dade-tdc-2026-q2": ("blocked", "2026-10-13"),
         "mignolo-screendance-2026": ("conflicted", "2026-10-13"),
-        "oolite-ellies-creator-2027": ("blocked", "2026-08-03"),
-        "oolite-studio-residency-2027": ("blocked", "2026-08-03"),
+        "oolite-ellies-creator-2027": ("closed", "2026-08-03"),
+        "oolite-studio-residency-2027": ("closed", "2026-08-03"),
     }
     for entry_id, (want_disposition, want_date) in corrections.items():
         entry = by_id[entry_id]
@@ -519,7 +519,7 @@ def validate_binding(
         "snapshot_id": snapshot["snapshot_id"],
         "path": record["path"],
         "sha256": actual,
-        "receipt": "opportunities/omega-20260804.receipt.json",
+        "receipt": receipt_path.resolve().relative_to(root.resolve()).as_posix(),
         "frozen_at": snapshot["frozen_at"],
         "opportunity_id": "screendance-miami-2027",
         "timezone": timezone_name,

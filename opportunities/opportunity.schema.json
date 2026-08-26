@@ -59,7 +59,10 @@
       "additionalProperties": false,
       "required": ["path", "sha256", "bytes"],
       "properties": {
-        "path": { "const": "opportunities/source-evidence-20260804.json" },
+        "path": {
+          "type": "string",
+          "pattern": "^opportunities/source-evidence-[0-9]{8}\\.json$"
+        },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "bytes": { "type": "integer", "minimum": 1 }
       }

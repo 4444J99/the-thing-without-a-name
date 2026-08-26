@@ -3,10 +3,11 @@
  * One shader does everything, because everything IS one thing: a fragment finds
  * its pixel by projecting its world position through the matrix that stands where
  * the camera stood on 20 June 2017. Planes at unrelated angles and depths land the
- * poster rail on the same screen-space line, and — since all 162 exposures came
- * from one locked-off camera — a plane showing IMG_1611 and a plane showing
- * IMG_1588 register to each other too. That registration was done in 2017, by not
- * moving the tripod.
+ * poster rail on the same screen-space line, and — since the 161 registered raw
+ * photographs came from one locked-off camera — a plane showing IMG_1611 and a
+ * plane showing IMG_1588 register to each other too. The archival composite is a
+ * separate unregistered corpus record. Raw-source registration was done in 2017,
+ * by not moving the tripod.
  *
  * The two texture units are not a crossfade feature. The 2017 composite needed two
  * layers for 77 of its 256 tiles, because roughly a third of its area is two
