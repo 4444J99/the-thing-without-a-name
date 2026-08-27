@@ -106,10 +106,11 @@ def validate(
         bad("fragment_counterpoint_fraction must be in (0, 0.25]")
     if limits.get("counterpoint_groups") != 4:
         bad("counterpoint_groups must be four anatomical cohorts")
-    if limits.get("counterpoint_pose_dwell_bars", 0) < 2:
-        bad("counterpoint_pose_dwell_bars must be at least two")
-    if limits.get("counterpoint_transition_bars", 0) < 1:
-        bad("counterpoint_transition_bars must be at least one")
+    if limits.get("counterpoint_grid_subdivisions_per_beat") != 2:
+        bad("counterpoint grid must use score eighth-notes")
+    transition_fraction = limits.get("counterpoint_transition_fraction", 0)
+    if not 0 < transition_fraction <= 0.5:
+        bad("counterpoint_transition_fraction must be in (0, 0.5]")
     if limits.get("hard_global_recast_before_signature") is not False:
         bad("hard global recasts before SIGNATURE are forbidden")
     if limits.get("frame_order_semantics") != "authored-motif-not-chronology":
@@ -274,9 +275,10 @@ def _motif_pose(
 
 
 def _panel_counterpoint(
+    score: dict[str, Any],
     motif: dict[str, Any] | None,
     assignment: dict[str, Any],
-    bars: float,
+    music: dict[str, Any],
     limits: dict[str, Any],
 ) -> dict[str, Any] | None:
     if (
@@ -288,35 +290,44 @@ def _panel_counterpoint(
         return None
     frames = motif["source_frame_ids"]
     groups = int(limits["counterpoint_groups"])
-    dwell = float(limits["counterpoint_pose_dwell_bars"])
-    transition = float(limits["counterpoint_transition_bars"])
-    elapsed = max(0.0, bars - dwell)
-    slot_length = dwell + transition
-    slot = math.floor(elapsed / slot_length)
-    slot_phase = elapsed - slot * slot_length
-    active_group = None if bars < dwell or slot_phase >= transition else slot % groups
+    subdivisions = int(limits["counterpoint_grid_subdivisions_per_beat"])
+    rhythm = [0, 3, 1, 3, 2, 3]
+    phrase_start = score_at(score, float(music["phrase"]["start_second"]))
+
+    def slot_at(state: dict[str, Any]) -> int:
+        return int(state["beat"]["index"]) * subdivisions + math.floor(float(state["beat"]["phase"]) * subdivisions + 1e-9)
+
+    local_slot = max(0, slot_at(music) - slot_at(phrase_start))
+    slot_phase = (float(music["beat"]["phase"]) * subdivisions) % 1
+    active_group = rhythm[local_slot % len(rhythm)]
+    changing = slot_phase < float(limits["counterpoint_transition_fraction"])
+
+    def occurrences(group: int, inclusive_slot: int) -> int:
+        slots = inclusive_slot + 1
+        whole, remainder = divmod(slots, len(rhythm))
+        return whole * rhythm.count(group) + rhythm[:remainder].count(group)
     choices = []
     for group in range(groups):
-        updates = 0 if slot < group else math.floor((slot - group) / groups) + 1
-        completed = max(0, updates - 1) if active_group == group else updates
+        updates = occurrences(group, local_slot)
+        completed = max(0, updates - 1) if active_group == group and changing else updates
         def frame_index(count: int) -> int:
             return 0 if count == 0 else group + 1 + groups * (count - 1)
 
         current_index = frame_index(completed)
         next_index = frame_index(completed + 1)
-        changing = active_group == group and slot_phase < transition
+        group_changing = active_group == group and changing
         choices.append(
             {
                 "group": group,
                 "current_source_frame_id": frames[current_index % len(frames)],
-                "next_source_frame_id": frames[next_index % len(frames)] if changing else frames[current_index % len(frames)],
-                "blend": _smooth(slot_phase / transition) if changing else 0.0,
+                "next_source_frame_id": frames[next_index % len(frames)] if group_changing else frames[current_index % len(frames)],
+                "blend": _smooth(slot_phase / float(limits["counterpoint_transition_fraction"])) if group_changing else 0.0,
             }
         )
     return {
         "groups": choices,
         "active_group": active_group,
-        "fragment_change_fraction": float(limits["fragment_counterpoint_fraction"]) if active_group is not None else 0.0,
+        "fragment_change_fraction": float(limits["fragment_counterpoint_fraction"]) if changing else 0.0,
     }
 
 
@@ -377,7 +388,7 @@ def pose_at(
     next_movement_id = assignment["movement_id"]
     current_geometry = motif.get("geometry_frame_id") if motif else None
     next_geometry = current_geometry
-    counterpoint = _panel_counterpoint(motif, assignment, bars, choreography["legibility"])
+    counterpoint = _panel_counterpoint(score, motif, assignment, music, choreography["legibility"])
 
     if next_assignment is not None and assignment["movement_id"] != "SIGNATURE" and not assignment["hold_complete_phrase"]:
         boundary_bars = outgoing_transition_bars

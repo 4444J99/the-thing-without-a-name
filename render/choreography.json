@@ -6,7 +6,7 @@
     "score_file_sha256": "a5bff93175b5e80c81ff46c6317676044b4ed2a07b999823fa616cd0eb542ae1",
     "corpus_manifest_sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371",
     "corpus_score_sha256": "6527591842af960dee9937e95cfbba1edc4ed383869ca5d643b6e587c642e9a5",
-  "contract_sha256": "5121f0aad86a89cf2a8299cd35cd02b7eb0af1271dd2d6b837695252a2f0a3e1"
+  "contract_sha256": "ed63928bf2ece16a5a49a26ec4aec94c23291c831f1ea4e40c94b3dc85494ac9"
   },
   "legibility": {
     "minimum_pose_dwell_bars": 2,
@@ -15,8 +15,8 @@
     "maximum_fragment_change_area_per_bar": 0.25,
     "fragment_counterpoint_fraction": 0.25,
     "counterpoint_groups": 4,
-    "counterpoint_pose_dwell_bars": 2,
-    "counterpoint_transition_bars": 1,
+    "counterpoint_grid_subdivisions_per_beat": 2,
+    "counterpoint_transition_fraction": 0.42,
     "hard_global_recast_before_signature": false,
     "frame_order_semantics": "authored-motif-not-chronology"
   },
