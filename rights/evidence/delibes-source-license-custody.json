@@ -54,6 +54,7 @@
     "name": "MuseScore_General.sf3",
     "license": "MIT",
     "documentation_url": "https://musescore.org/en/handbook/3/soundfonts-and-sfz-files",
+    "source_url": "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3",
       "notice": {
         "path": "music/licenses/MuseScore_General_License.md",
         "sha256": "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4"

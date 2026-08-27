@@ -270,7 +270,13 @@ def validate_document(
             if not allow_hydrated:
                 error(f"{location}.custody", "hydrated-local is not allowed for this provenance layer")
                 return relative, digest
-            if not normalized.startswith(".work/"):
+            relative_path = Path(relative)
+            work_root = (root / ".work").resolve()
+            if (
+                not normalized.startswith(".work/")
+                or any(part in {"", ".", ".."} for part in relative_path.parts)
+                or not _inside(work_root, (root / relative_path).resolve())
+            ):
                 error(f"{location}.path", "hydrated-local bytes must live below .work/")
             if tracked is not None and normalized in tracked:
                 error(f"{location}.path", "hydrated-local bytes must remain untracked")

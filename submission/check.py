@@ -1035,6 +1035,8 @@ def check_audio(spec: dict, root: Path, rep: Report) -> None:
     sound_master_sha256 = (
         manifest_sound.get("master_sha256") if isinstance(manifest_sound, dict) else None
     )
+    if not isinstance(sound_master_sha256, str) or len(sound_master_sha256) != 64:
+        receipt_errors.append("package manifest sound has no valid master_sha256")
     if receipt.get("sha256") != sound_master_sha256:
         receipt_errors.append("copied score receipt does not bind the rendered master WAV")
     for field in ("t0", "t1", "duration"):

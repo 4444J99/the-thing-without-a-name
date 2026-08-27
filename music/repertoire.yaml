@@ -17,7 +17,7 @@ works:
     composition:
       title: Valse lente from Sylvia; Valse from Coppélia
       composer: Léo Delibes
-      date: "1870; 1876"
+      date: "1876; 1870"
       status: public-domain
       license: null
       source: null
@@ -96,7 +96,7 @@ works:
           citation: The package must supply a matching danse.audio.render.v1 receipt; selection does not claim that ignored WAV bytes already exist.
           source:
             path: music/audio-toolchain.json
-            sha256: 373a34e14c22231a4f8c530a4f8a1c6452ecf0c7e79df67cec1ff8bdb646906a
+            sha256: 62c8c2e1da0e0b08258bc4148b5e7cb1f88d96a74f5f4fcc055798c881246b37
 
     samples:
       status: licensed
@@ -173,7 +173,7 @@ works:
         sha256: 19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21
       - kind: audio-toolchain-contract
         path: music/audio-toolchain.json
-        sha256: 373a34e14c22231a4f8c530a4f8a1c6452ecf0c7e79df67cec1ff8bdb646906a
+        sha256: 62c8c2e1da0e0b08258bc4148b5e7cb1f88d96a74f5f4fcc055798c881246b37
       - kind: audio-use-manifest
         path: sound/audio-uses.json
-        sha256: 3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831
+        sha256: d312487481ca456c4f26357b18fef7f0f58b5d8ae4a3dc5e687895d9c98f53e4

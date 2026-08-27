@@ -112,7 +112,7 @@ RIGHTS_MEDIA_SUFFIXES = {
 PRODUCTION_RECEIPT = "provenance/production.json"
 PRODUCER_RECEIPTS = "provenance/producer-receipts"
 DELIBES_CUSTODY_PATH = "rights/evidence/delibes-source-license-custody.json"
-DELIBES_CUSTODY_SHA256 = "ae725ed568b70aa9201486fed9bc3a34548892eb39d5847bf697070f3789f543"
+DELIBES_CUSTODY_SHA256 = "92f5df76904b11cc543055c12d1f2e426e78130c5ff9006a06b6ff1f947ed545"
 MUSESCORE_GENERAL_NOTICE_PATH = "music/licenses/MuseScore_General_License.md"
 MUSESCORE_GENERAL_NOTICE_SHA256 = "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4"
 MUSESCORE_GENERAL_SF3_SHA256 = "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3"
@@ -121,7 +121,7 @@ ADAPTED_DELIBES_MIDI_SHA256 = "a42b36415e6b41f63778e19b6b171b34c65eeca3c862c22eb
 DELIBES_ADAPTATION_PATH = "music/adaptation.json"
 DELIBES_ADAPTATION_SHA256 = "19ee6f43b45f18b7737483d158c9363f6788b156c7380f0b8ebb29b4b9f72d21"
 AUDIO_USES_PATH = "sound/audio-uses.json"
-AUDIO_USES_SHA256 = "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831"
+AUDIO_USES_SHA256 = "d312487481ca456c4f26357b18fef7f0f58b5d8ae4a3dc5e687895d9c98f53e4"
 AUDIO_TOOLCHAIN_PATH = "music/audio-toolchain.json"
 AUDIO_MIX_PATH = "music/delibes-mix.json"
 COMPETITION_AUDIO_RENDER_RECEIPT = ROOT / ".work" / "music" / "competition" / "audio-render.json"
@@ -977,6 +977,7 @@ def _validate_delibes_custody(
         "name": "MuseScore_General.sf3",
         "license": "MIT",
         "documentation_url": "https://musescore.org/en/handbook/3/soundfonts-and-sfz-files",
+        "source_url": "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3",
         "notice": {
             "path": MUSESCORE_GENERAL_NOTICE_PATH,
             "sha256": MUSESCORE_GENERAL_NOTICE_SHA256,
@@ -1126,6 +1127,7 @@ def _validate_audio_use_profiles(
             "sha256": MUSESCORE_GENERAL_SF3_SHA256,
             "custody": "hydrated-local",
             "license": "MIT",
+            "source_url": "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3",
             "license_notice": {
                 "path": MUSESCORE_GENERAL_NOTICE_PATH,
                 "sha256": MUSESCORE_GENERAL_NOTICE_SHA256,
@@ -2770,7 +2772,9 @@ def validate_package(
         else:
             score_digest = score_items[0][1].get("sha256")
         try:
-            audio_identity = current_audio_identity(manifest)
+            audio_identity = current_audio_identity(
+                {**manifest, "river_seed": int(str(manifest.get("seed", "-1")), 0)}
+            )
         except RightsError as exc:
             blockers.append(str(exc))
             audio_identity = None

@@ -25,6 +25,7 @@ sys.path.insert(0, str(MUSIC))
 
 from adapt_delibes import MidiFile, parse_midi, write_track  # noqa: E402
 from music_score import canonical_sha256, load_score  # noqa: E402
+from choreography import load_choreography  # noqa: E402
 
 DEFAULT_SCORE = MUSIC / "score.json"
 DEFAULT_MIDI = MUSIC / "delibes-screendance-suite.mid"
@@ -37,6 +38,8 @@ DEFAULT_RECEIPT = DEFAULT_OUTPUT / "audio-render.json"
 DEFAULT_FLUIDSYNTH = Path("/opt/homebrew/bin/fluidsynth")
 DEFAULT_FFMPEG = Path("/opt/homebrew/bin/ffmpeg")
 DEFAULT_SOUNDFONT = ROOT / ".work" / "music" / "MuseScore_General.sf3"
+CORPUS_MANIFEST = ROOT / "corpus" / "manifest.json"
+CORPUS_SCORE = ROOT / "corpus" / "score-2017.json"
 CHUNK_FRAMES = 16_384
 Q16 = 1 << 16
 MIN_AUDIBLE_PEAK = 32
@@ -116,8 +119,14 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, Any]:
     score = load_score(args.score)
     if score.get("release_status") == "fixture-only" or score.get("time", {}).get("passage_mapping") != "native-tempo":
         raise ValueError("competition audio requires a non-fixture native-tempo score")
-    choreography = load_json(args.choreography, "danse.choreography.v1")
-    contract_identity(choreography, "choreography")
+    choreography = load_choreography(
+        args.choreography,
+        score=score,
+        score_path=args.score,
+        corpus_manifest=json.loads(CORPUS_MANIFEST.read_text()),
+        corpus_manifest_path=CORPUS_MANIFEST,
+        corpus_score_path=CORPUS_SCORE,
+    )
     adaptation = load_json(args.adaptation, "danse.music.adaptation.v1")
     toolchain = load_json(args.toolchain, "danse.audio.toolchain.v1")
     mix = load_json(args.mix, "danse.audio.mix.v1")
@@ -766,8 +775,15 @@ def main() -> int:
     parser.add_argument("--soundfont", type=Path, default=DEFAULT_SOUNDFONT)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--receipt", type=Path, default=DEFAULT_RECEIPT)
-    parser.add_argument("--no-repeat", action="store_true", help="development only; receipt remains fail-closed")
+    parser.add_argument(
+        "--no-repeat",
+        action="store_true",
+        help="development only; requires explicit --receipt because its receipt cannot pass verification",
+    )
     args = parser.parse_args()
+    if args.no_repeat and args.receipt == DEFAULT_RECEIPT:
+        print("FAIL: --no-repeat cannot write the canonical competition receipt; pass --receipt")
+        return 1
     try:
         contracts = validate_inputs(args)
         sample_rate = int(contracts["mix"]["sample_rate"])

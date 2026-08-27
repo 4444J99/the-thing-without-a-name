@@ -67,6 +67,6 @@
   },
   "renderer": {
     "path": "sound/render_music.py",
-    "sha256": "e0959a458f96916f1b732303c527f914a68e6202d96f3feaea52911908e15d66"
+    "sha256": "51cae47191261852a8570055705d1c254dc92049d91cb93c0f27d410e41e2527"
   }
 }

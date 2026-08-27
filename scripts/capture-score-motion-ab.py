@@ -29,6 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUFFIX = {".json": ".md"}
+FIXTURE_SCORE = "music/fixtures/score-affine.json"
 
 
 def run(*command: str) -> subprocess.CompletedProcess:
@@ -50,7 +51,7 @@ def emit(seed: int, stream: int, passage_index: int) -> dict:
       import { planWebAudio } from './sound/web_audio.mjs';
       // The tracked receipt is a historical affine-fixture predicate. Production
       // delivery uses the native-tempo score/choreography receipt instead.
-      const scorePath = process.env.DANSE_FIXTURE_SCORE || 'music/score.json';
+      const scorePath = process.env.DANSE_FIXTURE_SCORE || 'music/fixtures/score-affine.json';
       const score = JSON.parse(fs.readFileSync(scorePath));
       const program = JSON.parse(fs.readFileSync('render/program.json'));
       const seed = SEED, stream = STREAM, index = PASSAGE;

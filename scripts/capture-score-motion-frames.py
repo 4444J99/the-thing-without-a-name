@@ -39,6 +39,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_SCORE = "music/fixtures/score-affine.json"
 sys.path.insert(0, str(ROOT / "render"))
 from browser import browser, serve  # noqa: E402
 
@@ -124,7 +125,7 @@ def emit(seed: int, stream: int, out: Path) -> dict:
 
     renderer = "unknown"
     pairs: dict[float, dict[str, bytes]] = {}
-    score_path = os.environ.get("DANSE_FIXTURE_SCORE", "music/score.json")
+    score_path = os.environ.get("DANSE_FIXTURE_SCORE", FIXTURE_SCORE)
     score_relative = Path(score_path)
     if score_relative.is_absolute():
         try:
@@ -132,6 +133,16 @@ def emit(seed: int, stream: int, out: Path) -> dict:
         except ValueError as exc:
             raise SystemExit("fixture score for frame evidence must be inside the repository") from exc
     score_url = score_relative.as_posix()
+    try:
+        rendered_score = json.loads((ROOT / score_relative).read_text())
+        rendered_contract = rendered_score["identity"]["contract_sha256"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"frame evidence score has no readable contract identity: {score_url}") from exc
+    if rendered_contract != ab["contract"]:
+        raise SystemExit(
+            "frame evidence score contract does not match score-to-motion A/B receipt: "
+            f"{rendered_contract} != {ab['contract']}"
+        )
 
     with serve(sink=sink) as base:
         with browser(headless=True, width=WIDTH, height=HEIGHT) as page:
@@ -285,7 +296,7 @@ def compose_sheet(rows: list[dict], pairs: dict[float, dict[str, bytes]], times:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=lambda raw: int(raw, 0), default=0x12345678)
-    ap.add_argument("--stream", type=int, default=7)
+    ap.add_argument("--stream", type=int, default=0)
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "evidence")
     args = ap.parse_args()
 

@@ -360,8 +360,11 @@ function coherent(cells, current, next, blend, { opacity = 1, namespace = 0 } = 
 
 function authoredCut(corpus, seed, cut, movement, current, next, blend, geometryFrame, options = {}) {
   if (cut === "black") return [];
+  const topologySeed = hash(seed, CUTS.indexOf(cut), 0x6d71);
   if (cut === "score" && movement === "ASSEMBLY") {
-    return score(corpus).map((cell, index) => ({
+    const solved = score(corpus);
+    if (!solved.length) return coherent(grid(corpus, topologySeed, 0, { rate: 0 }), current, next, blend, options);
+    return solved.map((cell, index) => ({
       ...cell,
       renderId: (options.namespace ?? 0) + index,
       opacity: options.opacity ?? 1,
@@ -371,9 +374,9 @@ function authoredCut(corpus, seed, cut, movement, current, next, blend, geometry
     return coherent([{ id: 0, rect: [0, 0, 1, 1] }], current, next, blend, options);
   }
   if (cut === "score") {
-    return coherent(score(corpus), current, next, blend, options);
+    const solved = score(corpus);
+    return coherent(solved.length ? solved : grid(corpus, topologySeed, 0, { rate: 0 }), current, next, blend, options);
   }
-  const topologySeed = hash(seed, CUTS.indexOf(cut), 0x6d71);
   if (cut === "figure") {
     const body = figure(corpus, topologySeed, 0, { rate: 0, hostId: geometryFrame });
     const cells = body.length ? body : [{ id: 0, rect: [0, 0, 1, 1] }];
