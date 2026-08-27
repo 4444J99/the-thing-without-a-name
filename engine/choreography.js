@@ -2,7 +2,8 @@
  *
  * The contract authors ordered motifs. It does not infer chronology from file
  * names and it never asks each fragment to choose a photograph independently.
- * Every ordinary frame therefore exposes one coherent current/next pose pair.
+ * A phrase enters as one coherent pose; declared counterpoint then permits one
+ * bounded anatomical cohort to hold a different authored moment.
  */
 
 import { canonicalSha256 } from "./score.js";
@@ -79,7 +80,12 @@ export function validate(choreography, { score = null, corpus = null } = {}) {
   if (!(limits.maximum_fragment_change_area_per_bar >= 0 && limits.maximum_fragment_change_area_per_bar <= 0.25)) {
     bad("maximum_fragment_change_area_per_bar must be in [0, 0.25]");
   }
-  if (limits.fragment_counterpoint_fraction !== 0) bad("production choreography requires zero fragment counterpoint");
+  if (!(limits.fragment_counterpoint_fraction > 0 && limits.fragment_counterpoint_fraction <= 0.25)) {
+    bad("fragment_counterpoint_fraction must be in (0, 0.25]");
+  }
+  if (limits.counterpoint_groups !== 4) bad("counterpoint_groups must be four anatomical cohorts");
+  if (!(limits.counterpoint_pose_dwell_bars >= 2)) bad("counterpoint_pose_dwell_bars must be at least two");
+  if (!(limits.counterpoint_transition_bars >= 1)) bad("counterpoint_transition_bars must be at least one");
   if (limits.hard_global_recast_before_signature !== false) bad("hard global recasts before SIGNATURE are forbidden");
   if (limits.frame_order_semantics !== "authored-motif-not-chronology") bad("frame order semantics are not explicit");
 
@@ -219,6 +225,49 @@ function motifPose(motif, assignment, barsIntoPhrase, usableBars = Infinity) {
   return { index: cycle, current, next, blend };
 }
 
+/** Four simultaneous, authored moments of one phrase.
+ *
+ * This is selection counterpoint, not transform modulation.  The cohorts are
+ * spatial body strata (the grammar assigns the lowest stratum to the legs).
+ * They begin as four held source moments; thereafter only one cohort dissolves
+ * during a full bar, then it holds for two bars before the next cohort moves.
+ */
+function panelCounterpoint(motif, assignment, bars, limits) {
+  if (!motif || assignment.hold_complete_phrase || motif.source_frame_ids.length < 2
+      || !["PHRASE", "RESEED"].includes(assignment.movement_id)) return null;
+  const frames = motif.source_frame_ids;
+  const groups = limits.counterpoint_groups;
+  const dwell = limits.counterpoint_pose_dwell_bars;
+  const transition = limits.counterpoint_transition_bars;
+  const start = dwell;
+  const elapsed = Math.max(0, bars - start);
+  const slotLength = dwell + transition;
+  const slot = Math.floor(elapsed / slotLength);
+  const slotPhase = elapsed - slot * slotLength;
+  const activeGroup = bars < start || slotPhase >= transition ? null : slot % groups;
+  return {
+    groups: Array.from({ length: groups }, (_, group) => {
+      const updates = slot < group ? 0 : Math.floor((slot - group) / groups) + 1;
+      const completed = activeGroup === group ? Math.max(0, updates - 1) : updates;
+      // Every phrase enters on its single coherent first frame.  Counterpoint
+      // is then introduced one anatomical cohort at a time; it never appears as
+      // an all-panel recast at a phrase boundary.
+      const frameIndex = (count) => count === 0 ? 0 : group + 1 + groups * (count - 1);
+      const currentIndex = frameIndex(completed);
+      const nextIndex = frameIndex(completed + 1);
+      const changing = activeGroup === group && slotPhase < transition;
+      return {
+        group,
+        current_source_frame_id: frames[currentIndex % frames.length],
+        next_source_frame_id: changing ? frames[nextIndex % frames.length] : frames[currentIndex % frames.length],
+        blend: changing ? smooth(slotPhase / transition) : 0,
+      };
+    }),
+    active_group: activeGroup,
+    fragment_change_fraction: activeGroup === null ? 0 : limits.fragment_counterpoint_fraction,
+  };
+}
+
 /**
  * Pure photographic pose at score time t.
  *
@@ -265,6 +314,7 @@ export function poseAt(score, choreography, seed, t, window = null) {
   let nextMovementId = assignment.movement_id;
   let currentGeometry = motif?.geometry_frame_id ?? null;
   let nextGeometry = currentGeometry;
+  const counterpoint = panelCounterpoint(motif, assignment, barsIntoPhrase, choreography.legibility);
 
   if (nextAssignment && assignment.movement_id !== "SIGNATURE" && !assignment.hold_complete_phrase) {
     const boundaryBars = outgoingTransitionBars;
@@ -328,7 +378,12 @@ export function poseAt(score, choreography, seed, t, window = null) {
       kind: transitionKind ?? (pose.blend > 0 ? "pose" : null),
       bars: transitionBars,
       progress: rounded(transitionProgress),
-      fragment_change_fraction: 0,
+      fragment_change_fraction: rounded(counterpoint?.fragment_change_fraction ?? 0),
+    },
+    panel_counterpoint: counterpoint && {
+      active_group: counterpoint.active_group,
+      fragment_change_fraction: rounded(counterpoint.fragment_change_fraction),
+      groups: counterpoint.groups.map((group) => ({ ...group, blend: rounded(group.blend) })),
     },
   };
 }
