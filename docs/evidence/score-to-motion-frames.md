@@ -7,10 +7,10 @@ the pixel difference. Every number here is a picture first: the contact
 sheet shows the pair, and the PSNR is the number under it.
 
 - score contract: `f58a3a29a6fed5ecaa2e8580553841c852ad1d7aa63b16f054c5be08ffd580a4`
-- seed: `0x12345678`, stream: `0`, passage: 0 (t0=0s)
+- seed: `0x12345678`, stream: `7`, passage: 0 (t0=0s)
 - tier `screen` at 1024×768 on ANGLE (Apple, ANGLE Metal Renderer: Apple M5, Unspecified Version)
-- contact sheet: `score-to-motion-frames.png` (sha256 `a1ebffca46971aaa`)
-- determinism: the WITH frame at t=0.0s rendered in a fresh process is **byte-identical** (`3dee5ccde650` vs `3dee5ccde650`). The instrument reports real differences or nothing; a rerun of the same input proves it.
+- contact sheet: `score-to-motion-frames.png` (sha256 `2e7c4e21e1897a69`)
+- determinism: the WITH frame at t=0.0s rendered in a fresh process is **byte-identical** (`21afe5e36bf9` vs `21afe5e36bf9`). The instrument reports real differences or nothing; a rerun of the same input proves it.
 
 ## Why there is no identical control
 
@@ -23,14 +23,15 @@ PSNR is measured on the actual WITH vs WITHOUT pixels.
 
 | t (s) | boundary | movement | Δmax | PSNR (with vs without) |
 |---|---|---|---|---|
-| 0.000 | origin ONE | ONE | 0.000 | 10.7 dB |
-| 44.880 | movement ASSEMBLY | ASSEMBLY | 0.042 | 10.8 dB |
-| 72.930 | movement DIVISION | DIVISION | 0.086 | 25.4 dB |
-| 134.640 | movement PHRASE | PHRASE | 0.142 | 37.4 dB |
-| 143.616 | cue phrase-accent-a | PHRASE | 0.176 | 13.7 dB |
-| 148.104 | cue phrase-accent-b | PHRASE | 0.241 | 14.3 dB |
-| 152.592 | cue phrase-accent-c | PHRASE | 0.314 | 14.2 dB |
-| 252.449 | movement STILLNESS | STILLNESS | 0.113 | 13.8 dB |
-| 319.769 | movement RESEED | RESEED | 0.052 | 15.2 dB |
-| 345.575 | cue reseed-accent-a | RESEED | 0.279 | 14.6 dB |
-| 381.479 | cue reseed-accent-b | RESEED | 0.367 | 13.8 dB |
+| 0.000 | origin ONE | ONE | 0.000 | 14.6 dB |
+| 37.166 | movement ASSEMBLY | ASSEMBLY | 0.050 | 11.3 dB |
+| 60.395 | movement DIVISION | DIVISION | 0.031 | 25.3 dB |
+| 111.498 | movement PHRASE | PHRASE | 0.153 | 11.7 dB |
+| 118.931 | cue phrase-accent-a | PHRASE | 0.226 | 11.6 dB |
+| 122.647 | cue phrase-accent-b | PHRASE | 0.293 | 13.5 dB |
+| 126.364 | cue phrase-accent-c | PHRASE | 0.359 | 14.1 dB |
+| 209.058 | movement STILLNESS | STILLNESS | 0.161 | 13.0 dB |
+| 264.807 | movement RESEED | RESEED | 0.127 | 15.4 dB |
+| 286.177 | cue reseed-accent-a | RESEED | 0.314 | 14.8 dB |
+| 315.910 | cue reseed-accent-b | RESEED | 0.424 | 14.6 dB |
+| 358.650 | movement SIGNATURE | RESEED | 0.004 | 14.4 dB |

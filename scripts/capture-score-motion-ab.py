@@ -208,7 +208,7 @@ def markdown(payload: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=lambda raw: int(raw, 0), default=0x12345678)
-    ap.add_argument("--stream", type=int, default=0)
+    ap.add_argument("--stream", type=int, default=7)
     ap.add_argument("--passage", type=int, default=0)
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "evidence")
     args = ap.parse_args()

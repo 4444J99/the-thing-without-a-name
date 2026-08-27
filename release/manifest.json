@@ -33,15 +33,15 @@
       "schema": "danse.installation.reference-binding.v1",
       "status": "reference-only",
       "spec_id": "danse-reference-installation-20260804",
-      "spec_contract_sha256": "51eb2a53965901c7d0024bb12fb1f38c4847a68e7b23897bc2bbd5910832e99e",
+      "spec_contract_sha256": "35cebf541a80788bce08586ada4299cbef77fffe1ebdbb4633f357214ecc9c66",
       "digital_twin": {
         "path": "installation/digital-twin.json",
-        "sha256": "d4cfcb2624e3b87a29f81d5704fbaa35b29f090f7a8a7b52bbae31e95f2e24f5",
+        "sha256": "1d41a80973022fe60e31cfdafd533a55629a1a8c463a2b545279ec4b2e541f7a",
         "bytes": 5416
       },
       "gate_ledger": {
         "path": "installation/gates.json",
-        "sha256": "9974e564f10149d751319a8a9aaa902d0eeeedf220d938cfb3626c831d28e396",
+        "sha256": "9a900295fe3bfefd4e637d5d221deb8b2931d2b1b4c8c144afce13aaacaf1762",
         "bytes": 825
       },
       "physical_predicates_satisfied": false,
