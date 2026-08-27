@@ -316,7 +316,7 @@ function frame() {
   const r = frameAt(renderer, corpus, river.seed, t, program, {
     quantise: RECAST,
     stream: river.stream,
-    score: program ? musicalScore : null,
+    score: musicalScore,
     choreography: program ? choreography : null,
     matteK,
   });
