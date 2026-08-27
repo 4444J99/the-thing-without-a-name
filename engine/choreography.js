@@ -28,6 +28,27 @@ const smooth = (value) => {
 };
 const rounded = (value) => Number(value.toFixed(12));
 
+const CONDUCTOR_MODELS = Object.freeze({
+  native: { label: "score-native", pattern: [0, 3, 1, 3, 2, 3] },
+  waltz: { label: "waltz", pattern: [0, 3, 1, 3, 2, 3] },
+  common: { label: "common-time", pattern: [0, 3, 1, 3, 2, 3, 1, 3] },
+  compound: { label: "six-eight", pattern: [0, 3, 1, 3, 2, 3] },
+});
+
+/** A URL/UI conductor overlay for the live work.  It changes only visual
+ * selection time; the immutable delivery score and its native audio stay put. */
+export function normalizeConductor(value = null) {
+  const source = value && typeof value === "object" ? value : {};
+  const model = CONDUCTOR_MODELS[source.model] ? source.model : "native";
+  const meter = /^([2-9]|1[0-2])\/(2|4|8|16)$/.exec(source.meter ?? "");
+  const tempo = Number(source.tempo);
+  return {
+    model,
+    meter: meter ? `${meter[1]}/${meter[2]}` : null,
+    tempo: Number.isFinite(tempo) && tempo >= 30 && tempo <= 300 ? tempo : null,
+  };
+}
+
 /** SHA-256 over a choreography with its self-identifying digest omitted. */
 export function contractSha256(choreography) {
   const identity = choreography?.identity;
@@ -234,7 +255,7 @@ function motifPose(motif, assignment, barsIntoPhrase, usableBars = Infinity) {
  * They begin as four held source moments; thereafter only one cohort dissolves
  * during a full bar, then it holds for two bars before the next cohort moves.
  */
-function panelCounterpoint(score, motif, assignment, music, limits) {
+function panelCounterpoint(score, motif, assignment, music, limits, conductor = null) {
   if (!motif || assignment.hold_complete_phrase || motif.source_frame_ids.length < 2
       || !["PHRASE", "RESEED"].includes(assignment.movement_id)) return null;
   const frames = motif.source_frame_ids;
@@ -243,11 +264,27 @@ function panelCounterpoint(score, motif, assignment, music, limits) {
   // The conductor's 3/4 grid: 1-&-2-&-3-&.  Bass/cello carry the legs on
   // the downbeat; viola/cello take 2; lower violin takes 3; the upper-string
   // answer occupies the intervening eighths.  It is score time, not a timer.
-  const rhythm = [0, 3, 1, 3, 2, 3];
+  const selected = normalizeConductor(conductor);
+  const [numerator] = (selected.meter ?? `${music.meter.numerator}/${music.meter.denominator}`).split("/").map(Number);
+  const effectiveModel = selected.model === "native" && selected.meter
+    ? (numerator === 4 ? "common" : numerator === 6 ? "compound" : "waltz")
+    : selected.model;
+  const rhythm = CONDUCTOR_MODELS[effectiveModel].pattern;
+  const native = selected.model === "native" && selected.tempo === null && selected.meter === null;
   const phraseStart = scoreAt(score, music.phrase.start_second);
-  const slotAt = (state) => state.beat.index * subdivisions + Math.floor(state.beat.phase * subdivisions + 1e-9);
+  const beatState = (state) => native
+    ? { index: state.beat.index, phase: state.beat.phase }
+    : (() => {
+      const tempo = selected.tempo ?? state.tempo.effective_bpm;
+      const beat = state.source_second * tempo / 60;
+      return { index: Math.floor(beat), phase: beat - Math.floor(beat) };
+    })();
+  const slotAt = (state) => {
+    const beat = beatState(state);
+    return beat.index * subdivisions + Math.floor(beat.phase * subdivisions + 1e-9);
+  };
   const localSlot = Math.max(0, slotAt(music) - slotAt(phraseStart));
-  const slotPhase = (music.beat.phase * subdivisions) % 1;
+  const slotPhase = (beatState(music).phase * subdivisions) % 1;
   const activeGroup = rhythm[localSlot % rhythm.length];
   const changing = slotPhase < limits.counterpoint_transition_fraction;
   const occurrences = (group, inclusiveSlot) => {
@@ -277,6 +314,7 @@ function panelCounterpoint(score, motif, assignment, music, limits) {
     }),
     active_group: activeGroup,
     fragment_change_fraction: changing ? limits.fragment_counterpoint_fraction : 0,
+    conductor: { ...selected, effective_model: effectiveModel, numerator },
   };
 }
 
@@ -286,7 +324,7 @@ function panelCounterpoint(score, motif, assignment, music, limits) {
  * `window` exists only so the shared engine can place a native score at a
  * passage's absolute t0. Production validation rejects any duration change.
  */
-export function poseAt(score, choreography, seed, t, window = null) {
+export function poseAt(score, choreography, seed, t, window = null, conductor = null) {
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xFFFFFFFF) throw new RangeError("choreography seed must be uint32");
   const music = scoreAt(score, t, window);
   const phraseIndex = music.phrase.index;
@@ -326,7 +364,7 @@ export function poseAt(score, choreography, seed, t, window = null) {
   let nextMovementId = assignment.movement_id;
   let currentGeometry = motif?.geometry_frame_id ?? null;
   let nextGeometry = currentGeometry;
-  const counterpoint = panelCounterpoint(score, motif, assignment, music, choreography.legibility);
+  const counterpoint = panelCounterpoint(score, motif, assignment, music, choreography.legibility, conductor);
 
   if (nextAssignment && assignment.movement_id !== "SIGNATURE" && !assignment.hold_complete_phrase) {
     const boundaryBars = outgoingTransitionBars;
@@ -395,6 +433,7 @@ export function poseAt(score, choreography, seed, t, window = null) {
     panel_counterpoint: counterpoint && {
       active_group: counterpoint.active_group,
       fragment_change_fraction: rounded(counterpoint.fragment_change_fraction),
+      conductor: counterpoint.conductor,
       groups: counterpoint.groups.map((group) => ({ ...group, blend: rounded(group.blend) })),
     },
   };

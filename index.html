@@ -157,6 +157,31 @@
     <div class="control-row"><button id="music-toggle" type="button">Start music</button></div>
     <p id="music-status" role="status" aria-live="polite" aria-atomic="true">Music is ready to start.</p>
   </fieldset>
+  <fieldset id="conductor-controls">
+    <legend>Visual conductor</legend>
+    <p>Changes the panel-selection count only. Score-native preserves the selected Delibes tempo and meter; alternate settings are live visual auditions and do not time-stretch the music.</p>
+    <div class="fallback-grid">
+      <label for="conductor-model">Model
+        <select id="conductor-model">
+          <option value="native">Score-native</option>
+          <option value="waltz">Waltz</option>
+          <option value="common">Common time</option>
+          <option value="compound">6/8 compound</option>
+        </select>
+      </label>
+      <label for="conductor-meter">Time signature
+        <select id="conductor-meter">
+          <option value="">From model / score</option>
+          <option value="3/4">3/4</option>
+          <option value="4/4">4/4</option>
+          <option value="6/8">6/8</option>
+        </select>
+      </label>
+      <label for="conductor-tempo">Visual BPM <input id="conductor-tempo" type="range" min="40" max="220" step="1" value="126"></label>
+    </div>
+    <div class="control-row"><button id="conductor-reset" type="button">Use score-native conductor</button></div>
+    <p id="conductor-status" role="status" aria-live="polite">Score-native conductor.</p>
+  </fieldset>
   <fieldset id="interaction-controls">
     <legend>Room interaction (optional)</legend>
     <p class="privacy-note">Off by default. If you choose camera input, frames stay in memory on this device, are never displayed or transmitted, and raw landmarks are discarded immediately. Only anonymous room-control values enter an explicitly saved receipt. Keyboard / touch is the no-camera, low-power, and pose-accessibility path.</p>
@@ -248,6 +273,11 @@ const choreography = choreographyUrl && musicalScore
 if (musicalScore?.release_status !== "fixture-only" && musicalScore && !choreography) {
   throw new Error("a production music score requires ?choreography=<contract>");
 }
+let conductor = Choreography.normalizeConductor({
+  model: query.get("conductor") ?? "native",
+  meter: query.get("meter"),
+  tempo: query.get("bpm"),
+});
 const scoreAudio = musicalScore ? new ScoreAudio(musicalScore) : null;
 const baseRenderer = new Renderer(canvas, corpus);
 await corpus.prime(baseRenderer.gl, {
@@ -318,6 +348,7 @@ function frame() {
     stream: river.stream,
     score: musicalScore,
     choreography,
+    conductor,
     matteK,
   });
   if (scoreAudio?.playing) scoreAudio.sync(scoreSecondAt(t), heldAt !== null);
@@ -468,6 +499,50 @@ if (!scoreAudio) {
     }
   });
 }
+
+const conductorModel = el("conductor-model");
+const conductorMeter = el("conductor-meter");
+const conductorTempo = el("conductor-tempo");
+const conductorStatus = el("conductor-status");
+function describeConductor() {
+  const meter = conductor.meter ?? (conductor.model === "common" ? "4/4" : conductor.model === "compound" ? "6/8" : "3/4");
+  const tempo = conductor.tempo === null ? "score tempo" : `${conductor.tempo} BPM`;
+  conductorStatus.textContent = conductor.model === "native" && conductor.tempo === null && conductor.meter === null
+    ? "Score-native conductor · visual count and audio remain locked."
+    : `Visual ${conductor.model} conductor · ${meter} · ${tempo}. Audio remains score-native.`;
+}
+function persistConductor() {
+  const url = new URL(location.href);
+  for (const key of ["conductor", "meter", "bpm"]) url.searchParams.delete(key);
+  if (conductor.model !== "native") url.searchParams.set("conductor", conductor.model);
+  if (conductor.meter) url.searchParams.set("meter", conductor.meter);
+  if (conductor.tempo !== null) url.searchParams.set("bpm", String(conductor.tempo));
+  history.replaceState(null, "", url);
+}
+function setConductor() {
+  conductor = Choreography.normalizeConductor({
+    model: conductorModel.value,
+    meter: conductorMeter.value || null,
+    tempo: conductorTempo.dataset.active === "true" ? conductorTempo.value : null,
+  });
+  describeConductor();
+  persistConductor();
+}
+conductorModel.value = conductor.model;
+conductorMeter.value = conductor.meter ?? "";
+conductorTempo.value = conductor.tempo ?? 126;
+conductorTempo.dataset.active = conductor.tempo === null ? "false" : "true";
+describeConductor();
+conductorModel.addEventListener("change", setConductor);
+conductorMeter.addEventListener("change", setConductor);
+conductorTempo.addEventListener("input", () => { conductorTempo.dataset.active = "true"; setConductor(); });
+el("conductor-reset").addEventListener("click", () => {
+  conductorModel.value = "native";
+  conductorMeter.value = "";
+  conductorTempo.value = 126;
+  conductorTempo.dataset.active = "false";
+  setConductor();
+});
 
 addEventListener("keydown", async (e) => {
   const key = e.key.toLowerCase();

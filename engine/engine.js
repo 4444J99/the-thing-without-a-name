@@ -23,7 +23,7 @@ export function step(
   seed,
   t,
   program = null,
-  { quantise = 0, stream = 0, score = null, choreography = null } = {},
+  { quantise = 0, stream = 0, score = null, choreography = null, conductor = null } = {},
 ) {
   if (choreography && !score) throw new Error("score-led choreography requires a music score");
   // A bounded film supplies a passage window; the free river deliberately does
@@ -31,7 +31,7 @@ export function step(
   // visitor mode cannot silently remove the conducted panel score.
   const posePassage = choreography && program ? passageAt(program, seed, t, stream, score) : null;
   const pose = choreography
-    ? poseAt(score, choreography, seed, t, posePassage ? { t0: posePassage.t0, seconds: posePassage.seconds } : null)
+    ? poseAt(score, choreography, seed, t, posePassage ? { t0: posePassage.t0, seconds: posePassage.seconds } : null, conductor)
     : null;
   const s = state(seed, t, program, stream, score, pose);
   // The state is always sampled at the exact t; only the cast may be held.
@@ -48,8 +48,8 @@ export function step(
 
 /** Step and draw. Returns the renderer's stats plus the state that produced them. */
 export function frameAt(renderer, corpus, seed, t, program = null, opts = {}) {
-  const { quantise = 0, stream = 0, score = null, choreography = null, ...draw } = opts;
-  const { state: s, cast } = step(corpus, seed, t, program, { quantise, stream, score, choreography });
+  const { quantise = 0, stream = 0, score = null, choreography = null, conductor = null, ...draw } = opts;
+  const { state: s, cast } = step(corpus, seed, t, program, { quantise, stream, score, choreography, conductor });
   // The signature is not an overlay added afterwards — it is the last movement,
   // and it comes through the same canvas as every frame before it.
   const closing =
