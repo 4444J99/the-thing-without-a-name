@@ -32,6 +32,7 @@
  *   film.html?s=20170620&window=master&tier=film
  */
 import * as Corpus from "./engine/corpus.js";
+import * as Choreography from "./engine/choreography.js";
 import * as Program from "./engine/program.js";
 import * as MusicalScore from "./engine/score.js";
 import { frameAt, hex, signature, step } from "./engine/engine.js";
@@ -42,6 +43,10 @@ const q = new URLSearchParams(location.search);
 const program = await Program.load(q.get("program") ?? "render/program.json");
 const scoreUrl = q.get("score");
 const musicalScore = scoreUrl ? await MusicalScore.load(scoreUrl) : null;
+const choreographyUrl = q.get("choreography");
+if (musicalScore?.release_status !== "fixture-only" && musicalScore && !choreographyUrl) {
+  throw new Error("a production music score requires ?choreography=<contract>");
+}
 const cap = Program.captureOf(program, q.get("capture") ?? q.get("window") ?? "passage");
 const seed = numericParam(q, "s", program.seed, { integer: true, min: 0, max: 0xFFFFFFFF });
 const stream = numericParam(q, "u", 0, { integer: true, min: 0, max: 0xFFFFFFFF });
@@ -61,11 +66,11 @@ const from = numericParam(q, "from", 0, { min: 0 });
 const span = (() => {
   const fps = numericParam(q, "fps", cap.fps, { min: Number.EPSILON });
   if (cap.seconds > 0) return { t0: from, t1: from + cap.seconds, fps };
-  let at = Program.passageAt(program, seed, from, stream);
+  let at = Program.passageAt(program, seed, from, stream, musicalScore);
   const t0 = at.t0;
   let t1 = at.t0;
   for (let k = 0; k < cap.passages; k++) {
-    at = Program.passageAt(program, seed, t1 + 1e-6, stream);
+    at = Program.passageAt(program, seed, t1 + 1e-6, stream, musicalScore);
     t1 = at.t0 + at.seconds;
   }
   return { t0, t1, fps };
@@ -76,6 +81,9 @@ canvas.style.width = `${width}px`;
 canvas.style.height = `${height}px`;
 
 const corpus = await Corpus.load();
+const choreography = choreographyUrl
+  ? await Choreography.load(choreographyUrl, { score: musicalScore, corpus })
+  : null;
 if (!corpus.manifest.tiers[tier]) {
   throw new Error(
     `no "${tier}" tier in the corpus — have ${Object.keys(corpus.manifest.tiers).join(", ")}. ` +
@@ -94,7 +102,7 @@ let missing = 0;
 async function renderAt(t) {
   // What this frame will ask for — fetched and decoded BEFORE anything is drawn,
   // so the frame does not depend on what happened to be cached.
-  const { cast } = step(corpus, seed, t, program, { stream, score: musicalScore });
+  const { cast } = step(corpus, seed, t, program, { stream, score: musicalScore, choreography });
   const ids = cast.flatMap((c) => c.layers.map((l) => l.frame)).filter(Boolean);
   if (ids.length) await requireTier(corpus, tier, ids);
 
@@ -103,6 +111,7 @@ async function renderAt(t) {
   const r = frameAt(renderer, corpus, seed, t, program, {
     stream,
     score: musicalScore,
+    choreography,
     quantise: 0,
     tier,
     pixelRatio: 1,
@@ -117,11 +126,12 @@ async function renderAt(t) {
 // What this recording caught. The river has no name; a PASSAGE of it does, and
 // that is what a capture is named by — so a file on disk can be traced back to
 // the exact stretch of the piece it recorded and to nothing else.
-const opening = Program.passageAt(program, seed, span.t0, stream);
+const opening = Program.passageAt(program, seed, span.t0, stream, musicalScore);
 
 window.danseFilm = {
   program,
   score: musicalScore,
+  choreography,
   capture: cap.name,
   window: span,
   seed,

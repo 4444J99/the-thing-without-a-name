@@ -1,1 +1,7 @@
-All photographic material in this film was made by me on 20 June 2017, in my own apartment, using my own camera. All audio was recorded by me in the same apartment in June 2017. There is no licensed, stock, archival or third-party material of any kind in the picture or the sound, and no music is used. I am the sole author and sole rights holder of the source photographs, the source recordings, the software that assembles them, and the finished work. The film has not been broadcast, distributed or exhibited.
+The visual corpus contains 161 registered raw photographs made by Anthony J. Padavano on 20 June 2017 and one unregistered archival composite made from that material. No stock or synthetically generated visual source is declared. Performer likeness, pictured objects, publicity stills and festival uses remain separate package gates and may not be inferred as cleared from this text.
+
+The selected compositions by Léo Delibes are public domain. The source arrangements by Paul De Bra are licensed under Creative Commons Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/). The adapted MIDI, deterministic performance plan and mix are project-authored changes. The specified MuseScore_General.sf3 soundfont carries its documented MIT license; no commercial recording is used.
+
+Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix.
+
+This declaration does not assert final clearance or filing. The exact source, license, soundfont, MIDI, stem, mix, score, choreography and package hashes must agree, and the artist must separately approve the final cut, music credit, biography and rights declaration before submission.

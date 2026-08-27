@@ -1,0 +1,70 @@
+{
+  "schema": "danse.music-rights-custody.v1",
+  "status": "custody-only",
+  "recorded_on": "2026-08-26",
+  "composition_evidence": [
+    {
+      "work_id": "sylvia-valse-lente",
+      "composer": "Léo Delibes",
+      "title": "Valse lente from Sylvia",
+      "rights_status": "public-domain-composition",
+      "library_of_congress_url": "https://www.loc.gov/item/2023848130/"
+    },
+    {
+      "work_id": "coppelia-valse",
+      "composer": "Léo Delibes",
+      "title": "Valse from Coppélia",
+      "rights_status": "public-domain-composition",
+      "library_of_congress_url": "https://www.loc.gov/item/2023855939/"
+    }
+  ],
+  "source_arrangements": [
+    {
+      "work_id": "sylvia-valse-lente",
+      "arranger": "Paul De Bra",
+      "path": "music/sources/Valse-Lente-Delibes.mscz",
+      "sha256": "76e183b57c7f035a319bf5a7c5691d61c8a5f3af61f9d1b860047f7b28e6dc70",
+      "source_page_url": "https://www.de-bra.nl/arrangements.html",
+      "imslp_url": "https://imslp.org/wiki/Sylvia_%28Delibes%2C_L%C3%A9o%29",
+      "imslp_file_ids": [1001719, 1001726],
+      "publisher_year": 2025,
+      "declared_instrumentation": "4 accordions, bass, and triangle",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      }
+    },
+    {
+      "work_id": "coppelia-valse",
+      "arranger": "Paul De Bra",
+      "path": "music/sources/Valse-Coppelia.mscz",
+      "sha256": "86e1eaad1e99fcf3f275af9c59cde94580d9f9bfb10f7d366053a398295001c7",
+      "source_page_url": "https://www.de-bra.nl/arrangements.html",
+      "imslp_url": "https://imslp.org/wiki/Copp%C3%A9lia_%28Delibes%2C_L%C3%A9o%29",
+      "imslp_file_ids": [818172],
+      "publisher_year": 2022,
+      "reference_duration": "3:23",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      }
+    }
+  ],
+  "soundfont": {
+    "name": "MuseScore_General.sf3",
+    "license": "MIT",
+    "documentation_url": "https://musescore.org/en/handbook/3/soundfonts-and-sfz-files",
+    "source_url": "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3",
+      "notice": {
+        "path": "music/licenses/MuseScore_General_License.md",
+        "sha256": "9486e6baeb3eb274cd3f0e131cf1bc50ac4b57f548791b1b6678def7988f19d4"
+      },
+    "soundfont_sha256": "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3"
+  },
+  "required_credit": "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix.",
+  "clearance": {
+    "gate": "music-cleared",
+    "state": "pending",
+    "note": "This receipt records source and license custody only. It does not approve the adapted MIDI, rendered audio, credit, final cut, or submission."
+  }
+}

@@ -35,6 +35,18 @@
         "sha256": {"$ref": "#/$defs/sha256"}
       }
     },
+    "hydratedSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "custody", "source_url", "license_notice"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "custody": {"const": "hydrated-local"},
+        "source_url": {"type": "string", "minLength": 1},
+        "license_notice": {"$ref": "#/$defs/trackedSource"}
+      }
+    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -58,11 +70,18 @@
             "licensed",
             "restricted",
             "unverified",
+            "pending-render",
             "not-applicable"
           ]
         },
         "license": {"type": ["string", "null"]},
         "source": {"anyOf": [{"$ref": "#/$defs/trackedSource"}, {"type": "null"}]},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/trackedSource"}
+        },
+        "render_contract": {"$ref": "#/$defs/trackedSource"},
         "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
       }
     },
@@ -170,7 +189,12 @@
                 "properties": {
                   "id": {"type": "string", "minLength": 1},
                   "license": {"type": "string", "minLength": 1},
-                  "source": {"$ref": "#/$defs/trackedSource"}
+                  "source": {
+                    "anyOf": [
+                      {"$ref": "#/$defs/trackedSource"},
+                      {"$ref": "#/$defs/hydratedSource"}
+                    ]
+                  }
                 }
               }
             },

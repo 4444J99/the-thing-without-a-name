@@ -70,6 +70,12 @@ function sha256Hex(text) {
   return Array.from(hash, (word) => word.toString(16).padStart(8, "0")).join("");
 }
 
+/** SHA-256 over exact UTF-8 source bytes represented as a JavaScript string. */
+export function utf8Sha256(text) {
+  if (typeof text !== "string") throw new TypeError("UTF-8 SHA-256 input must be a string");
+  return sha256Hex(text);
+}
+
 function unicodeCompare(left, right) {
   const a = Array.from(left, (character) => character.codePointAt(0));
   const b = Array.from(right, (character) => character.codePointAt(0));
@@ -118,11 +124,14 @@ export function contractSha256(score) {
 }
 
 export async function load(url = "music/score.json") {
-  const score = await fetch(url).then((response) => {
+  const { score, fileSha256 } = await fetch(url).then(async (response) => {
     if (!response.ok) throw new Error(`music score ${response.status} at ${url}`);
-    return response.json();
+    const text = await response.text();
+    return { score: JSON.parse(text), fileSha256: utf8Sha256(text) };
   });
-  return validate(score);
+  validate(score);
+  Object.defineProperty(score, "fileSha256", { value: fileSha256, enumerable: false });
+  return score;
 }
 
 /** Best-effort loader for the live artwork; deterministic capture uses load(). */
@@ -141,8 +150,21 @@ export function validate(score) {
   };
   if (!score || typeof score !== "object" || Array.isArray(score)) bad("root must be an object");
   if (score.schema !== SCHEMA) bad(`unknown schema ${score.schema}`);
+  if (!["fixture-only", "artistic-gate-required", "production-selected"].includes(score.release_status)) {
+    bad(`unknown release_status ${score.release_status}`);
+  }
   const duration = score.time?.duration_seconds;
   if (!Number.isFinite(duration) || !(duration > 0)) bad("time.duration_seconds must be finite and positive");
+  const mapping = score.time?.passage_mapping;
+  if (!["restart-and-affine-stretch", "native-tempo"].includes(mapping)) {
+    bad(`unknown time.passage_mapping ${mapping}`);
+  }
+  if (score.release_status === "fixture-only" && mapping !== "restart-and-affine-stretch") {
+    bad("fixture-only scores must retain restart-and-affine-stretch mapping");
+  }
+  if (score.release_status !== "fixture-only" && mapping !== "native-tempo") {
+    bad("production scores must use native-tempo mapping");
+  }
   for (const name of ["tempo", "meter", "beats", "phrases", "dynamics", "movements"]) {
     if (!Array.isArray(score[name]) || !score[name].length) bad(`${name} must be non-empty`);
   }
@@ -211,6 +233,9 @@ function mappedTime(score, absoluteSecond, window) {
   const lastSourceSecond = duration * (1 - Number.EPSILON);
   if (window) {
     if (!Number.isFinite(window.t0) || !(window.seconds > 0)) throw new RangeError("score window must have t0 and positive seconds");
+    if (score.time.passage_mapping === "native-tempo" && Math.abs(window.seconds - duration) > 1e-6) {
+      throw new RangeError(`native-tempo score window must be exactly ${duration} seconds`);
+    }
     const phase = clamp01((absoluteSecond - window.t0) / window.seconds);
     return {
       sourceSecond: Math.min(lastSourceSecond, phase * duration),
@@ -321,6 +346,9 @@ export function eventsBetween(score, start, end, window = null) {
   if (window) {
     if (!Number.isFinite(window.t0) || !Number.isFinite(window.seconds) || !(window.seconds > 0)) {
       throw new RangeError("score window must have finite t0 and positive seconds");
+    }
+    if (score.time.passage_mapping === "native-tempo" && Math.abs(window.seconds - duration) > 1e-6) {
+      throw new RangeError(`native-tempo score window must be exactly ${duration} seconds`);
     }
     windows.push({ t0: window.t0, seconds: window.seconds, scale: window.seconds / duration });
   } else {

@@ -3,10 +3,11 @@
  * One shader does everything, because everything IS one thing: a fragment finds
  * its pixel by projecting its world position through the matrix that stands where
  * the camera stood on 20 June 2017. Planes at unrelated angles and depths land the
- * poster rail on the same screen-space line, and — since all 162 exposures came
- * from one locked-off camera — a plane showing IMG_1611 and a plane showing
- * IMG_1588 register to each other too. That registration was done in 2017, by not
- * moving the tripod.
+ * poster rail on the same screen-space line, and — since the 161 registered raw
+ * photographs came from one locked-off camera — a plane showing IMG_1611 and a
+ * plane showing IMG_1588 register to each other too. The archival composite is a
+ * separate unregistered corpus record. Raw-source registration was done in 2017,
+ * by not moving the tripod.
  *
  * The two texture units are not a crossfade feature. The 2017 composite needed two
  * layers for 77 of its 256 tiles, because roughly a third of its area is two
@@ -179,7 +180,8 @@ export class Renderer {
       return this.stats;
     }
 
-    gl.clearColor(0.055, 0.055, 0.06, 1);
+    const sceneOpacity = state.sceneOpacity ?? 1;
+    gl.clearColor(0.055 * sceneOpacity, 0.055 * sceneOpacity, 0.06 * sceneOpacity, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const view = camera(state.divergence, state.azimuth, state.elevation);
@@ -195,13 +197,13 @@ export class Renderer {
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
 
-    if (showRoom && corpus.room) this.drawRoom();
+    if (showRoom && corpus.room) this.drawRoom(sceneOpacity);
 
     // Back to front, by view-space depth. The whole point of the arrangement is
     // that a near plane veils the far ones, and alpha blending is order-dependent.
     const drawn = [];
     for (const cell of cells) {
-      const place = scatter(cell.rect, cell.id, seed, state.spread);
+      const place = scatter(cell.rect, cell.renderId ?? cell.id, seed, state.spread);
       drawn.push({ cell, place, z: viewDepth(view.view, place.position) });
     }
     drawn.sort((a, b) => a.z - b.z);
@@ -218,7 +220,7 @@ export class Renderer {
     }
 
     // Emit spatial sound triggers (recasts) for the live web environment
-    if (this._previous && state.cut === this._previousCut) {
+    if (!state.choreography && this._previous && state.cut === this._previousCut) {
       for (const [id, current] of now) {
         const prev = this._previous.get(id);
         if (prev && prev.frame !== current.frame) {
@@ -238,7 +240,7 @@ export class Renderer {
    *  home the surplus is outside the frustum and costs nothing (the measurement
    *  confirms it — "no room behind" scores identically at 31.60 dB), and once the
    *  camera departs it is the difference between a space and a cut-out. */
-  drawRoom() {
+  drawRoom(opacity = 1) {
     const { gl, u, corpus } = this;
     const r = (ROOM_REACH - 1) / 2;
     const place = homePlacement([-r, -r, 1 + r, 1 + r]);
@@ -252,7 +254,7 @@ export class Renderer {
     gl.uniform1f(u.uProjK, 0);
     gl.uniform1f(u.uTreat, 0);
     gl.uniform1f(u.uMatteK, 0);
-    gl.uniform1f(u.uOpacity, 1);
+    gl.uniform1f(u.uOpacity, opacity);
     gl.uniform1f(u.uHasB, 0);
     gl.uniform1f(u.uEdge, 0);
     gl.uniform1f(u.uClamp, 1);
@@ -340,7 +342,7 @@ export class Renderer {
     gl.uniform1f(u.uAdditive, additive);
     gl.uniform1f(u.uProjK, state.projK);
     gl.uniform1f(u.uTreat, treat);
-    gl.uniform1f(u.uOpacity, place.opacity ?? 1);
+    gl.uniform1f(u.uOpacity, (place.opacity ?? 1) * (cell.opacity ?? 1) * (state.sceneOpacity ?? 1));
     gl.uniform1f(u.uHasB, texB ? 1 : 0);
     gl.uniform1f(u.uEdge, edge);
     gl.uniform1f(u.uClamp, 0);

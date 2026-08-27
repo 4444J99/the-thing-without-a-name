@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,8 +14,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "music"))
 sys.path.insert(0, str(ROOT / "sound"))
 
+from compile_score import compile_contract, output_bytes  # noqa: E402
 from music_score import canonical_sha256  # noqa: E402
 from room_events import (  # noqa: E402
     calibration_bus,
@@ -27,6 +31,7 @@ from room_events import (  # noqa: E402
 )
 from room_render import plan_control, validate_control_room  # noqa: E402
 from score import room_event_plan, validate_room_event_control  # noqa: E402
+from validate_repertoire import load_register  # noqa: E402
 
 PASSAGE = {
     "river_seed": 0x12345678,
@@ -34,13 +39,13 @@ PASSAGE = {
     "index": 0,
     "seed": 0x9ABCDEF0,
     "t0": 17.25,
-    "seconds": 312.54,
+    "seconds": 350.896343125,
 }
 
 COMPILE_SCRIPT = f"""
   import fs from 'node:fs';
   import {{ compileRoomBus, planRoomRender, validateRoomLayouts }} from './engine/room-events.js';
-  const score = JSON.parse(fs.readFileSync('music/score.json'));
+  const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
   const layouts = validateRoomLayouts(JSON.parse(fs.readFileSync('sound/room-layout.json')));
   const passage = {json.dumps(PASSAGE)};
   const bus = compileRoomBus(score, passage);
@@ -71,10 +76,51 @@ def node_json(script: str) -> object:
 class RoomEventContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls._temporary = tempfile.TemporaryDirectory(dir=ROOT / "music/fixtures")
+        temporary = Path(cls._temporary.name)
+        cls.fixture_score_path = temporary / "score.json"
+        cls.production_bus_path = temporary / "production-room-bus.json"
+        program = json.loads((ROOT / "render/program.json").read_text())
+        fixture_register = load_register(ROOT / "music/fixtures/repertoire.yaml")
+        fixture_score = compile_contract(fixture_register, program, "generated-contract-study")
+        cls.fixture_score_path.write_bytes(output_bytes(fixture_score))
+        cls._prior_fixture = os.environ.get("DANSE_ROOM_FIXTURE_SCORE")
+        cls._prior_production_bus = os.environ.get("DANSE_PRODUCTION_ROOM_BUS")
+        os.environ["DANSE_ROOM_FIXTURE_SCORE"] = str(cls.fixture_score_path)
+        os.environ["DANSE_PRODUCTION_ROOM_BUS"] = str(cls.production_bus_path)
         compiled = node_json(COMPILE_SCRIPT)
         cls.bus = validate_room_bus(compiled["bus"])
         cls.node_plan = compiled["plan"]
         cls.layouts = load_room_layouts()
+        production = run(
+            "node",
+            "--input-type=module",
+            "--eval",
+            f"""
+              import fs from 'node:fs';
+              import {{ compileRoomBus }} from './engine/room-events.js';
+              const score = JSON.parse(fs.readFileSync('music/score.json'));
+              const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
+              fs.writeFileSync(process.env.DANSE_PRODUCTION_ROOM_BUS, JSON.stringify(bus));
+              console.log(JSON.stringify({{events: bus.events.length, contract: bus.identity.contract_sha256}}));
+            """,
+        )
+        if production.returncode:
+            raise AssertionError(production.stdout + production.stderr)
+        cls.production_summary = json.loads(production.stdout)
+        cls.production_bus = validate_room_bus(json.loads(cls.production_bus_path.read_text()))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for name, prior in (
+            ("DANSE_ROOM_FIXTURE_SCORE", cls._prior_fixture),
+            ("DANSE_PRODUCTION_ROOM_BUS", cls._prior_production_bus),
+        ):
+            if prior is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = prior
+        cls._temporary.cleanup()
 
     def test_declared_schemas_and_cross_language_contract_identities_hold(self) -> None:
         layout_schema = json.loads((ROOT / "sound/room-layout.schema.json").read_text())
@@ -109,11 +155,70 @@ class RoomEventContractTest(unittest.TestCase):
             PASSAGE["t0"],
             PASSAGE["t0"] + PASSAGE["seconds"],
         ))
+        # Full production scale is file-backed so 5,000+ events never enter a
+        # command argument. JavaScript compiles/validates the bus and Python
+        # verifies the same immutable digest and indexed interval values.
+        self.assertEqual(self.production_summary["events"], len(self.production_bus["events"]))
+        self.assertGreater(len(self.production_bus["events"]), 5000)
+        self.assertEqual(self.production_bus["release_status"], "production-selected")
+        self.assertEqual(
+            self.production_bus["identity"]["contract_sha256"],
+            room_contract_sha256(self.production_bus),
+        )
+        production_intervals = [
+            [PASSAGE["t0"], PASSAGE["t0"] + 1],
+            [PASSAGE["t0"] + 149, PASSAGE["t0"] + 150],
+            [PASSAGE["t0"] + PASSAGE["seconds"] - 1, PASSAGE["t0"] + PASSAGE["seconds"]],
+        ]
+        observed = node_json(
+            f"""
+              import fs from 'node:fs';
+              import {{ roomContractSha256, roomEventsBetween, validateRoomBus }} from './engine/room-events.js';
+              import {{ canonicalSha256 }} from './engine/score.js';
+              const bus = validateRoomBus(JSON.parse(fs.readFileSync(process.env.DANSE_PRODUCTION_ROOM_BUS)));
+              const intervals = {json.dumps(production_intervals)};
+              console.log(JSON.stringify({{
+                contract: roomContractSha256(bus),
+                query_digests: intervals.map(([start, end]) => canonicalSha256(roomEventsBetween(bus, start, end))),
+              }}));
+            """
+        )
+        self.assertEqual(observed["contract"], room_contract_sha256(self.production_bus))
+        self.assertEqual(
+            observed["query_digests"],
+            [canonical_sha256(room_events_between(self.production_bus, start, end)) for start, end in production_intervals],
+        )
+
+    def test_production_selected_release_status_is_mirrored_and_unknown_status_fails_closed(self) -> None:
+        production = copy.deepcopy(self.bus)
+        production["release_status"] = "production-selected"
+        production["identity"]["contract_sha256"] = room_contract_sha256(production)
+        self.assertEqual(validate_room_bus(production)["release_status"], "production-selected")
+
+        unknown = copy.deepcopy(production)
+        unknown["release_status"] = "published-by-implication"
+        unknown["identity"]["contract_sha256"] = room_contract_sha256(unknown)
+        with self.assertRaisesRegex(ValueError, "release_status is invalid"):
+            validate_room_bus(unknown)
+
+        observed = node_json(
+            f"""
+              import {{ roomContractSha256, validateRoomBus }} from './engine/room-events.js';
+              const production = {json.dumps(production)};
+              const unknown = JSON.parse(JSON.stringify(production));
+              unknown.release_status = 'published-by-implication';
+              unknown.identity.contract_sha256 = roomContractSha256(unknown);
+              let rejected = false;
+              try {{ validateRoomBus(unknown); }} catch (error) {{ rejected = /release_status is invalid/.test(error.message); }}
+              console.log(JSON.stringify({{accepted: validateRoomBus(production).release_status, rejected}}));
+            """
+        )
+        self.assertEqual(observed, {"accepted": "production-selected", "rejected": True})
 
     def test_compilation_is_repeatable_typed_bounded_and_provenance_safe(self) -> None:
         repeated = node_json(COMPILE_SCRIPT)
         self.assertEqual(repeated["bus"], self.bus)
-        self.assertEqual(len(self.bus["lookup"]["buckets"]), 313)
+        self.assertEqual(len(self.bus["lookup"]["buckets"]), math.ceil(PASSAGE["seconds"]))
         self.assertEqual(len(self.bus["events"]), 38)
         self.assertEqual(len({event["id"] for event in self.bus["events"]}), len(self.bus["events"]))
         types = {event["type"] for event in self.bus["events"]}
@@ -139,7 +244,7 @@ class RoomEventContractTest(unittest.TestCase):
         script = f"""
           import fs from 'node:fs';
           import {{ compileRoomBus, planRoomRender, roomEventsBetween, validateRoomLayouts }} from './engine/room-events.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const layouts = validateRoomLayouts(JSON.parse(fs.readFileSync('sound/room-layout.json')));
           const passage = {json.dumps(PASSAGE)};
           const bus = compileRoomBus(score, passage);
@@ -177,11 +282,11 @@ class RoomEventContractTest(unittest.TestCase):
         overlap_only = room_events_between(self.bus, note["at"] + 0.001, min(note["end"], note["at"] + 0.01))
         self.assertNotIn(note["id"], {event["id"] for event in overlap_only})
 
-        shifted = {**PASSAGE, "t0": 900.0, "seconds": 425.0}
+        shifted = {**PASSAGE, "t0": 900.0}
         script = f"""
           import fs from 'node:fs';
           import {{ compileRoomBus }} from './engine/room-events.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const first = compileRoomBus(score, {json.dumps(PASSAGE)});
           const repeated = compileRoomBus(score, {json.dumps(PASSAGE)});
           const shifted = compileRoomBus(score, {json.dumps(shifted)});
@@ -211,7 +316,7 @@ class RoomEventContractTest(unittest.TestCase):
         script = f"""
           import fs from 'node:fs';
           import {{ compileRoomBus, roomEventsBetween }} from './engine/room-events.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
           let reads = 0;
           bus.events = new Proxy(bus.events, {{
@@ -357,7 +462,7 @@ class RoomEventContractTest(unittest.TestCase):
           import fs from 'node:fs';
           import {{ compileRoomBus, planRoomRender, roomContractSha256, validateRoomLayouts }} from './engine/room-events.js';
           import {{ scheduleRoomWebAudio }} from './sound/web_audio.mjs';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const layouts = validateRoomLayouts(JSON.parse(fs.readFileSync('sound/room-layout.json')));
           const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
           const start = bus.time.t0;
@@ -514,7 +619,7 @@ class RoomEventContractTest(unittest.TestCase):
           import {{ compileRoomBus, roomContractSha256, validateRoomLayouts }} from './engine/room-events.js';
           import {{ scheduleRoomWebAudio }} from './sound/web_audio.mjs';
 
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const layouts = validateRoomLayouts(JSON.parse(fs.readFileSync('sound/room-layout.json')));
           const bus = compileRoomBus(score, {json.dumps(PASSAGE)});
           const event = bus.events.find((candidate) => candidate.type === 'score.note');
@@ -647,7 +752,7 @@ class RoomEventContractTest(unittest.TestCase):
           import fs from 'node:fs';
           import {{ compileRoomBus, layoutContractSha256, roomContractSha256, validateRoomLayouts }} from './engine/room-events.js';
           import {{ scheduleRoomWebAudio }} from './sound/web_audio.mjs';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const layouts = JSON.parse(fs.readFileSync('sound/room-layout.json'));
           layouts.safety.latency_budget_ms = 0;
           layouts.identity.contract_sha256 = layoutContractSha256(layouts);
@@ -833,7 +938,11 @@ class RoomEventContractTest(unittest.TestCase):
         self.assertIn("limiter", observed["fixedOfflineDisconnected"])
 
     def test_control_live_stereo_offline_and_multichannel_share_exact_bus_events(self) -> None:
-        result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
+        result = run(
+            "node", "sound/control.mjs", "--rate", "0",
+            "--score", "music/score.json",
+            "--choreography", "render/choreography.json",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         control = json.loads(result.stdout)
         for invalid_seed in ("1.5", "0x100000000", "-1"):
@@ -844,6 +953,8 @@ class RoomEventContractTest(unittest.TestCase):
                 "0",
                 "--score",
                 "music/score.json",
+                "--choreography",
+                "render/choreography.json",
                 "--seed",
                 invalid_seed,
             )
@@ -859,7 +970,13 @@ class RoomEventContractTest(unittest.TestCase):
         stereo = plan_control(control, self.layouts, "reference-quad", "stereo")
         multichannel = plan_control(control, self.layouts, "reference-quad", "multichannel")
         self.assertEqual([event["id"] for event in stereo["events"]], [event["id"] for event in multichannel["events"]])
-        self.assertTrue(all(event["taps"] for event in stereo["events"]))
+        intensities = {
+            event["id"]: event["intensity"]
+            for bus in buses
+            for event in bus["events"]
+        }
+        for event in stereo["events"]:
+            self.assertEqual(bool(event["taps"]), intensities[event["id"]] > 0)
         self.assertTrue(all(event["taps"] for event in multichannel["events"]))
         self.assertEqual(stereo["bus_contract_sha256"], [bus["identity"]["contract_sha256"] for bus in buses])
         self.assertEqual(room_event_plan(control, "reference-quad", "multichannel"), multichannel)
@@ -873,6 +990,8 @@ class RoomEventContractTest(unittest.TestCase):
             "0",
             "--score",
             "music/score.json",
+            "--choreography",
+            "render/choreography.json",
             "--window",
             "midnight-moment",
             "--from",
@@ -958,7 +1077,11 @@ class RoomEventContractTest(unittest.TestCase):
             room_event_plan(escaped_control)
 
     def test_control_buses_are_identity_bound_contiguous_and_complete(self) -> None:
-        result = run("node", "sound/control.mjs", "--rate", "0", "--score", "music/score.json")
+        result = run(
+            "node", "sound/control.mjs", "--rate", "0",
+            "--score", "music/score.json",
+            "--choreography", "render/choreography.json",
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         control = json.loads(result.stdout)
         original = control["room"]["buses"][0]
@@ -1051,7 +1174,7 @@ class RoomEventContractTest(unittest.TestCase):
         passage_script = f"""
           import fs from 'node:fs';
           import {{ compileRoomBus, validateRoomBus }} from './engine/room-events.js';
-          const score = JSON.parse(fs.readFileSync('music/score.json'));
+          const score = JSON.parse(fs.readFileSync(process.env.DANSE_ROOM_FIXTURE_SCORE));
           const reordered = compileRoomBus(score, {json.dumps(PASSAGE)});
           reordered.events[0].passage = Object.fromEntries(Object.entries(reordered.events[0].passage).reverse());
           validateRoomBus(reordered);

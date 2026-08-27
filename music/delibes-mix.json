@@ -1,0 +1,32 @@
+{
+  "schema": "danse.audio.mix.v1",
+  "id": "delibes-competition-classical",
+  "sample_rate": 48000,
+  "channels": 2,
+  "sample_format": "signed-16-bit-little-endian-pcm",
+  "arithmetic": "signed-integer-q16-round-half-away-from-zero",
+  "stems": [
+    {"id": "violin-i", "midi_track": 1, "gain_q16": 58982, "pan_q16": -19661},
+    {"id": "violin-ii", "midi_track": 2, "gain_q16": 58982, "pan_q16": -9830},
+    {"id": "viola", "midi_track": 3, "gain_q16": 55706, "pan_q16": 0},
+    {"id": "cello", "midi_track": 4, "gain_q16": 55706, "pan_q16": 9830},
+    {"id": "contrabass", "midi_track": 5, "gain_q16": 52429, "pan_q16": 19661},
+    {"id": "triangle", "midi_track": 6, "gain_q16": 29491, "pan_q16": -6554},
+    {"id": "timpani", "midi_track": 7, "gain_q16": 45875, "pan_q16": 6554}
+  ],
+  "master": {
+    "gain_q16": 49152,
+    "peak_ceiling_q16": 58409,
+    "normalization": {
+      "method": "ffmpeg-loudnorm-two-pass",
+      "target_lufs": -16.0,
+      "tolerance_lu": 0.5,
+      "target_true_peak_dbtp": -1.1,
+      "max_true_peak_dbtp": -1.0,
+      "target_lra_lu": 11.0,
+      "linear": false,
+      "output_sample_rate": 48000,
+      "output_sample_format": "s16"
+    }
+  }
+}

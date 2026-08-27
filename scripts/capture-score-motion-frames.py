@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -38,6 +39,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_SCORE = "music/fixtures/score-affine.json"
 sys.path.insert(0, str(ROOT / "render"))
 from browser import browser, serve  # noqa: E402
 
@@ -123,9 +125,28 @@ def emit(seed: int, stream: int, out: Path) -> dict:
 
     renderer = "unknown"
     pairs: dict[float, dict[str, bytes]] = {}
+    score_path = os.environ.get("DANSE_FIXTURE_SCORE", FIXTURE_SCORE)
+    score_relative = Path(score_path)
+    if score_relative.is_absolute():
+        try:
+            score_relative = score_relative.relative_to(ROOT)
+        except ValueError as exc:
+            raise SystemExit("fixture score for frame evidence must be inside the repository") from exc
+    score_url = score_relative.as_posix()
+    try:
+        rendered_score = json.loads((ROOT / score_relative).read_text())
+        rendered_contract = rendered_score["identity"]["contract_sha256"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"frame evidence score has no readable contract identity: {score_url}") from exc
+    if rendered_contract != ab["contract"]:
+        raise SystemExit(
+            "frame evidence score contract does not match score-to-motion A/B receipt: "
+            f"{rendered_contract} != {ab['contract']}"
+        )
+
     with serve(sink=sink) as base:
         with browser(headless=True, width=WIDTH, height=HEIGHT) as page:
-            for label, score in (("without", None), ("with", "music/score.json")):
+            for label, score in (("without", None), ("with", score_url)):
                 params = {
                     "capture": "passage",
                     "from": "0",
@@ -164,7 +185,7 @@ def emit(seed: int, stream: int, out: Path) -> dict:
                 "u": str(stream),
                 "width": str(WIDTH),
                 "height": str(HEIGHT),
-                "score": "music/score.json",
+                "score": score_url,
             }
             page.goto(f"{base}/film.html?{urlencode(redraw)}", wait_until="load")
             page.wait_for_function("() => window.danseFilmReady === true", timeout=300_000)

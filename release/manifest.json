@@ -4,14 +4,14 @@
   "version": "0.1.0-draft",
   "status": "draft",
   "opportunity_snapshot": {
-    "path": "opportunities/omega-20260804.json",
-    "snapshot_id": "omega-20260804",
-    "frozen_at": "2026-08-04T02:32:44Z",
-    "sha256": "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e",
-    "receipt_path": "opportunities/omega-20260804.receipt.json",
-    "receipt_sha256": "3a2d3b9eaed6f14f869fc08fa2e0baf02b868116ec0e1b206f23c1ec3e2a94ee",
-    "source_evidence_path": "opportunities/source-evidence-20260804.json",
-    "source_evidence_sha256": "0b28e98f151e8ea940c6c047fff91afc79f6b0df0343e623da79952b9aa87c37"
+    "path": "opportunities/omega-20260826-2.json",
+    "snapshot_id": "omega-20260826-2",
+    "frozen_at": "2026-08-26T19:54:24Z",
+    "sha256": "f5bb090a2cc1491055124d5e422b2e148f2e0327f9e096ead204eda86893c7af",
+    "receipt_path": "opportunities/omega-20260826-2.receipt.json",
+    "receipt_sha256": "f8926f5777eb1d50d3d997493fa592a3c19004ebe5532803ea76f983f348756f",
+    "source_evidence_path": "opportunities/source-evidence-20260826.json",
+    "source_evidence_sha256": "7e9ba1c74f8ac78df116ada8c94d8af4e7d04813f2a3c026693258cd6c974bc8"
   },
   "identity": {
     "canonical_title": "THE THING WITHOUT A NAME",
@@ -24,24 +24,24 @@
   "copy": {
     "eyebrow": "A living photographic work begun in 2017",
     "logline": "A room reconstructed from one afternoon of photographs becomes a seeded, unbounded choreography that can be revisited but never rewound.",
-    "concept": "In June 2017, a locked camera watched a dancer move through a South Florida apartment. The surviving photographs share one viewpoint and one architecture. Danse treats those records as spatial material: fragments from different instants can occupy depth while a single projector model keeps the room continuous. The work is not one fixed film. Each visit enters a deterministic river whose exact state can be cited by seed and time.",
+    "concept": "In June 2017, a locked camera watched a dancer move through a South Florida apartment. The tracked corpus contains 161 registered raw photographs from that session and one unregistered archival composite made afterward. Danse treats those records as spatial material: fragments from different instants can occupy depth while a single projector model keeps the room continuous. The work is not one fixed film. Each visit enters a deterministic river whose exact state can be cited by seed and time.",
     "installation_concept": "The installation returns photographic fragments to physical space. Projected planes or scrim surfaces carry views from the same camera position, allowing a flat composite to open into a room as viewpoint, depth, and visitor input diverge. Venue geometry, projection, sound, recovery, and safety remain proposals until issue 14 supplies validated evidence.",
-    "technical_summary": "The visual engine is a pure function of a 32-bit seed and absolute river time. It can seek directly to any state without replaying earlier frames. Entropy and wall-clock access remain isolated in the visitor-arrival boundary; release claims about final score, room synchronization, recovery, and capture quality remain gated by their exact receipts."
+    "technical_summary": "The visual engine is a pure function of a 32-bit seed and absolute river time. It can seek directly to any state without replaying earlier frames. The selected ScreenDance design follows two Delibes movements at native tempo, but score, choreography, rendered-audio, toolchain, final-cut, room-synchronization, recovery, and capture claims remain gated by exact receipts."
   },
   "installation": {
     "reference_contract": {
       "schema": "danse.installation.reference-binding.v1",
       "status": "reference-only",
       "spec_id": "danse-reference-installation-20260804",
-      "spec_contract_sha256": "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3",
+      "spec_contract_sha256": "35cebf541a80788bce08586ada4299cbef77fffe1ebdbb4633f357214ecc9c66",
       "digital_twin": {
         "path": "installation/digital-twin.json",
-        "sha256": "5b550ca1b634b5ead021bbcef63fd1025b271de66217a6eb143d4d94595b49fc",
+        "sha256": "1d41a80973022fe60e31cfdafd533a55629a1a8c463a2b545279ec4b2e541f7a",
         "bytes": 5416
       },
       "gate_ledger": {
         "path": "installation/gates.json",
-        "sha256": "9a635ec4784cbbc38923041f78769115a53989fd5928c4f7927883de9ae0b8d6",
+        "sha256": "9a900295fe3bfefd4e637d5d221deb8b2931d2b1b4c8c144afce13aaacaf1762",
         "bytes": 825
       },
       "physical_predicates_satisfied": false,
@@ -79,7 +79,7 @@
       {
         "id": "sound",
         "label": "Score and sound",
-        "detail": "The final shared-score and spatial event contracts remain gated by issues 9 and 11.",
+        "detail": "The selected Delibes score, deterministic render, and spatial event contracts remain gated by their exact receipts.",
         "feeds": ["room"]
       },
       {
@@ -144,9 +144,9 @@
   },
   "accessibility": {
     "alt_text": "Translucent photographic fragments of a dancer and an apartment overlap in a continuous room, moving between a flat collage and suspended planes in depth.",
-    "canvas_description": "A generative WebGL composition draws registered fragments from 162 photographs made in one apartment session. The same seed and time reproduce the same arrangement.",
-    "motion_note": "The default artwork contains continuous drift, changes in depth, and camera divergence. Some passages may include faster reseeding transitions.",
-    "audio_note": "Final score, sound design, spatial behavior, loudness, and captionable sound events remain pending; no release claim is made from the provisional soundtrack text.",
+    "canvas_description": "A generative WebGL composition draws from 161 registered raw photographs and one archival composite, moving between readable poses, a flat collage, and suspended fragments in one room. The same seed and time reproduce the same arrangement.",
+    "motion_note": "The live artwork contains continuous drift, changes in depth, and camera divergence. The selected capture requires phrase-length pose holds, bar-length dissolves, and no instantaneous global reseed before the final black; those behaviors remain gated by score and choreography receipts.",
+    "audio_note": "The selected ScreenDance design uses two Delibes movements rendered from an adapted MIDI and declared soundfont; exact audio, loudness, license, and captionable-event claims remain pending until their receipts and artistic approval exist.",
     "reduced_motion": "The live root honors the device reduced-motion preference by holding a reproducible frame. The project page uses no essential animation.",
     "silent_fallback": "The visual work and all navigation remain intelligible with audio unavailable. Final release media must document any meaning otherwise conveyed only by sound.",
     "captions": {
@@ -158,16 +158,16 @@
     },
     "transcript": {
       "status": "pending",
-      "text": "Draft transcript ledger: the work has no spoken dialogue in the current design; final score and sound-event description await the approved cut.",
+      "text": "Draft transcript ledger: the work has no spoken dialogue in the current design; the selected Delibes score and sound-event description await the artist-approved cut.",
       "reason": "Issue 10 has not supplied the final score-driven media and issue 17 accessibility review is pending."
     },
     "review_gate": "accessibility-review"
   },
   "press": {
-    "synopsis_short": "In 2017 a dancer moved through a Florida apartment while the camera stood still. One hundred sixty-two photographs now feed a generative room that can reproduce any cited instant without repeating the river around it.",
-    "synopsis_long": "On 20 June 2017, a locked camera recorded a dancer moving through a one-bedroom apartment in South Florida. Because every exposure shares one viewpoint, fragments from different instants can align to the same architecture. A hand-cut composite made that summer lay dormant for nine years. Danse returns to it as a living system: a pure seeded engine reconstructs the flat work, opens its fragments into depth, and lets each visitor enter a river with a durable identity. The final score-driven film, spatial sound, and physical installation remain separate evidence-gated forms of that same engine.",
+    "synopsis_short": "In 2017 a dancer moved through a Florida apartment while the camera stood still. Danse draws on 161 registered photographs and one archival composite, returning readable poses and translucent fragments to a shared room whose exact state can be cited by seed and time.",
+    "synopsis_long": "On 20 June 2017, a locked camera recorded a dancer moving through a one-bedroom apartment in South Florida. The tracked corpus contains 161 registered raw photographs and one unregistered archival composite made afterward. A pure seeded engine reconstructs the flat work, opens its fragments into depth, and lets each visitor enter a river with a durable identity. For the ScreenDance capture, two selected Delibes movements provide a native musical clock for whole-pose holds, bar-length dissolves, repetition, stillness, and controlled development. The score-driven film, spatial sound, and physical installation remain separately evidence-gated forms of the shared engine.",
     "artist_bio": "Anthony J. Padavano is a photographer and programmer working between South Florida and New York. His work treats a photograph as a record of where a camera stood and software as part of the photographic object. Final identity and biography wording require the artist's approval before publication.",
-    "artist_statement": "The original collage was cut by feeling. The generative work asks what those fragments become when they are treated as views through one camera instead of flat pieces of paper. Nothing in the image needs to be invented: each fragment comes from the same afternoon and remains accountable to its source. The release statement will be artist-approved only after the score-driven cut, room behavior, and rights register are complete.",
+    "artist_statement": "The original collage was cut by feeling. The generative work asks what its sources become when they are treated as views through one camera instead of flat pieces of paper. The current solve draws on 76 registered raw photographs and the archival composite itself; that self-reference is disclosed, while new cuts use only registered camera sources. The selected score-led capture gives whole poses and dissolves musical time, but its release statement remains subject to artistic and rights approval.",
     "contact": {
       "status": "pending",
       "label": "Project contact",
@@ -222,7 +222,7 @@
   "claims": [
     {
       "id": "corpus-session",
-      "text": "The publishable corpus records a 20 June 2017 session and 162 registered source-frame records.",
+      "text": "The publishable corpus contains 162 records: 161 registered raw photographs from 20 June 2017 and one unregistered archival composite.",
       "publish": true,
       "status": "verified",
       "evidence": {
@@ -255,13 +255,13 @@
     },
     {
       "id": "opportunity-freeze",
-      "text": "Release opportunity facts are frozen at snapshot omega-20260804 rather than fetched or rewritten during a build.",
+      "text": "Release opportunity facts are frozen at same-day successor snapshot omega-20260826-2 rather than fetched or rewritten during a build; omega-20260826 remains preserved as historical evidence.",
       "publish": true,
       "status": "verified",
       "evidence": {
-        "path": "opportunities/omega-20260804.json",
-        "sha256": "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e",
-        "summary": "Immutable source-verified opportunity snapshot consumed by this release manifest."
+        "path": "opportunities/omega-20260826-2.json",
+        "sha256": "f5bb090a2cc1491055124d5e422b2e148f2e0327f9e096ead204eda86893c7af",
+        "summary": "Immutable same-day successor snapshot binding the corrected operational ScreenDance register; its predecessor is retained unchanged."
       }
     },
     {
@@ -298,10 +298,10 @@
     },
     {
       "id": "music-credit",
-      "role": "Composition, edition, arrangement, performance, recording, and samples",
-      "name": null,
+      "role": "Music credit",
+      "name": "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix.",
       "status": "pending",
-      "note": "Issue 8 repertoire selection and issue 16 release integration are not complete.",
+      "note": "Selected credit wording; source, license, soundfont, MIDI, render, rights-review, and artist-approval receipts remain incomplete.",
       "evidence": null
     },
     {

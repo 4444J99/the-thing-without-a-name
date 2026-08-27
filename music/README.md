@@ -1,89 +1,85 @@
 # Music contracts
 
-This directory contains reversible fixture infrastructure for Danse issues #8
-and #9. It does **not** contain selected repertoire, an approved arrangement, a
-cleared recording, or an accepted score/image relationship.
+The competition score is the selected native-tempo Delibes diptych: *Valse
+lente* from *Sylvia*, *Valse* from *Coppélia*, and the existing four-second
+silent signature. Its compiled duration is 350.896343 seconds; the 2:34 and 3:23
+figures are reference-recording durations, not time-stretch targets.
 
-`repertoire.yaml` separates six rights/provenance layers that cannot clear one
-another: composition, edition, arrangement/MIDI, performance, recording, and
-sample. `validate_repertoire.py` verifies every tracked source digest and rejects
-ignored or untracked paths before reading them. Cleared recordings require exact
-tracked source bytes, and every licensed layer must name its license. The
-validator also rejects the false equivalence “public-domain composition therefore
-free recording.” Its enforced interchange shape is `repertoire.schema.json`.
+## Provenance layers
 
-`fixtures/generated-study.mid` is 891 bytes of generated test data. It is exactly
-reproducible from `generate_fixture_midi.py`; it mirrors the nominal 390-second
-shares of `render/program.json` only so all seven movement bindings can be tested.
-It is explicitly `not-selected` and `fixture-only` in the register.
+`repertoire.yaml` keeps six claims separate:
 
-`compile_score.py` reads the MIDI markers, tempo, meter, CC expression, program
-changes, and notes and emits `score.json` under `score.schema.json`. The compiled
-contract contains:
+- Léo Delibes compositions: public domain, with Library of Congress evidence;
+- Paul De Bra source arrangements: the two exact tracked MSCZ files, CC BY 4.0;
+- Danse chamber arrangement/MIDI: project-authored tracked derivative;
+- sequenced performance: the exact adapted MIDI;
+- recording: `pending-render` until an exact local audio receipt exists;
+- MuseScore General samples: MIT-licensed, ignored hydrated SF3 plus tracked notice.
 
-- tempo and meter maps plus beat/downbeat positions;
-- phrase, cue/accent, and dynamic events;
-- orchestration/stem declarations and source digests;
-- movement boundaries bound in order to the existing program;
-- fixed lookup buckets for random access independent of elapsed river time.
+Selection does not fabricate a recording receipt. `validate_repertoire.py`
+validates the register and all tracked digests. Hydrated bytes are optional in a
+portable clean checkout, but are hashed whenever present; render/package work
+uses `--require-hydrated` and fails when the pinned SF3 is absent.
 
-CC11 expression is channel-local, so each register entry must name one explicit
-`score.dynamics_source` track/channel for the global score clock. Expression on
-other stems is never silently folded into that value. Notes beginning at the same
-tick retain their authored Standard MIDI File track/event order. Program changes
-and sustain-pedal state follow their MIDI output channel across tracks; files that
-declare unsupported multiple output ports fail closed.
+The required package credit is:
 
-The program still owns each passage's varying absolute duration. At query time,
-the nominal score is restarted and affinely mapped over that passage. Both image
-and audio-event consumers use the same absolute `{t0, seconds}` window; no clock,
-entropy, or accumulated playback state enters `engine/`.
+> Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and
+> re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation,
+> sequencing, cue markers, and mix.
 
-The interval API is deliberately a half-open stream of authored note-ons and cue
-starts. A note already sounding at an arbitrary seek boundary is not emitted as
-a second note-on. Sustained-voice restoration would require its own declared
-voice-allocation and buffer-offset contract; this fixture does not invent one.
-The embedded contract digest covers a type-tagged canonical form of every score
-field except the digest itself, and both JavaScript and Python reject stale or
-edited content before exposing its identity.
+See `licenses/CC-BY-4.0-NOTICE.md` and
+`licenses/MuseScore_General_License.md` for license links and notices.
 
-## Reproduce and verify
+## Deterministic adaptation
 
-```bash
-python3 music/generate_fixture_midi.py --check
-python3 music/validate_repertoire.py
-python3 music/compile_score.py --check
-python3 scripts/tests/music-score.test.py
-```
+`adapt_delibes.py` verifies the pinned MSCZ and MuseScore 4.7.4 export hashes,
+removes unsupported port metadata, and writes
+`delibes-screendance-suite.mid`. Five accordion voices become violin I, violin
+II, viola, cello, and contrabass. The five non-playing Sylvia `triangle` staff
+annotations become explicit triangle accents, and the Coppelia timpani track is
+retained.
 
-The fixture is opt-in and therefore does not silently alter the current artwork:
+No musical event is affinely scaled. The MIDI carries ordered movement, phrase,
+cue/accent, and CC11 dynamic markers. It ends with an explicit silent SIGNATURE
+movement at native score time. `adaptation.json` records source, exporter,
+instrument, timing, marker, and output identities.
+
+MuseScore 4.7.4 currently exhibits a local macOS/Rosetta post-write exit 134.
+That exit is never treated as success. Reproduction accepts only a structurally
+complete MIDI whose hash equals the pinned deterministic export hash.
 
 ```bash
-python3 -m http.server 8080
-# open http://localhost:8080/?score=music/score.json
-
-node sound/control.mjs --rate 30 --score music/score.json --out .work/fixture-control.json
-python3 render/render.py --score music/score.json --segment 0 --codec preview
+python3 music/adapt_delibes.py --check
+python3 music/adapt_delibes.py --check --rebuild-exports
+python3 music/validate_repertoire.py --require-hydrated
+python3 music/compile_score.py --check --work delibes-screendance-suite
 ```
 
-`sound/web_audio.mjs` creates a deterministic plan and schedules only supplied,
-declared `AudioBuffer` sources. Each supplied stem is paired with its
-`audio_source_sha256`, which must match the cleared orchestration identity before
-the adapter creates a source node. It never creates an oscillator. The Python
-sound renderer exposes the same mapped event plan, but deliberately refuses to
-render this fixture: its orchestration declares no cleared audio source bytes.
+## Deterministic audio
 
-`engine/room-events.js` maps those same authored START events into immutable
-per-passage room buses. Live WebAudio and Python stereo/offline/multichannel
-consumers route the same typed events and declared fold-down; see
-[`sound/ROOM_EVENTS.md`](../sound/ROOM_EVENTS.md). This does not add sustained
-voice recovery or weaken the score's seek-boundary semantics.
+`audio-toolchain.json` pins FluidSynth 2.6.0, its executable digest, exact
+MuseScore General SF3 digest, renderer, adapted MIDI, adaptation, and mix.
+`delibes-mix.json` uses ordered integer Q16 gains/pans. `sound/audio-uses.json`
+declares that the competition profile uses only the classical MIDI and licensed
+soundfont; the optional private apartment grain bank belongs only to the later,
+package-ineligible hybrid profile.
 
-## Remaining gates
+The renderer validates the score and choreography self-digests, renders seven
+stems twice with one FluidSynth CPU core and disabled reverb/chorus, exact-trims
+the FluidSynth release tail to the score duration, mixes PCM with deterministic
+integer arithmetic, and compares whole-output and seek-slice hashes.
 
-Anthony must select the repertoire and explicitly accept the score/image
-relationship. Before any score-driven cut or package can be called final, the
-register must then identify and validate the exact composition evidence, edition,
-arrangement/MIDI, performance, recording, samples/stems, and derived bytes. Only
-after those sources exist can the stem renderer and A/B audiovisual evidence be
-completed. A fixture passing tests is not artistic approval.
+```bash
+python3 sound/render_music.py --choreography render/choreography.json
+```
+
+Generated bytes stay ignored:
+
+- `.work/music/competition/stems/{violin-i,violin-ii,viola,cello,contrabass,triangle,timpani}.wav`
+- `.work/music/competition/delibes-master.wav`
+- `.work/music/competition/audio-render.json`
+
+The receipt must satisfy `audio-render.schema.json` and bind exact score,
+choreography, MIDI, adaptation, toolchain, mix, usage-manifest, soundfont,
+FluidSynth, stem, and master identities. A fixture score, pending artistic gate,
+missing/mismatched receipt, or non-deterministic render remains package-fatal.

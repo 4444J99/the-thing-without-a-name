@@ -15,9 +15,10 @@ node --check sound/control.mjs
 bash -n done.sh
 ```
 
-The first command has a ratcheted floor of 40 portable invariants. A hydrated local
-grain bank adds three explicitly conditional checks. Never lower a floor or a quality
-threshold to make a change pass.
+The first command enforces the executable portable-invariant ratchet declared as
+`FLOOR` in `scripts/check-danse.py`; do not duplicate that changing number here. A
+hydrated local grain bank adds three explicitly conditional checks. Never lower a
+floor or a quality threshold to make a change pass.
 
 The machine-bound visual batch is:
 

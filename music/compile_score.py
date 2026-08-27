@@ -200,7 +200,7 @@ def parse_midi(path: Path) -> tuple[int, list[Event], int]:
     return division, sorted(events, key=lambda event: (event.tick, event.track, event.order)), duration_tick
 
 
-def rounded(value: Fraction | float, places: int = 6) -> float:
+def rounded(value: Fraction | float, places: int = 9) -> float:
     return round(float(value), places)
 
 
@@ -642,28 +642,38 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
         midi_digest,
     )
 
-    program_ids = [movement["id"] for movement in program.get("movements", [])]
-    score_ids = [movement["id"] for movement in movements]
-    if score_ids != program_ids:
-        raise ValueError(f"MIDI movement markers {score_ids} do not match program order {program_ids}")
-    shares = [float(movement["share"]) for movement in program["movements"]]
-    total_share = sum(shares)
-    cursor = 0.0
-    for index, movement in enumerate(movements):
-        expected_start = duration_seconds * cursor / total_share
-        cursor += shares[index]
-        expected_end = duration_seconds * cursor / total_share
-        if abs(movement["start_second"] - expected_start) > 1e-6 or abs(movement["end_second"] - expected_end) > 1e-6:
-            raise ValueError(
-                f"movement {movement['id']} MIDI boundary {movement['start_second']}..{movement['end_second']} "
-                f"does not match program share {expected_start}..{expected_end}"
-            )
+    # The generated fixture deliberately mirrors the seven dramatic program
+    # movements and keeps their old affine mapping for regression tests. A real
+    # selected score owns its musical movement boundaries and native duration;
+    # choreography binds score phrases to dramatic movements separately.
+    if work["role"] == "fixture":
+        program_ids = [movement["id"] for movement in program.get("movements", [])]
+        score_ids = [movement["id"] for movement in movements]
+        if score_ids != program_ids:
+            raise ValueError(f"MIDI movement markers {score_ids} do not match program order {program_ids}")
+        shares = [float(movement["share"]) for movement in program["movements"]]
+        total_share = sum(shares)
+        cursor = 0.0
+        for index, movement in enumerate(movements):
+            expected_start = duration_seconds * cursor / total_share
+            cursor += shares[index]
+            expected_end = duration_seconds * cursor / total_share
+            if abs(movement["start_second"] - expected_start) > 1e-6 or abs(movement["end_second"] - expected_end) > 1e-6:
+                raise ValueError(
+                    f"movement {movement['id']} MIDI boundary {movement['start_second']}..{movement['end_second']} "
+                    f"does not match program share {expected_start}..{expected_end}"
+                )
 
     entry_for_identity = {key: value for key, value in work.items() if key != "derived_artifacts"}
+    release_status = "fixture-only" if work["role"] == "fixture" else (
+        "production-selected"
+        if register["artistic_gate"]["status"] == "accepted" and work["selection"]["status"] == "selected"
+        else "artistic-gate-required"
+    )
     score: dict[str, Any] = {
         "schema": SCHEMA,
         "compiler": COMPILER,
-        "release_status": "fixture-only" if work["role"] == "fixture" else "artistic-gate-required",
+        "release_status": release_status,
         "artistic_gate": {
             "status": register["artistic_gate"]["status"],
             "authority": register["artistic_gate"]["authority"],
@@ -680,7 +690,7 @@ def compile_contract(register: dict[str, Any], program: dict[str, Any], work_id:
             "duration_ticks": duration_tick,
             "duration_quarters": rounded(Fraction(duration_tick, division)),
             "duration_seconds": duration_seconds,
-            "passage_mapping": "restart-and-affine-stretch",
+            "passage_mapping": "restart-and-affine-stretch" if work["role"] == "fixture" else "native-tempo",
         },
         "provenance": {"layers": provenance_layers(work)},
         "tempo": tempo,
@@ -729,7 +739,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--register", type=Path, default=DEFAULT_REGISTER)
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
-    parser.add_argument("--work", default="generated-contract-study")
+    parser.add_argument("--work", default="delibes-screendance-suite")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--check", action="store_true", help="require tracked score.json to be byte-identical")
     args = parser.parse_args()

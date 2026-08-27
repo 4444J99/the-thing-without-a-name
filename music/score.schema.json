@@ -27,7 +27,7 @@
   "properties": {
     "schema": {"const": "danse.music.score.v1"},
     "compiler": {"const": "danse.music.compiler.v1"},
-    "release_status": {"enum": ["fixture-only", "artistic-gate-required"]},
+    "release_status": {"enum": ["fixture-only", "artistic-gate-required", "production-selected"]},
     "artistic_gate": {"type": "object"},
     "identity": {
       "type": "object",
@@ -55,7 +55,7 @@
         "duration_ticks": {"type": "integer", "minimum": 1},
         "duration_quarters": {"type": "number", "exclusiveMinimum": 0},
         "duration_seconds": {"type": "number", "exclusiveMinimum": 0},
-        "passage_mapping": {"const": "restart-and-affine-stretch"}
+        "passage_mapping": {"enum": ["restart-and-affine-stretch", "native-tempo"]}
       }
     },
     "provenance": {"type": "object"},

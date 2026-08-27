@@ -59,30 +59,53 @@ function dwell(phase, rest = 0.16) {
  * still a pure function of (seed, t), so an offline renderer can seek anywhere,
  * render segments out of order, and get bit-identical frames.
  */
-export function state(seed, t, program = null, stream = 0, score = null) {
-  return program ? programState(seed, t, program, stream, score) : freeState(seed, t);
+export function state(seed, t, program = null, stream = 0, score = null, pose = null) {
+  return program ? programState(seed, t, program, stream, score, pose) : freeState(seed, t);
 }
 
 /** Under a program, every channel is interpolated across its movement, and the
  *  MATERIAL seed changes at declared reseed points — which is how the closing
  *  movement restarts the engine with entirely different photographs while the
  *  structural moves stay the same. */
-function programState(seed, t, program, stream, score) {
+function programState(seed, t, program, stream, score, pose) {
   let movement, index, u, passage, music;
   if (score) {
-    passage = passageAt(program, seed, t, stream);
+    passage = passageAt(program, seed, t, stream, score);
     music = scoreAt(score, t, { t0: passage.t0, seconds: passage.seconds });
-    index = music.movement.index;
-    movement = movementsIn(program, seed, passage.index, stream)[index];
-    if (!movement || movement.id !== music.movement.id) {
-      throw new Error(`music score movement ${music.movement.id} does not match program movement ${movement?.id}`);
+    if (pose) {
+      index = program.movements.findIndex((candidate) => candidate.id === pose.movement_id);
+      movement = program.movements[index];
+      if (!movement) throw new Error(`choreography movement ${pose.movement_id} does not exist in the program`);
+      if (movement.cut !== pose.cut_mode) {
+        throw new Error(`choreography movement ${pose.movement_id} cut ${pose.cut_mode} does not match program cut ${movement.cut}`);
+      }
+      u = pose.movement_u;
+    } else {
+      index = music.movement.index;
+      movement = movementsIn(program, seed, passage.index, stream, score)[index];
+      if (!movement || movement.id !== music.movement.id) {
+        throw new Error(`music score movement ${music.movement.id} does not match program movement ${movement?.id}`);
+      }
+      u = music.movement.u;
     }
-    u = music.movement.u;
   } else {
     ({ movement, index, u, passage } = movementAt(program, seed, t, stream));
   }
-  const epoch = epochAt(movement, u);
-  const musicalChannel = (name) => channel(movement, name, u) + (music?.visual.channel_offsets[name] ?? 0);
+  const epoch = pose ? 0 : epochAt(movement, u);
+  const arrivingMovement = pose?.transition.kind === "topology"
+    ? program.movements.find((candidate) => candidate.id === pose.next_movement_id)
+    : null;
+  const musicalChannel = (name) => {
+    let value = channel(movement, name, u);
+    if (arrivingMovement && arrivingMovement !== movement) {
+      const progress = pose.transition.progress;
+      value += (channel(arrivingMovement, name, 0) - value) * progress;
+    }
+    // Score cues remain authored audio/control evidence, but photographic
+    // choreography owns the camera continuously. A step-valued cue offset here
+    // would reintroduce a one-frame geometry jump at its onset.
+    return value + (pose ? 0 : (music?.visual.channel_offsets[name] ?? 0));
+  };
   const divergence = musicalChannel("divergence");
 
   let turnoverRate = musicalChannel("turnover");
@@ -90,14 +113,14 @@ function programState(seed, t, program, stream, score) {
   let materialIndex = index;
   let materialEpoch = epoch;
   let materialRecast = music?.visual.recast;
-  if (music?.visual.hold) {
+  if (!pose && music?.visual.hold) {
     const holdCue = music.cues
       .filter((cue) => cue.visual.hold)
       .reduce((latest, cue) => (!latest || cue.second > latest.second ? cue : latest), null);
     if (!holdCue) throw new Error("music score declares a hold without an active hold cue");
     turnoverAt = passage.t0 + holdCue.second * music.scale;
     const heldMusic = scoreAt(score, turnoverAt, { t0: passage.t0, seconds: passage.seconds });
-    const heldMovement = movementsIn(program, seed, passage.index, stream)[heldMusic.movement.index];
+    const heldMovement = movementsIn(program, seed, passage.index, stream, score)[heldMusic.movement.index];
     if (!heldMovement || heldMovement.id !== heldMusic.movement.id) {
       throw new Error(`music score hold movement ${heldMusic.movement.id} does not match program movement ${heldMovement?.id}`);
     }
@@ -114,14 +137,16 @@ function programState(seed, t, program, stream, score) {
   // continuous running — and without the ordinal a gallery could, eventually,
   // show the same passage twice. Including it makes recurrence impossible rather
   // than merely unlikely, which is the whole claim the piece makes.
-  const material = music
+  const material = pose
+    ? hash(passage.seed, passage.index, index)
+    : music
     ? hash(passage.seed, passage.index, materialEpoch, materialIndex, materialRecast)
     : hash(passage.seed, passage.index, epoch, index);
 
   // Seeded drift on top of the programmed arc, so two seeds trace different paths
   // through the same dramaturgy rather than the same path twice.
   const w = movement.wander ?? 0;
-  const drift = (k) => (w ? Math.sin((t / range(6.5, 13.5, seed, index, k) + range(0, 1, seed, index, k + 1)) * TAU) * w : 0);
+  const drift = (k) => (!pose && w ? Math.sin((t / range(6.5, 13.5, seed, index, k) + range(0, 1, seed, index, k + 1)) * TAU) * w : 0);
 
   const result = {
     t,
@@ -136,14 +161,15 @@ function programState(seed, t, program, stream, score) {
     spread: musicalChannel("spread"),
     projK: musicalChannel("projK"),
     // Everything the grammar needs to cast this frame.
-    cut: movement.cut,
+    cut: pose?.cut_mode ?? movement.cut,
     // A hold retains the exact cast at its deterministic cue onset. Setting a
     // rate to zero would instead reset turnover() to epoch zero and recast it.
-    turnover: turnoverRate,
+    turnover: pose ? 0 : turnoverRate,
     turnoverAt,
     movement: movement.id,
     epoch,
     material,
+    sceneOpacity: pose?.next_cut_mode === "black" ? 1 - pose.blend : 1,
     // Which passage of the river this is, and its name. The signature frame
     // prints both: a passage is identified by its seed AND its ordinal, so the
     // receipt is unique for as long as the piece runs.
@@ -153,6 +179,7 @@ function programState(seed, t, program, stream, score) {
     passageT0: passage.t0,
   };
   if (music) result.music = music;
+  if (pose) result.choreography = pose;
   return result;
 }
 

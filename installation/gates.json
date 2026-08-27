@@ -1,6 +1,6 @@
 {
   "schema": "danse.installation.gates.v1",
-  "spec_contract_sha256": "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3",
+  "spec_contract_sha256": "35cebf541a80788bce08586ada4299cbef77fffe1ebdbb4633f357214ecc9c66",
   "status": "blocked",
   "physical_predicates_satisfied": false,
   "issue_14_can_close": false,

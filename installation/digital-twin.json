@@ -3,7 +3,7 @@
   "identity": {
     "id": "danse-reference-installation-20260804",
     "status": "reference-simulation",
-    "contract_sha256": "f20d7e1d3dc8d4d1173badd5445e26bc21b2fcd8d7948d6a88ab2b9b9cef9dd3"
+    "contract_sha256": "35cebf541a80788bce08586ada4299cbef77fffe1ebdbb4633f357214ecc9c66"
   },
   "source_contracts": [
     {
@@ -20,8 +20,8 @@
     {
       "id": "score",
       "path": "music/score.json",
-      "sha256": "da30bb8c167916d1de9de50629e88feaa0ebc65fb833656787f8e8e678225e48",
-      "embedded_contract_sha256": "0979888d8b4aac050a8cabc6c9c5b358209694e2be2555d041887ccb5c78fe7d"
+      "sha256": "a5bff93175b5e80c81ff46c6317676044b4ed2a07b999823fa616cd0eb542ae1",
+      "embedded_contract_sha256": "682b5fc683c04818acfb286981087a01714ef243dfeb0cdf28d081000bebdc27"
     },
     {
       "id": "room-layout",

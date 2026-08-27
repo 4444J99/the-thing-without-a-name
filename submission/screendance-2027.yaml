@@ -19,11 +19,11 @@
 
 schema: danse.submission.v2
 opportunity_snapshot:
-  snapshot_id: omega-20260804
-  path: opportunities/omega-20260804.json
-  sha256: "3aeb84a8c919c6866272138e3ce1bd7d9222af77ad618d810ba69f6159544b3e"
-  receipt: opportunities/omega-20260804.receipt.json
-  frozen_at: "2026-08-04T02:32:44Z"
+  snapshot_id: omega-20260826-2
+  path: opportunities/omega-20260826-2.json
+  sha256: "f5bb090a2cc1491055124d5e422b2e148f2e0327f9e096ead204eda86893c7af"
+  receipt: opportunities/omega-20260826-2.receipt.json
+  frozen_at: "2026-08-26T19:54:24Z"
   opportunity_id: screendance-miami-2027
   timezone: America/New_York
 call: ScreenDance Miami Festival 2027
@@ -33,15 +33,17 @@ program_page: https://miamilightproject.com/program/screen-dance-2027/
 phone: "305.576.4350"
 
 deadline:
-  status: verified
-  stated: "Monday, August 31, 2026 at 11:00 PM EST"
-  source: submittable
-  checked: 2026-07-30
-  # The trap: on 31 August, Miami is on EDT (UTC-4), not EST (UTC-5). If the portal
-  # is configured to a literal EST the cutoff lands at 22:00 local. We treat 22:00
-  # America/New_York as the hard wall and never test the ambiguity.
+  status: conflicted
+  stated: "Submittable: Monday, August 31, 2026 at 11:00 PM EST; program page: 11:59 PM"
+  sources: [submittable, program-page]
+  checked: 2026-08-26
+  # These are conflicting official statements, not a timezone conversion. Literal
+  # 11:00 PM EST is midnight EDT on this date. The earlier 10:00 PM local wall is a
+  # deliberately conservative internal filing buffer that leaves at least one hour
+  # before either published reading; it does not assert how Submittable is configured.
   hard_wall: "2026-08-31T22:00:00-04:00"
-  target_file_date: "2026-08-20"   # file in the 20–24 Aug window, not on the wall
+  upload_target: "2026-08-31T18:00:00-04:00"
+  target_file_date: "2026-08-31"
 
 decision:
   notification: "end of October 2026"
@@ -231,10 +233,23 @@ package:
     target_lufs: -16.0
     tolerance_lu: 0.5
     max_true_peak_dbtp: -1.0
-    source_recordings: [IMG_0226.MOV, IMG_0227.MOV]
-    source_sha256:
-      IMG_0226.MOV: "01bc6e147166061fe886b498a5dbd9e3c3f8fb9abb91f651f64bc9878f21e84b"
-      IMG_0227.MOV: "64203a17367688b4b643bf6a1251ad2e37d63f49238cb6c9db7214ef6595f430"
+    usage_contract:
+      path: sound/audio-uses.json
+      sha256: "3ff7afe4f41c6035b1bee3361ef31ec9fe0c4d8cbc06752eb917b3d6af9e1831"
+      schema: danse.audio.uses.v1
+      profile: competition-classical
+    score_source: provenance/passage-score.wav
+    audio_render_receipt: provenance/audio-render.json
+    score_receipt_schema: danse.score.receipt.v2
+    production_receipt: provenance/production.json
+    credit: "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, sequencing, cue markers, and mix."
+    hybrid_apartment:
+      profile: hybrid-apartment
+      package_eligible: false
+      note: "Post-filing only; these private sources are forbidden from the competition package."
+      private_source_recordings:
+        IMG_0226.MOV: "01bc6e147166061fe886b498a5dbd9e3c3f8fb9abb91f651f64bc9878f21e84b"
+        IMG_0227.MOV: "64203a17367688b4b643bf6a1251ad2e37d63f49238cb6c9db7214ef6595f430"
   stills:
     required: true
     count_min: 6

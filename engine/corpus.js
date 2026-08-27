@@ -6,7 +6,7 @@
  * `candidates()` answers "who is standing in this part of the room?" out of that
  * index alone, and the picture is fetched only once the choice is made.
  *
- * Two tiers exist because 162 photographs at screen resolution is 22 MB and a
+ * Two tiers exist because 162 corpus records at screen resolution is 22 MB and a
  * gallery machine should not stare at a blank wall for 22 MB. `browse` (512px) is
  * the whole corpus, small enough to ship eagerly; `screen` (1024px) arrives per
  * frame, on demand, and swaps in mid-render. `plate()` therefore never blocks and
@@ -16,11 +16,13 @@
 
 import { texture } from "./gl.js";
 import { hash } from "./rng.js";
+import { utf8Sha256 } from "./score.js";
 
-/** Because every frame came from one locked-off camera, all 162 photographs are
- *  already registered to each other and to the room. That is what lets a plane
- *  showing IMG_1611 and a plane showing IMG_1588 sample through one projector
- *  matrix and still line up: the registration was done in 2017, by not moving. */
+/** The 161 raw photographs came from one locked-off camera and are registered to
+ *  each other and to the room; the archival composite is explicitly unregistered
+ *  and withheld from generated cuts. That is what lets a plane showing IMG_1611
+ *  and a plane showing IMG_1588 sample through one projector matrix and still line
+ *  up: the raw-source registration was done in 2017, by not moving. */
 /** The tiers the web bundle ships. The manifest is authoritative and may declare
  *  more — the offline renderer builds a `film` tier at full camera resolution
  *  (~250 MB, local-only, never in git), and asks for it by name. */
@@ -41,10 +43,11 @@ export const TIERS = ["browse", "screen"];
 export const SLIVER_PX = 4;
 
 export async function load(base = "corpus/") {
-  const manifest = await fetch(`${base}manifest.json`).then((r) => {
+  const manifestSource = await fetch(`${base}manifest.json`).then((r) => {
     if (!r.ok) throw new Error(`corpus manifest ${r.status} at ${base}manifest.json`);
-    return r.json();
+    return r.text();
   });
+  const manifest = JSON.parse(manifestSource);
   // Tiers built locally and never committed — the 245 MB `film` tier the 4K
   // master needs. Absent on every fresh checkout, and that is correct: a shipped
   // manifest advertising plates that are not in the repo would send every visitor
@@ -54,10 +57,14 @@ export async function load(base = "corpus/") {
     .catch(() => null);
   if (local?.tiers) Object.assign(manifest.tiers, local.tiers);
 
-  const score = manifest.score
-    ? await fetch(`${base}${manifest.score}`).then((r) => (r.ok ? r.json() : null))
+  const scoreSource = manifest.score
+    ? await fetch(`${base}${manifest.score}`).then((r) => (r.ok ? r.text() : null))
     : null;
-  return fromData(base, manifest, score);
+  const score = scoreSource ? JSON.parse(scoreSource) : null;
+  return fromData(base, manifest, score, {
+    manifest_sha256: utf8Sha256(manifestSource),
+    score_sha256: scoreSource ? utf8Sha256(scoreSource) : null,
+  });
 }
 
 /** The same corpus, from data already in hand.
@@ -69,15 +76,16 @@ export async function load(base = "corpus/") {
  * `step()` the film renders: one implementation, so the score cannot drift out of
  * sync with the picture by being a second guess at what the picture is doing.
  */
-export function fromData(base, manifest, score = null) {
-  return new Corpus(base, manifest, score);
+export function fromData(base, manifest, score = null, identity = null) {
+  return new Corpus(base, manifest, score, identity);
 }
 
 class Corpus {
-  constructor(base, manifest, score) {
+  constructor(base, manifest, score, identity) {
     this.base = base;
     this.mipmap = true;   // measurement turns this off; see gl.texture
     this.manifest = manifest;
+    this.identity = identity;
     // Ordered small → large, from the manifest rather than from this module, so
     // a corpus built with a `film` tier is usable without an engine change.
     this.tiers = Object.entries(manifest.tiers)
@@ -275,8 +283,8 @@ class Corpus {
       const share = (w * h) / cellArea; // how much of the CELL she fills
       if (share < minOverlap) continue;
 
-      // Frames the 2017 solve drew on are weighted up but never made exclusive —
-      // the piece is supposed to reach past the three frames he cut by hand.
+      // Registered raw photographs the 2017 solve drew on are weighted up but
+      // never made exclusive — authored motifs may reach across the full shoot.
       out.push({ id: f.id, weight: share * (1 + weightScore * Math.min(1, f.score_area * 5)) });
     }
     out.sort((a, b) => b.weight - a.weight);

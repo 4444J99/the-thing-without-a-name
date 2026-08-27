@@ -8,7 +8,7 @@
   "properties": {
     "schema": {"const": "danse.room.events.v1"},
     "semantics": {"const": "authored-start-events"},
-    "release_status": {"enum": ["fixture-only", "artistic-gate-required", "diagnostic-only"]},
+    "release_status": {"enum": ["fixture-only", "artistic-gate-required", "production-selected", "diagnostic-only"]},
     "identity": {
       "type": "object",
       "additionalProperties": false,

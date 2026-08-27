@@ -65,10 +65,19 @@ def validate(score: Any) -> dict[str, Any]:
         raise ValueError("music score: root must be a mapping")
     if score.get("schema") != "danse.music.score.v1":
         raise ValueError(f"music score: unknown schema {score.get('schema')}")
+    if score.get("release_status") not in {"fixture-only", "artistic-gate-required", "production-selected"}:
+        raise ValueError(f"music score: unknown release_status {score.get('release_status')}")
     time = score.get("time")
     duration = time.get("duration_seconds") if isinstance(time, dict) else None
     if type(duration) not in (int, float) or not math.isfinite(float(duration)) or duration <= 0:
         raise ValueError("music score: duration must be finite and positive")
+    mapping = time.get("passage_mapping") if isinstance(time, dict) else None
+    if mapping not in {"restart-and-affine-stretch", "native-tempo"}:
+        raise ValueError(f"music score: unknown time.passage_mapping {mapping}")
+    if score.get("release_status") == "fixture-only" and mapping != "restart-and-affine-stretch":
+        raise ValueError("music score: fixture-only scores must retain restart-and-affine-stretch mapping")
+    if score.get("release_status") != "fixture-only" and mapping != "native-tempo":
+        raise ValueError("music score: production scores must use native-tempo mapping")
     for name in ("tempo", "meter", "beats", "phrases", "dynamics", "movements"):
         if not isinstance(score.get(name), list) or not score[name]:
             raise ValueError(f"music score: {name} must be non-empty")
@@ -149,6 +158,8 @@ def _mapped_time(score: dict[str, Any], absolute_second: float, window: dict[str
         t0, seconds = float(window["t0"]), float(window["seconds"])
         if not math.isfinite(t0) or seconds <= 0:
             raise ValueError("score window must have finite t0 and positive seconds")
+        if score["time"]["passage_mapping"] == "native-tempo" and abs(seconds - duration) > 1e-6:
+            raise ValueError(f"native-tempo score window must be exactly {duration:g} seconds")
         phase = min(1.0, max(0.0, (absolute_second - t0) / seconds))
         return min(math.nextafter(duration, 0.0), phase * duration), 0, seconds / duration
     at = max(0.0, absolute_second)
@@ -257,6 +268,8 @@ def events_between(
         t0, seconds = float(window["t0"]), float(window["seconds"])
         if not math.isfinite(t0) or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("score window must have finite t0 and positive seconds")
+        if score["time"]["passage_mapping"] == "native-tempo" and abs(seconds - duration) > 1e-6:
+            raise ValueError(f"native-tempo score window must be exactly {duration:g} seconds")
         windows.append((t0, seconds, seconds / duration))
     else:
         first = math.floor(max(0.0, start) / duration)

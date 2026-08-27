@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import io
@@ -60,6 +61,101 @@ SPAN = {
     "passage": 0,
     "capture": "passage",
 }
+SUBMISSION_AUDIO_RENDER_RECEIPT = b'{"schema":"danse.audio.render.v1","fixture":true}\n'
+SUBMISSION_REPOSITORY_HEAD = "a" * 40
+
+
+def submission_sound_identity(master_sha256: str) -> dict:
+    uses_path = ROOT / "sound/audio-uses.json"
+    uses = json.loads(uses_path.read_text())
+    profile = uses["profiles"][uses["competition_profile"]]
+    sources = {row["id"]: row for row in profile["declared_sources"]}
+    return {
+        "profile": uses["competition_profile"],
+        "audio_uses_sha256": CHECK.sha256(uses_path),
+        "score_file_sha256": CHECK.sha256(ROOT / "music/score.json"),
+        "score_contract_sha256": "1" * 64,
+        "choreography_file_sha256": "2" * 64,
+        "choreography_contract_sha256": "3" * 64,
+        "midi_sha256": sources["delibes-chamber-midi"]["sha256"],
+        "adaptation_sha256": CHECK.sha256(ROOT / "music/adaptation.json"),
+        "toolchain_sha256": CHECK.sha256(ROOT / "music/audio-toolchain.json"),
+        "mix_sha256": CHECK.sha256(ROOT / "music/delibes-mix.json"),
+        "soundfont_sha256": sources["musescore-general-sf3"]["sha256"],
+        "audio_render_receipt_sha256": hashlib.sha256(
+            SUBMISSION_AUDIO_RENDER_RECEIPT
+        ).hexdigest(),
+        "master_sha256": master_sha256,
+        "sources": [row["id"] for row in profile["declared_sources"]],
+        "stems": [
+            {"id": stem_id, "sha256": hashlib.sha256(stem_id.encode()).hexdigest()}
+            for stem_id in profile["required_stems"]
+        ],
+        "credit": yaml.safe_load(
+            (ROOT / "submission/screendance-2027.yaml").read_text()
+        )["package"]["audio"]["credit"],
+    }
+
+
+def bind_submission_score_receipt(package: Path, manifest: dict, sound: dict) -> None:
+    manifest.setdefault("repository_head", SUBMISSION_REPOSITORY_HEAD)
+    score_relative = "provenance/passage-score.wav"
+    score_path = package / score_relative
+    score_path.parent.mkdir(parents=True, exist_ok=True)
+    if not score_path.exists():
+        score_path.write_bytes(b"submission score fixture")
+    assert CHECK.sha256(score_path) == sound["master_sha256"]
+    manifest.setdefault("items", []).append(
+        {"name": score_relative, "sha256": sound["master_sha256"], "sound": sound}
+    )
+    audio_render_relative = "provenance/audio-render.json"
+    audio_render_path = package / audio_render_relative
+    audio_render_path.write_bytes(SUBMISSION_AUDIO_RENDER_RECEIPT)
+    manifest["items"].append(
+        {
+            "name": audio_render_relative,
+            "bytes": len(SUBMISSION_AUDIO_RENDER_RECEIPT),
+            "sha256": sound["audio_render_receipt_sha256"],
+        }
+    )
+    receipt_root = package / "provenance/producer-receipts"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    score_receipt_path = receipt_root / "score.json"
+    score_receipt = {
+        "schema": "danse.score.receipt.v2",
+        "sha256": sound["master_sha256"],
+        "t0": manifest["t0"],
+        "t1": manifest["t1"],
+        "duration": manifest["duration"],
+        **sound,
+    }
+    score_receipt_path.write_text(json.dumps(score_receipt, indent=2) + "\n")
+    production = {
+        "schema": "danse.delivery.production.v1",
+        "source_tree_sha256": "5" * 64,
+        "repository_head": manifest["repository_head"],
+        "passage": {key: manifest[key] for key in ("t0", "t1", "duration")},
+        "sound": sound,
+        "producers": [
+            {
+                "id": "score",
+                "kind": "score",
+                "receipt": {
+                    "path": score_receipt_path.relative_to(package).as_posix(),
+                    "sha256": CHECK.sha256(score_receipt_path),
+                },
+                "output_sha256": sound["master_sha256"],
+                "components": [],
+            }
+        ],
+        "outputs": [],
+    }
+    production_path = package / "provenance/production.json"
+    production_path.write_text(json.dumps(production, indent=2) + "\n")
+    manifest["production"] = {
+        "path": "provenance/production.json",
+        "sha256": CHECK.sha256(production_path),
+    }
 
 
 def corpus_fixture(root: Path) -> tuple[Path, Path]:
@@ -156,6 +252,57 @@ def write_fake_reel_concat(render_out: Path, payload: bytes = b"rendered reel") 
 
 
 class DeliveryContractTest(unittest.TestCase):
+    def test_production_delivery_rejects_nonzero_score_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    ["deliver.py", "--only", "master", "--start", "1", "--out", tmp],
+                ),
+                self.assertRaisesRegex(SystemExit, "score time 0"),
+            ):
+                DELIVER.main()
+
+    def test_competition_package_rejects_fixture_or_pending_repertoire(self) -> None:
+        score = {
+            "identity": {"work_id": "delibes-screendance-suite", "midi_sha256": "a" * 64},
+            "release_status": "production-selected",
+            "time": {"passage_mapping": "native-tempo", "duration_seconds": SPAN["duration"]},
+        }
+        placeholders = [
+            score,
+            {"identity": {}},
+            {"output": {"sha256": "a" * 64}},
+            {},
+            {},
+            {},
+            {},
+        ]
+        for artistic, role in (("pending", "repertoire"), ("accepted", "fixture")):
+            with self.subTest(artistic=artistic, role=role), tempfile.TemporaryDirectory() as tmp:
+                register = Path(tmp) / "repertoire.yaml"
+                register.write_text(
+                    yaml.safe_dump(
+                        {
+                            "artistic_gate": {"status": artistic},
+                            "works": [
+                                {
+                                    "id": "delibes-screendance-suite",
+                                    "role": role,
+                                    "selection": {"status": "selected"},
+                                }
+                            ],
+                        }
+                    )
+                )
+                with (
+                    mock.patch.object(DELIVER, "MUSIC_REPERTOIRE", register),
+                    mock.patch.object(DELIVER, "regular_json", side_effect=placeholders.copy()),
+                    self.assertRaisesRegex(SystemExit, "fixture or pending artistic repertoire"),
+                ):
+                    DELIVER.competition_audio_provenance(SPAN)
+
     def test_offline_url_preserves_zero_seed_and_every_capture_override(self) -> None:
         args = SimpleNamespace(
             window="passage",
@@ -1376,6 +1523,15 @@ class DeliveryContractTest(unittest.TestCase):
                     "run",
                     return_value=subprocess.CompletedProcess([], 0),
                 ),
+                mock.patch.object(
+                    DELIVER,
+                    "repository_state",
+                    return_value={
+                        "head": SUBMISSION_REPOSITORY_HEAD,
+                        "clean": True,
+                        "changes": [],
+                    },
+                ),
                 mock.patch.dict(DELIVER.os.environ, {"DANSE_WORK": str(external_work)}, clear=True),
                 redirect_stdout(io.StringIO()) as output,
             ):
@@ -1806,10 +1962,17 @@ class DeliveryContractTest(unittest.TestCase):
             master.write_bytes(b"modified after packaging")
             score = root / "passage-score.wav"
             score.write_bytes(b"rendered score source")
+            audio_receipt = root / "audio-render.json"
+            audio_receipt.write_bytes(b"verified audio receipt")
+            sound = {
+                "master_sha256": DELIVER.digest(score),
+                "audio_render_receipt_sha256": DELIVER.digest(audio_receipt),
+            }
             prior_digest = "0" * 64
             (package / "manifest.json").write_text(
                 json.dumps(
                     {
+                        "repository_head": SUBMISSION_REPOSITORY_HEAD,
                         "passage_seed": DELIVER.hexseed(SPAN["seed"]),
                         "passage": SPAN["passage"],
                         "t0": SPAN["t0"],
@@ -1830,8 +1993,18 @@ class DeliveryContractTest(unittest.TestCase):
                 mock.patch.object(
                     DELIVER,
                     "passage_sound",
-                    return_value=(score, {"score_sha256": DELIVER.digest(score)}, False),
+                    return_value=(score, sound, False),
                 ),
+                mock.patch.object(
+                    DELIVER,
+                    "require_clean_repository",
+                    return_value={
+                        "head": SUBMISSION_REPOSITORY_HEAD,
+                        "clean": True,
+                        "changes": [],
+                    },
+                ),
+                mock.patch.object(DELIVER, "AUDIO_RENDER_RECEIPT", audio_receipt),
                 mock.patch.object(DELIVER.shutil, "which", return_value="/tools/ffprobe"),
                 redirect_stdout(io.StringIO()),
             ):
@@ -1848,6 +2021,7 @@ class DeliveryContractTest(unittest.TestCase):
             "sha256": "1" * 64,
         }
         complete = {
+            "repository_head": SUBMISSION_REPOSITORY_HEAD,
             "seed": "0xAF6B7BE5",
             "passage_seed": "0xAF6B7BE5",
             "passage": 0,
@@ -1877,6 +2051,15 @@ class DeliveryContractTest(unittest.TestCase):
                     without_source,
                     {},
                 )
+            without_head = {**complete}
+            without_head.pop("repository_head")
+            with self.assertRaisesRegex(SystemExit, "repository-head identity"):
+                DELIVER.write_production_receipt(
+                    root / "missing-head",
+                    root / "render",
+                    without_head,
+                    {},
+                )
 
             package = root / "package"
             provenance = package / "provenance"
@@ -1894,6 +2077,30 @@ class DeliveryContractTest(unittest.TestCase):
                 )
             self.assertEqual(outside.read_bytes(), b"must remain unchanged")
             self.assertFalse((package / DELIVER.PRODUCER_RECEIPTS).exists())
+
+    def test_package_identity_requires_a_clean_exact_git_head(self) -> None:
+        head = subprocess.CompletedProcess([], 0, stdout=SUBMISSION_REPOSITORY_HEAD + "\n", stderr="")
+        clean = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        dirty = subprocess.CompletedProcess([], 0, stdout=" M render/deliver.py\n", stderr="")
+        with mock.patch.object(DELIVER, "sh", side_effect=[head, clean]):
+            self.assertEqual(DELIVER.require_clean_repository()["head"], SUBMISSION_REPOSITORY_HEAD)
+        with (
+            mock.patch.object(DELIVER, "sh", side_effect=[head, dirty]),
+            self.assertRaisesRegex(SystemExit, "clean tracked/untracked worktree"),
+        ):
+            DELIVER.require_clean_repository()
+        no_head = subprocess.CompletedProcess([], 0, stdout=None, stderr="")
+        with (
+            mock.patch.object(DELIVER, "sh", return_value=no_head),
+            self.assertRaisesRegex(SystemExit, "no Git commit identity"),
+        ):
+            DELIVER.repository_state()
+        no_status = subprocess.CompletedProcess([], 0, stdout=None, stderr="")
+        with (
+            mock.patch.object(DELIVER, "sh", side_effect=[head, no_status]),
+            self.assertRaisesRegex(SystemExit, "no repository worktree status"),
+        ):
+            DELIVER.repository_state()
 
     def test_production_receipt_uses_the_decimal_renderer_still_seed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1919,6 +2126,7 @@ class DeliveryContractTest(unittest.TestCase):
                 )
             )
             manifest = {
+                "repository_head": SUBMISSION_REPOSITORY_HEAD,
                 "seed": "0xAF6B7BE5",
                 "passage_seed": "0xAF6B7BE5",
                 "passage": 0,
@@ -1957,15 +2165,33 @@ class DeliveryContractTest(unittest.TestCase):
             score = Path(tmp) / "passage-score.wav"
             score.write_bytes(b"score-audio")
             provenance = {
-                "bank_fingerprint": "bank-fingerprint",
-                "sources": ["IMG_0226.MOV", "IMG_0227.MOV"],
+                "profile": "competition-classical",
+                "master_sha256": DELIVER.digest(score),
+                "score_file_sha256": "1" * 64,
+                "choreography_file_sha256": "2" * 64,
             }
             DELIVER.write_score_receipt(score, SPAN, provenance)
-            self.assertEqual(
-                DELIVER.score_provenance(score, SPAN),
-                {**provenance, "score_sha256": DELIVER.digest(score)},
+            with mock.patch.object(DELIVER, "competition_audio_provenance", return_value=provenance):
+                self.assertEqual(DELIVER.score_provenance(score, SPAN), provenance)
+                score.write_bytes(b"changed-audio")
+                self.assertIsNone(DELIVER.score_provenance(score, SPAN))
+
+    def test_legacy_apartment_score_receipt_is_not_package_eligible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            score = Path(tmp) / "passage-score.wav"
+            score.write_bytes(b"legacy apartment score")
+            DELIVER.score_receipt_path(score).write_text(
+                json.dumps(
+                    {
+                        "schema": "danse.score.receipt.v1",
+                        "sha256": DELIVER.digest(score),
+                        "bank_fingerprint": "legacy-bank",
+                        "sources": ["IMG_0226.MOV", "IMG_0227.MOV"],
+                        "t0": SPAN["t0"],
+                        "duration": SPAN["duration"],
+                    }
+                )
             )
-            score.write_bytes(b"changed-audio")
             self.assertIsNone(DELIVER.score_provenance(score, SPAN))
 
     def test_missing_manifest_refuses_preexisting_package_media(self) -> None:
@@ -2008,6 +2234,7 @@ class DeliveryContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)
             manifest = {
+                "repository_head": SUBMISSION_REPOSITORY_HEAD,
                 "passage_seed": DELIVER.hexseed(SPAN["seed"]),
                 "passage": SPAN["passage"],
                 "t0": SPAN["t0"],
@@ -2019,6 +2246,22 @@ class DeliveryContractTest(unittest.TestCase):
             (package / "manifest.json").write_text(json.dumps(manifest))
             self.assertTrue(DELIVER.package_provenance_matches(package, SPAN, source_tree_sha256="tree-a"))
             self.assertFalse(DELIVER.package_provenance_matches(package, SPAN, source_tree_sha256="tree-b"))
+            self.assertTrue(
+                DELIVER.package_provenance_matches(
+                    package,
+                    SPAN,
+                    source_tree_sha256="tree-a",
+                    repository_head=SUBMISSION_REPOSITORY_HEAD,
+                )
+            )
+            self.assertFalse(
+                DELIVER.package_provenance_matches(
+                    package,
+                    SPAN,
+                    source_tree_sha256="tree-a",
+                    repository_head="b" * 40,
+                )
+            )
 
     def test_forced_score_rebuilds_every_selected_audio_derivative(self) -> None:
         program = json.loads((ROOT / "render/program.json").read_text())
@@ -2446,49 +2689,49 @@ class DeliveryContractTest(unittest.TestCase):
 
     def test_audio_provenance_is_bound_to_each_artifact(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
-        expected = register["package"]["audio"]["source_recordings"]
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)
             for name in ("master.mov", "screener.mp4"):
                 (package / name).touch()
-            current = {"bank_fingerprint": "current", "sources": expected, "score_sha256": "score-current"}
-            stale = {"bank_fingerprint": "stale", "sources": expected, "score_sha256": "score-current"}
-            (package / "manifest.json").write_text(
-                json.dumps(
+            score = package / "provenance/passage-score.wav"
+            score.parent.mkdir(parents=True)
+            score.write_bytes(b"submission score fixture")
+            current = submission_sound_identity(CHECK.sha256(score))
+            stale = copy.deepcopy(current)
+            stale["profile"] = "hybrid-apartment"
+            manifest = {
+                "t0": SPAN["t0"],
+                "t1": SPAN["t1"],
+                "duration": SPAN["duration"],
+                "sound": current,
+                "items": [
                     {
-                        "duration": SPAN["duration"],
+                        "name": "master.mov",
+                        "sha256": CHECK.sha256(package / "master.mov"),
                         "sound": current,
-                        "items": [
-                            {
-                                "name": "master.mov",
-                                "sha256": CHECK.sha256(package / "master.mov"),
-                                "sound": current,
-                            },
-                            {
-                                "name": "screener.mp4",
-                                "sha256": CHECK.sha256(package / "screener.mp4"),
-                                "sound": stale,
-                            },
-                        ],
-                    }
-                )
-            )
+                    },
+                    {
+                        "name": "screener.mp4",
+                        "sha256": CHECK.sha256(package / "screener.mp4"),
+                        "sound": stale,
+                    },
+                ],
+            }
+            bind_submission_score_receipt(package, manifest, current)
+            (package / "manifest.json").write_text(json.dumps(manifest))
             report = CHECK.Report()
             with (
                 mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
                 mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
             ):
                 CHECK.check_audio(register["package"]["audio"], package, report)
-            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
             self.assertEqual(row[2], CHECK.FAIL)
-            self.assertIn("mixed bank fingerprints", row[3])
+            self.assertIn("screener.mp4 has a different sound identity", row[3])
 
             manifest = json.loads((package / "manifest.json").read_text())
-            manifest["items"][1]["sound"] = {
-                "bank_fingerprint": "current",
-                "sources": expected,
-                "score_sha256": "score-stale",
-            }
+            manifest["items"][1]["sound"] = copy.deepcopy(current)
+            manifest["items"][1]["sound"]["score_contract_sha256"] = "9" * 64
             (package / "manifest.json").write_text(json.dumps(manifest))
             with (
                 mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
@@ -2496,43 +2739,45 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 report = CHECK.Report()
                 CHECK.check_audio(register["package"]["audio"], package, report)
-            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
             self.assertEqual(row[2], CHECK.FAIL)
-            self.assertIn("mixed score digests", row[3])
+            self.assertIn("screener.mp4 has a different sound identity", row[3])
 
     def test_empty_audio_package_reports_its_actual_cause(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
         with tempfile.TemporaryDirectory() as tmp:
             report = CHECK.Report()
             CHECK.check_audio(register["package"]["audio"], Path(tmp), report)
-        row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+        row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
         self.assertEqual(row[2], CHECK.FAIL)
-        self.assertEqual(row[3], "no audio artifact staged")
+        self.assertIn("no audio artifact staged", row[3])
 
     def test_audio_receipts_bind_screener_bytes_and_passage_duration(self) -> None:
         register = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
-        expected = register["package"]["audio"]["source_recordings"]
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp)
             master = package / "master.mxf"
             screener = package / "screener.mov"
             master.write_bytes(b"master")
             screener.write_bytes(b"screener")
-            sound = {"bank_fingerprint": "bank", "sources": expected, "score_sha256": "score-current"}
+            score = package / "provenance/passage-score.wav"
+            score.parent.mkdir(parents=True)
+            score.write_bytes(b"submission score fixture")
+            sound = submission_sound_identity(CHECK.sha256(score))
 
             def write_manifest() -> None:
-                (package / "manifest.json").write_text(
-                    json.dumps(
-                        {
-                            "duration": SPAN["duration"],
-                            "sound": sound,
-                            "items": [
-                                {"name": master.name, "sha256": CHECK.sha256(master), "sound": sound},
-                                {"name": screener.name, "sha256": CHECK.sha256(screener), "sound": sound},
-                            ],
-                        }
-                    )
-                )
+                manifest = {
+                    "t0": SPAN["t0"],
+                    "t1": SPAN["t1"],
+                    "duration": SPAN["duration"],
+                    "sound": sound,
+                    "items": [
+                        {"name": master.name, "sha256": CHECK.sha256(master), "sound": sound},
+                        {"name": screener.name, "sha256": CHECK.sha256(screener), "sound": sound},
+                    ],
+                }
+                bind_submission_score_receipt(package, manifest, sound)
+                (package / "manifest.json").write_text(json.dumps(manifest))
 
             write_manifest()
             with (
@@ -2541,8 +2786,70 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 report = CHECK.Report()
                 CHECK.check_audio(register["package"]["audio"], package, report)
-            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
             self.assertEqual(row[2], CHECK.PASS)
+            receipt_row = next(row for row in report.rows if row[1] == "copied score receipt v2 identity")
+            self.assertEqual(receipt_row[2], CHECK.PASS)
+            audio_render_row = next(
+                row for row in report.rows if row[1] == "durable audio-render receipt identity"
+            )
+            self.assertEqual(audio_render_row[2], CHECK.PASS)
+
+            audio_render_path = package / "provenance/audio-render.json"
+            audio_render_path.write_text(
+                '{"schema":"danse.audio.render.v1","fixture":"substituted"}\n'
+            )
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            audio_render_row = next(
+                row for row in report.rows if row[1] == "durable audio-render receipt identity"
+            )
+            self.assertEqual(audio_render_row[2], CHECK.FAIL)
+            self.assertIn("manifest digest is stale", audio_render_row[3])
+
+            write_manifest()
+
+            production_path = package / "provenance/production.json"
+            production = json.loads(production_path.read_text())
+            production["sound"] = copy.deepcopy(sound)
+            production["sound"]["credit"] = "Incomplete music credit."
+            production_path.write_text(json.dumps(production, indent=2) + "\n")
+            manifest = json.loads((package / "manifest.json").read_text())
+            manifest["production"]["sha256"] = CHECK.sha256(production_path)
+            (package / "manifest.json").write_text(json.dumps(manifest))
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            receipt_row = next(row for row in report.rows if row[1] == "copied score receipt v2 identity")
+            self.assertEqual(receipt_row[2], CHECK.FAIL)
+            self.assertIn("production receipt does not equal manifest.sound", receipt_row[3])
+
+            write_manifest()
+
+            production = json.loads(production_path.read_text())
+            production["repository_head"] = "b" * 40
+            production_path.write_text(json.dumps(production, indent=2) + "\n")
+            manifest = json.loads((package / "manifest.json").read_text())
+            manifest["production"]["sha256"] = CHECK.sha256(production_path)
+            (package / "manifest.json").write_text(json.dumps(manifest))
+            with (
+                mock.patch.object(CHECK, "loudness", return_value={"lufs": -16.0, "true_peak_dbtp": -1.1}),
+                mock.patch.object(CHECK, "probe", return_value={"seconds": SPAN["duration"]}),
+            ):
+                report = CHECK.Report()
+                CHECK.check_audio(register["package"]["audio"], package, report)
+            receipt_row = next(row for row in report.rows if row[1] == "copied score receipt v2 identity")
+            self.assertEqual(receipt_row[2], CHECK.FAIL)
+            self.assertIn("different repository head", receipt_row[3])
+
+            write_manifest()
 
             screener.write_bytes(b"replaced screener")
             with (
@@ -2551,9 +2858,9 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 report = CHECK.Report()
                 CHECK.check_audio(register["package"]["audio"], package, report)
-            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
             self.assertEqual(row[2], CHECK.FAIL)
-            self.assertIn("screener.mov (digest)", row[3])
+            self.assertIn("screener.mov digest is stale", row[3])
 
             write_manifest()
             with (
@@ -2562,7 +2869,7 @@ class DeliveryContractTest(unittest.TestCase):
             ):
                 report = CHECK.Report()
                 CHECK.check_audio(register["package"]["audio"], package, report)
-            row = next(row for row in report.rows if row[1] == "per-artifact score provenance")
+            row = next(row for row in report.rows if row[1] == "identical timed-audio sound identity")
             self.assertEqual(row[2], CHECK.FAIL)
             self.assertIn("passage duration", row[3])
 
@@ -2642,7 +2949,7 @@ class DeliveryContractTest(unittest.TestCase):
 
     def test_submitted_phase_explains_elapsed_target_without_reopening_it(self) -> None:
         reg = yaml.safe_load((ROOT / "submission/screendance-2027.yaml").read_text())
-        now = datetime(2026, 8, 25, 12, tzinfo=ZoneInfo("America/New_York"))
+        now = datetime(2026, 9, 2, 12, tzinfo=ZoneInfo("America/New_York"))
         report = CHECK.Report()
         CHECK.check_deadline(reg, "submitted", report, now=now)
         target = next(row for row in report.rows if row[1] == "target file date")

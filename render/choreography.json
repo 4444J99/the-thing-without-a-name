@@ -1,0 +1,92 @@
+{
+  "schema": "danse.choreography.v1",
+  "identity": {
+    "id": "delibes-screendance-suite-competition-film",
+    "score_contract_sha256": "682b5fc683c04818acfb286981087a01714ef243dfeb0cdf28d081000bebdc27",
+    "score_file_sha256": "a5bff93175b5e80c81ff46c6317676044b4ed2a07b999823fa616cd0eb542ae1",
+    "corpus_manifest_sha256": "970b0aa062a0d8a4d96f64688034ccd745b1dde5cfdaf4002de173509accb371",
+    "corpus_score_sha256": "6527591842af960dee9937e95cfbba1edc4ed383869ca5d643b6e587c642e9a5",
+    "contract_sha256": "420fb9e8f93686f28ea166b3a638629e778e1c63fd62071892ce11b15f024da0"
+  },
+  "legibility": {
+    "minimum_pose_dwell_bars": 2,
+    "minimum_pose_transition_bars": 1,
+    "minimum_topology_transition_bars": 1,
+    "maximum_fragment_change_area_per_bar": 0.25,
+    "fragment_counterpoint_fraction": 0,
+    "hard_global_recast_before_signature": false,
+    "frame_order_semantics": "authored-motif-not-chronology"
+  },
+  "motifs": [
+    {
+      "id": "opening-arabesque",
+      "source_frame_ids": ["IMG_1702"],
+      "geometry_frame_id": "IMG_1702"
+    },
+    {
+      "id": "sylvia-adagio",
+      "source_frame_ids": ["IMG_1591", "IMG_1592", "IMG_1593", "IMG_1596", "IMG_1598", "IMG_1615"],
+      "geometry_frame_id": "IMG_1591"
+    },
+    {
+      "id": "waltz-crossing",
+      "source_frame_ids": ["IMG_1640", "IMG_1642", "IMG_1643", "IMG_1648", "IMG_1652", "IMG_1661", "IMG_1663", "IMG_1668"],
+      "geometry_frame_id": "IMG_1642"
+    },
+    {
+      "id": "coppelia-variation",
+      "source_frame_ids": ["IMG_1695", "IMG_1698", "IMG_1701", "IMG_1702", "IMG_1703", "IMG_1704", "IMG_1705", "IMG_1710", "IMG_1712"],
+      "geometry_frame_id": "IMG_1702"
+    },
+    {
+      "id": "stillness",
+      "source_frame_ids": ["IMG_1702"],
+      "geometry_frame_id": "IMG_1702"
+    },
+    {
+      "id": "climax-development",
+      "source_frame_ids": ["IMG_1591", "IMG_1642", "IMG_1702", "IMG_1615", "IMG_1652", "IMG_1704", "IMG_1629", "IMG_1721"],
+      "geometry_frame_id": "IMG_1702"
+    }
+  ],
+  "phrase_assignments": [
+    {"phrase_id": "sylvia-01", "movement_id": "ONE", "motif_id": "opening-arabesque", "cut_mode": "solo", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "sylvia-02", "movement_id": "ONE", "motif_id": "opening-arabesque", "cut_mode": "solo", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-03", "movement_id": "ASSEMBLY", "motif_id": null, "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "sylvia-04", "movement_id": "ASSEMBLY", "motif_id": null, "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-05", "movement_id": "DIVISION", "motif_id": "sylvia-adagio", "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-06", "movement_id": "DIVISION", "motif_id": "sylvia-adagio", "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-07", "movement_id": "DIVISION", "motif_id": "sylvia-adagio", "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-08", "movement_id": "DIVISION", "motif_id": "sylvia-adagio", "cut_mode": "score", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-09", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-10", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-11", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-12", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "sylvia-13", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-01", "movement_id": "PHRASE", "motif_id": "waltz-crossing", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-02", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-03", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-04", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-05", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-06", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-07", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-08", "movement_id": "PHRASE", "motif_id": "coppelia-variation", "cut_mode": "grid", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-09", "movement_id": "STILLNESS", "motif_id": "stillness", "cut_mode": "figure", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "coppelia-10", "movement_id": "STILLNESS", "motif_id": "stillness", "cut_mode": "figure", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "coppelia-11", "movement_id": "STILLNESS", "motif_id": "stillness", "cut_mode": "figure", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "coppelia-12", "movement_id": "STILLNESS", "motif_id": "stillness", "cut_mode": "figure", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true},
+    {"phrase_id": "coppelia-13", "movement_id": "STILLNESS", "motif_id": "stillness", "cut_mode": "figure", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-14", "movement_id": "RESEED", "motif_id": "sylvia-adagio", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-15", "movement_id": "RESEED", "motif_id": "sylvia-adagio", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-16", "movement_id": "RESEED", "motif_id": "sylvia-adagio", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-17", "movement_id": "RESEED", "motif_id": "waltz-crossing", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-18", "movement_id": "RESEED", "motif_id": "waltz-crossing", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-19", "movement_id": "RESEED", "motif_id": "waltz-crossing", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-20", "movement_id": "RESEED", "motif_id": "coppelia-variation", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-21", "movement_id": "RESEED", "motif_id": "coppelia-variation", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-22", "movement_id": "RESEED", "motif_id": "coppelia-variation", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-23", "movement_id": "RESEED", "motif_id": "climax-development", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "coppelia-24", "movement_id": "RESEED", "motif_id": "climax-development", "cut_mode": "bands", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": false},
+    {"phrase_id": "signature", "movement_id": "SIGNATURE", "motif_id": null, "cut_mode": "black", "pose_dwell_bars": 2, "pose_transition_bars": 1, "topology_transition_bars": 1, "hold_complete_phrase": true}
+  ]
+}

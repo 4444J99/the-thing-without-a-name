@@ -169,7 +169,7 @@ def validate_room_bus(bus: Any) -> dict[str, Any]:
         bad(f"unknown schema {bus.get('schema') if isinstance(bus, dict) else None}")
     if bus.get("semantics") != "authored-start-events":
         bad("semantics must be authored-start-events")
-    if bus.get("release_status") not in {"fixture-only", "artistic-gate-required", "diagnostic-only"}:
+    if bus.get("release_status") not in {"fixture-only", "artistic-gate-required", "production-selected", "diagnostic-only"}:
         bad("release_status is invalid")
     try:
         passage = _validate_passage((bus.get("identity") or {}).get("passage"), "identity.passage")

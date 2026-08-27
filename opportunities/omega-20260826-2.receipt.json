@@ -1,0 +1,26 @@
+{
+  "schema": "danse.opportunity-receipt.v1",
+  "issued_at": "2026-08-26T19:54:25Z",
+  "snapshot": {
+    "path": "opportunities/omega-20260826-2.json",
+    "sha256": "f5bb090a2cc1491055124d5e422b2e148f2e0327f9e096ead204eda86893c7af",
+    "bytes": 50043,
+    "snapshot_id": "omega-20260826-2",
+    "frozen_at": "2026-08-26T19:54:24Z"
+  },
+  "opportunity_count": 17,
+  "source_count": 21,
+  "ranked_action_count": 6,
+  "consumers": [
+    {
+      "issue": 2,
+      "binding": "submission/screendance-2027.yaml",
+      "status": "verified"
+    },
+    {
+      "issue": 12,
+      "binding": "release/manifest.json",
+      "status": "pending"
+    }
+  ]
+}

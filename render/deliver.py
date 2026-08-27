@@ -19,15 +19,14 @@ leverage of the spine, and it shows up here as arithmetic:
                       projection therefore chooses a different field of view.
     stills            six one-frame renders at distinct seeds, named by seed.
 
-SOUND IS SLICED, NEVER RE-SCORED. `score.py --window trailer` is a legitimate
-standalone composition, but it starts its bed and its voice phrasing at the
-capture's own start time, so the same absolute moment would sound different in the
-passage recording and in the Times Square cut. Slicing one passage score means a
-moment sounds the way it sounds, in every crop of the film that contains it.
+SOUND IS SLICED, NEVER RE-SCORED. The passage accepts only the deterministic
+FluidSynth master whose receipt binds the selected score, choreography, adapted
+MIDI, soundfont, toolchain, mix, stems, and exact duration. Every derived capture
+is cut from those same master bytes, so a moment sounds the same in every crop of
+the film that contains it.
 
     render/deliver.py                 # everything
     render/deliver.py --only stills
-    render/deliver.py --start 120.0   # select the passage containing river time 120s
     render/deliver.py --force reel    # re-make one that already exists
     render/deliver.py --out <scratch-render-root> --package <package-root>
     render/deliver.py --preflight      # same dependency plan, no writes or rendering
@@ -46,7 +45,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+import wave
+from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -60,12 +61,28 @@ SCORE = DANSE / "sound" / "score.py"
 RENDER = HERE / "render.py"
 REGISTER = DANSE / "submission" / "screendance-2027.yaml"
 RIGHTS_REGISTER = DANSE / "rights" / "register.json"
+MUSIC_REPERTOIRE = DANSE / "music" / "repertoire.yaml"
+MUSIC_SCORE = DANSE / "music" / "score.json"
+CHOREOGRAPHY = DANSE / "render" / "choreography.json"
+ADAPTATION = DANSE / "music" / "adaptation.json"
+AUDIO_TOOLCHAIN = DANSE / "music" / "audio-toolchain.json"
+AUDIO_MIX = DANSE / "music" / "delibes-mix.json"
+AUDIO_USES = DANSE / "sound" / "audio-uses.json"
+AUDIO_RENDER_SCHEMA = DANSE / "music" / "audio-render.schema.json"
+AUDIO_RENDER_RECEIPT = DANSE / ".work" / "music" / "competition" / "audio-render.json"
+AUDIO_MASTER = DANSE / ".work" / "music" / "competition" / "delibes-master.wav"
+MUSIC_CREDIT = (
+    "Music by Léo Delibes. Source arrangements by Paul De Bra, adapted and "
+    "re-orchestrated for Danse under CC BY 4.0. Changes include instrumentation, "
+    "sequencing, cue markers, and mix."
+)
 RAW = DANSE / "pipeline" / ".work" / "raw"
 BANK = DANSE / "sound" / "bank" / "bank.json"
 sys.path.insert(0, str(DANSE / "sound"))
 sys.path.insert(0, str(DANSE / "pipeline"))
 from bank_contract import audit_bank  # noqa: E402
 from corpus_contract import authorize_render_tier  # noqa: E402
+from music_score import canonical_sha256  # noqa: E402
 
 # Captures that are sub-spans or scaled versions of the primary 4K `passage` capture,
 # so they can be cut/scaled from it. `copy` means stream-copy (no re-encode at all).
@@ -91,6 +108,7 @@ AUDIO_ITEMS = {
     REEL_ITEM,
 }
 SCORE_SOURCE_ITEM = "provenance/passage-score.wav"
+AUDIO_RENDER_SOURCE_ITEM = "provenance/audio-render.json"
 PRODUCTION_RECEIPT = "provenance/production.json"
 PRODUCER_RECEIPTS = "provenance/producer-receipts"
 PASSAGE_SELECTORS = {"master", "derived", "reel", "stills"}
@@ -157,6 +175,411 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def repository_state() -> dict:
+    """Return the producing commit only when Git can describe this checkout."""
+    head = sh(["git", "rev-parse", "--verify", "HEAD^{commit}"], cwd=DANSE)
+    if head.returncode != 0:
+        raise SystemExit("delivery requires a Git commit identity")
+    if not isinstance(head.stdout, str):
+        raise SystemExit("delivery received no Git commit identity")
+    commit = head.stdout.strip().lower()
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit):
+        raise SystemExit("delivery received an invalid Git commit identity")
+    status = sh(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=DANSE,
+    )
+    if status.returncode != 0:
+        raise SystemExit("delivery cannot verify the repository worktree")
+    if not isinstance(status.stdout, str):
+        raise SystemExit("delivery received no repository worktree status")
+    changes = [line for line in status.stdout.splitlines() if line.strip()]
+    return {
+        "head": commit,
+        "clean": not changes,
+        "changes": changes,
+    }
+
+
+def require_clean_repository() -> dict:
+    """Refuse to mint package identities for bytes not owned by the named commit."""
+    state = repository_state()
+    if not state["clean"]:
+        sample = ", ".join(line[:160] for line in state["changes"][:5])
+        extra = len(state["changes"]) - 5
+        suffix = f" (+{extra} more)" if extra > 0 else ""
+        raise SystemExit(
+            "production package delivery requires a clean tracked/untracked worktree; "
+            f"commit or remove repository changes first: {sample}{suffix}"
+        )
+    return state
+
+
+def regular_json(path: Path, schema: str) -> dict:
+    """Load one known contract without accepting a symlink or non-object JSON."""
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"required {schema} contract is missing or unsafe: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot read {schema} contract at {path}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("schema") != schema:
+        raise SystemExit(f"{path} is not a {schema} contract")
+    return value
+
+
+def repository_file(relative: object, label: str) -> Path:
+    """Resolve one regular repository file without accepting traversal or links."""
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise SystemExit(f"{label} has no safe repository-relative path")
+    pure = PurePosixPath(relative)
+    if pure.is_absolute() or "." in pure.parts or ".." in pure.parts:
+        raise SystemExit(f"{label} escapes the repository")
+    current = DANSE
+    for part in pure.parts:
+        current = current / part
+        if current.is_symlink():
+            raise SystemExit(f"{label} traverses a symlink")
+    try:
+        resolved = current.resolve(strict=True)
+        resolved.relative_to(DANSE.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{label} is missing or outside the repository") from exc
+    if not resolved.is_file():
+        raise SystemExit(f"{label} is not a regular file")
+    return resolved
+
+
+def contract_sha256(value: dict, label: str) -> str:
+    identity = value.get("identity")
+    declared = identity.get("contract_sha256") if isinstance(identity, dict) else None
+    if not isinstance(declared, str) or not re.fullmatch(r"[0-9a-f]{64}", declared):
+        raise SystemExit(f"{label} has no contract_sha256")
+    source = {
+        **value,
+        "identity": {key: row for key, row in identity.items() if key != "contract_sha256"},
+    }
+    if canonical_sha256(source) != declared:
+        raise SystemExit(f"{label} contract_sha256 does not match its content")
+    return declared
+
+
+def competition_audio_provenance(span: dict) -> dict:
+    """Authenticate every producer identity behind the fixed competition master."""
+    score = regular_json(MUSIC_SCORE, "danse.music.score.v1")
+    choreography = regular_json(CHOREOGRAPHY, "danse.choreography.v1")
+    adaptation = regular_json(ADAPTATION, "danse.music.adaptation.v1")
+    toolchain = regular_json(AUDIO_TOOLCHAIN, "danse.audio.toolchain.v1")
+    mix = regular_json(AUDIO_MIX, "danse.audio.mix.v1")
+    uses = regular_json(AUDIO_USES, "danse.audio.uses.v1")
+    receipt = regular_json(AUDIO_RENDER_RECEIPT, "danse.audio.render.v1")
+
+    try:
+        repertoire = yaml.safe_load(MUSIC_REPERTOIRE.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise SystemExit(f"cannot read selected repertoire: {exc}") from exc
+    works = repertoire.get("works") if isinstance(repertoire, dict) else None
+    selected = [
+        work
+        for work in works or []
+        if isinstance(work, dict) and work.get("selection", {}).get("status") == "selected"
+    ]
+    gate = repertoire.get("artistic_gate") if isinstance(repertoire, dict) else None
+    if (
+        not isinstance(gate, dict)
+        or gate.get("status") != "accepted"
+        or len(selected) != 1
+        or selected[0].get("id") != "delibes-screendance-suite"
+        or selected[0].get("role") != "repertoire"
+    ):
+        raise SystemExit("competition delivery rejects fixture or pending artistic repertoire")
+    if score.get("identity", {}).get("work_id") != selected[0]["id"]:
+        raise SystemExit("music score does not bind the selected repertoire work")
+    selected_midi = selected[0].get("score", {}).get("source_midi")
+    if (
+        not isinstance(selected_midi, dict)
+        or selected_midi.get("sha256") != score.get("identity", {}).get("midi_sha256")
+        or selected_midi.get("sha256") != adaptation.get("output", {}).get("sha256")
+    ):
+        raise SystemExit("selected repertoire, score, and adapted MIDI identities differ")
+    if score.get("release_status") != "production-selected":
+        raise SystemExit("competition delivery requires a production-selected score")
+    if score.get("time", {}).get("passage_mapping") != "native-tempo":
+        raise SystemExit("competition delivery rejects affine score timing")
+    duration = score.get("time", {}).get("duration_seconds")
+    if type(duration) not in (int, float) or abs(float(duration) - float(span["duration"])) > 1e-6:
+        raise SystemExit("competition score duration does not match the selected passage")
+    if (
+        abs(float(span["t0"])) > 1e-9
+        or int(span.get("passage", -1)) != 0
+        or int(span.get("river_seed", -1)) != 20170620
+    ):
+        raise SystemExit("competition delivery is locked to river seed 20170620, passage 0, score time 0")
+
+    adaptation_sources = adaptation.get("sources")
+    if not isinstance(adaptation_sources, list) or len(adaptation_sources) != 2:
+        raise SystemExit("Delibes adaptation must bind exactly two arrangement sources")
+    for row in adaptation_sources:
+        relative = row.get("path") if isinstance(row, dict) else None
+        expected = row.get("sha256") if isinstance(row, dict) else None
+        if (
+            not isinstance(relative, str)
+            or not isinstance(expected, str)
+            or row.get("license") != "CC BY 4.0"
+            or row.get("license_url") != "https://creativecommons.org/licenses/by/4.0/"
+        ):
+            raise SystemExit("Delibes adaptation source/license identity is incomplete")
+        source_path = repository_file(relative, "Delibes arrangement source")
+        if digest(source_path) != expected:
+            raise SystemExit(f"Delibes arrangement source is missing or stale: {relative}")
+
+    profile_id = uses.get("competition_profile")
+    profiles = uses.get("profiles")
+    profile = profiles.get(profile_id) if isinstance(profiles, dict) else None
+    if not isinstance(profile, dict) or profile.get("package_eligible") is not True:
+        raise SystemExit("competition audio profile is absent or package-ineligible")
+    sources = profile.get("declared_sources")
+    required_stems = profile.get("required_stems")
+    forbidden = set(profile.get("forbidden_source_kinds") or [])
+    if not isinstance(sources, list) or not isinstance(required_stems, list):
+        raise SystemExit("competition audio profile has no typed sources/stems")
+    if any(not isinstance(row, dict) or row.get("kind") in forbidden for row in sources):
+        raise SystemExit("competition audio profile contains an undeclared or forbidden source kind")
+    for row in sources:
+        relative = row.get("path")
+        expected = row.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            raise SystemExit("competition audio source has no exact path/hash")
+        source_path = repository_file(relative, "competition audio source")
+        if digest(source_path) != expected:
+            raise SystemExit(f"competition audio source is missing or stale: {relative}")
+        notice = row.get("license_notice")
+        if notice is not None:
+            notice_path = (
+                repository_file(notice.get("path"), "competition audio license notice")
+                if isinstance(notice, dict)
+                else None
+            )
+            notice_sha = notice.get("sha256") if isinstance(notice, dict) else None
+            if (
+                notice_path is None
+                or not isinstance(notice_sha, str)
+                or digest(notice_path) != notice_sha
+            ):
+                raise SystemExit(f"competition audio source has a missing or stale license notice: {relative}")
+
+    toolchain_files = {
+        "midi": repository_file(adaptation["output"]["path"], "adapted MIDI"),
+        "adaptation": ADAPTATION,
+        "mix": AUDIO_MIX,
+        "renderer": DANSE / "sound" / "render_music.py",
+    }
+    for name, expected_path in toolchain_files.items():
+        row = toolchain.get(name)
+        if (
+            not isinstance(row, dict)
+            or row.get("path") != expected_path.relative_to(DANSE).as_posix()
+            or row.get("sha256") != digest(expected_path)
+        ):
+            raise SystemExit(f"audio toolchain {name} identity is missing or stale")
+    soundfont = toolchain.get("soundfont")
+    soundfont_notice = soundfont.get("license_notice") if isinstance(soundfont, dict) else None
+    soundfont_path = (
+        repository_file(soundfont.get("path"), "pinned soundfont")
+        if isinstance(soundfont, dict)
+        else None
+    )
+    soundfont_notice_path = (
+        repository_file(soundfont_notice.get("path"), "soundfont license notice")
+        if isinstance(soundfont_notice, dict)
+        else None
+    )
+    if (
+        not isinstance(soundfont, dict)
+        or soundfont.get("path") != ".work/music/MuseScore_General.sf3"
+        or soundfont_path is None
+        or soundfont.get("sha256") != digest(soundfont_path)
+        or soundfont.get("license") != "MIT"
+        or not isinstance(soundfont_notice, dict)
+        or soundfont_notice.get("path") != "music/licenses/MuseScore_General_License.md"
+        or soundfont_notice_path is None
+        or soundfont_notice.get("sha256") != digest(soundfont_notice_path)
+    ):
+        raise SystemExit("audio toolchain soundfont/license identity is missing or stale")
+
+    expected_inputs = {
+        "score": (MUSIC_SCORE, contract_sha256(score, "music score")),
+        "choreography": (CHOREOGRAPHY, contract_sha256(choreography, "choreography")),
+        "midi": (repository_file(adaptation["output"]["path"], "adapted MIDI"), None),
+        "adaptation": (ADAPTATION, None),
+        "toolchain": (AUDIO_TOOLCHAIN, None),
+        "mix": (AUDIO_MIX, None),
+        "audio_uses": (AUDIO_USES, None),
+        "soundfont": (repository_file(toolchain["soundfont"]["path"], "pinned soundfont"), None),
+    }
+    inputs = receipt.get("inputs")
+    if not isinstance(inputs, dict):
+        raise SystemExit("audio render receipt has no inputs")
+    for name, (path, contract) in expected_inputs.items():
+        row = inputs.get(name)
+        if (
+            not isinstance(row, dict)
+            or row.get("path") != path.relative_to(DANSE).as_posix()
+            or row.get("sha256") != digest(path)
+            or (contract is not None and row.get("contract_sha256") != contract)
+        ):
+            raise SystemExit(f"audio render receipt {name} identity is missing or stale")
+
+    fluidsynth = inputs.get("fluidsynth_executable")
+    pinned_fluidsynth = toolchain.get("fluidsynth")
+    if (
+        not isinstance(fluidsynth, dict)
+        or not isinstance(pinned_fluidsynth, dict)
+        or fluidsynth.get("version") != "2.6.0"
+        or fluidsynth.get("sha256") != pinned_fluidsynth.get("executable_sha256")
+    ):
+        raise SystemExit("audio render receipt does not bind the pinned FluidSynth executable")
+    executable = Path(str(fluidsynth.get("path", "")))
+    if executable.is_symlink() or not executable.is_file() or digest(executable) != fluidsynth["sha256"]:
+        raise SystemExit("pinned FluidSynth executable is missing or changed")
+
+    ffmpeg_input = inputs.get("ffmpeg_executable")
+    pinned_ffmpeg = toolchain.get("ffmpeg")
+    if (
+        not isinstance(ffmpeg_input, dict)
+        or not isinstance(pinned_ffmpeg, dict)
+        or ffmpeg_input.get("version") != "9.0.1"
+        or ffmpeg_input.get("sha256") != pinned_ffmpeg.get("executable_sha256")
+    ):
+        raise SystemExit("audio render receipt does not bind the pinned ffmpeg executable")
+    ffmpeg_executable = Path(str(ffmpeg_input.get("path", "")))
+    if (
+        ffmpeg_executable.is_symlink()
+        or not ffmpeg_executable.is_file()
+        or digest(ffmpeg_executable) != ffmpeg_input["sha256"]
+    ):
+        raise SystemExit("pinned ffmpeg executable is missing or changed")
+
+    verification = receipt.get("verification")
+    required_checks = (
+        "deterministic",
+        "non_silent",
+        "stems_non_silent",
+        "polyphonic",
+        "normalization_deterministic",
+        "loudness_in_target",
+        "true_peak_in_target",
+        "duration_matches_score",
+        "seek_safe",
+    )
+    if not isinstance(verification, dict) or not all(verification.get(name) is True for name in required_checks):
+        raise SystemExit("audio render receipt has not passed every deterministic render check")
+    normalization = receipt.get("normalization")
+    settings = mix.get("master", {}).get("normalization")
+    output_loudness = normalization.get("output") if isinstance(normalization, dict) else None
+    expected_targets = {
+        "integrated_lufs": -16.0,
+        "tolerance_lu": 0.5,
+        "target_true_peak_dbtp": -1.1,
+        "max_true_peak_dbtp": -1.0,
+        "lra_lu": 11.0,
+    }
+    if (
+        not isinstance(settings, dict)
+        or settings.get("method") != "ffmpeg-loudnorm-two-pass"
+        or pinned_ffmpeg.get("settings") != settings
+        or not isinstance(normalization, dict)
+        or normalization.get("schema") != "danse.audio.normalization.v1"
+        or normalization.get("method") != settings["method"]
+        or normalization.get("limiter") != "ffmpeg-loudnorm-dynamic-true-peak"
+        or normalization.get("normalization_type") != "dynamic"
+        or normalization.get("targets") != expected_targets
+        or normalization.get("ffmpeg")
+        != {"version": "9.0.1", "executable_sha256": ffmpeg_input["sha256"]}
+        or not isinstance(output_loudness, dict)
+    ):
+        raise SystemExit("audio render receipt has no exact pinned loudness-normalization identity")
+    try:
+        measured_lufs = float(output_loudness["integrated_lufs"])
+        measured_true_peak = float(output_loudness["true_peak_dbtp"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit("audio render receipt has no numeric loudness measurement") from exc
+    if abs(measured_lufs - expected_targets["integrated_lufs"]) > expected_targets["tolerance_lu"]:
+        raise SystemExit("competition audio master loudness is outside the package target")
+    if measured_true_peak > expected_targets["max_true_peak_dbtp"]:
+        raise SystemExit("competition audio master true peak exceeds the package ceiling")
+    outputs = receipt.get("outputs")
+    master = outputs.get("master") if isinstance(outputs, dict) else None
+    stems = outputs.get("stems") if isinstance(outputs, dict) else None
+    if receipt.get("profile") != profile_id or not isinstance(master, dict) or not isinstance(stems, list):
+        raise SystemExit("audio render receipt has no exact master/stem outputs")
+    if master.get("path") != AUDIO_MASTER.relative_to(DANSE).as_posix():
+        raise SystemExit("audio render receipt points at the wrong competition master")
+    if AUDIO_MASTER.is_symlink() or not AUDIO_MASTER.is_file() or master.get("sha256") != digest(AUDIO_MASTER):
+        raise SystemExit("competition audio master is missing or stale")
+    sample_rate = int(mix.get("sample_rate", 0))
+    expected_frames = int(
+        (Decimal(str(duration)) * sample_rate).to_integral_value(rounding=ROUND_HALF_UP)
+    )
+    sample_grid_duration = expected_frames / sample_rate
+    if (
+        master.get("frames") != expected_frames
+        or master.get("sample_rate") != sample_rate
+        or master.get("channels") != 2
+        or abs(float(master.get("duration_seconds", -1)) - sample_grid_duration) > 1e-9
+        or abs(sample_grid_duration - float(duration)) > (0.5 / sample_rate + 1e-9)
+    ):
+        raise SystemExit("competition audio master duration/format drifted")
+    try:
+        with wave.open(str(AUDIO_MASTER), "rb") as reader:
+            actual_master = (
+                reader.getnframes(),
+                reader.getframerate(),
+                reader.getnchannels(),
+                reader.getsampwidth(),
+            )
+    except (OSError, wave.Error) as exc:
+        raise SystemExit(f"competition audio master is not canonical PCM WAV: {exc}") from exc
+    if actual_master != (expected_frames, sample_rate, 2, 2):
+        raise SystemExit("competition audio master bytes disagree with the receipt format")
+    by_stem = {row.get("id"): row for row in stems if isinstance(row, dict)}
+    if len(stems) != len(required_stems) or list(by_stem) != required_stems:
+        raise SystemExit("audio render receipt stem order differs from the competition profile")
+    for stem_id in required_stems:
+        row = by_stem[stem_id]
+        path = repository_file(row.get("path"), f"competition audio stem {stem_id}")
+        if (
+            row.get("sha256") != digest(path)
+            or row.get("frames") != expected_frames
+            or row.get("sample_rate") != sample_rate
+            or row.get("channels") != 2
+            or row.get("non_silent") is not True
+        ):
+            raise SystemExit(f"competition audio stem is missing or stale: {stem_id}")
+
+    credit = adaptation.get("credit")
+    if credit != MUSIC_CREDIT:
+        raise SystemExit("competition music adaptation does not carry the required exact credit")
+    return {
+        "profile": profile_id,
+        "audio_uses_sha256": digest(AUDIO_USES),
+        "score_file_sha256": digest(MUSIC_SCORE),
+        "score_contract_sha256": expected_inputs["score"][1],
+        "choreography_file_sha256": digest(CHOREOGRAPHY),
+        "choreography_contract_sha256": expected_inputs["choreography"][1],
+        "midi_sha256": inputs["midi"]["sha256"],
+        "adaptation_sha256": inputs["adaptation"]["sha256"],
+        "toolchain_sha256": inputs["toolchain"]["sha256"],
+        "mix_sha256": inputs["mix"]["sha256"],
+        "soundfont_sha256": inputs["soundfont"]["sha256"],
+        "audio_render_receipt_sha256": digest(AUDIO_RENDER_RECEIPT),
+        "master_sha256": master["sha256"],
+        "sources": [row["id"] for row in sources],
+        "stems": [{"id": stem_id, "sha256": by_stem[stem_id]["sha256"]} for stem_id in required_stems],
+        "credit": credit,
+    }
+
+
 @functools.lru_cache(maxsize=None)
 def delivery_source_sha256(tier: str) -> str:
     """Identity of every tracked or derived byte that can change a package artifact."""
@@ -164,6 +587,8 @@ def delivery_source_sha256(tier: str) -> str:
         DANSE / "film.html",
         DANSE / "arrival.js",
         PROGRAM,
+        DANSE / "submission" / "screendance-2027.yaml",
+        DANSE / "rights" / "register.json",
         HERE / "deliver.py",
         HERE / "render.py",
         HERE / "browser.py",
@@ -178,11 +603,22 @@ def delivery_source_sha256(tier: str) -> str:
         DANSE / "music/repertoire.schema.json",
         DANSE / "music/score.json",
         DANSE / "music/score.schema.json",
+        DANSE / "music/adapt_delibes.py",
+        DANSE / "music/adaptation.json",
+        DANSE / "music/audio-render.schema.json",
+        DANSE / "music/audio-toolchain.json",
+        DANSE / "music/delibes-mix.json",
+        DANSE / "music/delibes-screendance-suite.mid",
+        DANSE / "music/licenses/CC-BY-4.0-NOTICE.md",
+        DANSE / "music/licenses/MuseScore_General_License.md",
+        DANSE / "music/sources/Valse-Lente-Delibes.mscz",
+        DANSE / "music/sources/Valse-Coppelia.mscz",
+        DANSE / "render/choreography.json",
+        DANSE / "render/choreography.schema.json",
+        DANSE / "sound/audio-uses.json",
+        DANSE / "sound/choreography.py",
         DANSE / "sound/control.mjs",
-        DANSE / "sound/score.py",
-        DANSE / "sound/rng.py",
-        DANSE / "sound/bank_contract.py",
-        BANK,
+        DANSE / "sound/render_music.py",
     ]
     roots.extend(sorted((DANSE / "engine").glob("*.js")))
     for kind in ("plates", "mattes"):
@@ -205,7 +641,8 @@ def renderer_source_sha256(tier: str) -> str:
     spec.loader.exec_module(module)
 
     class Args:
-        score = None
+        score = MUSIC_SCORE.relative_to(DANSE).as_posix()
+        choreography = CHOREOGRAPHY.relative_to(DANSE).as_posix()
 
     args = Args()
     args.tier = tier
@@ -232,6 +669,10 @@ def _capture_span_items(capture_name: str, seed: int | None = None, start: float
         str(start),
         "--rate",
         "0",
+        "--score",
+        MUSIC_SCORE.relative_to(DANSE).as_posix(),
+        "--choreography",
+        CHOREOGRAPHY.relative_to(DANSE).as_posix(),
     ]
     if seed is not None:
         cmd += ["--seed", str(seed)]
@@ -324,29 +765,26 @@ def score_provenance(score: Path, span: dict) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    sources = data.get("sources") or []
-    fingerprint = data.get("bank_fingerprint")
-    try:
-        valid = (
-            data.get("schema") == "danse.score.receipt.v1"
-            and isinstance(fingerprint, str)
-            and bool(fingerprint)
-            and all(isinstance(source, str) for source in sources)
-            and data.get("sha256") == digest(score)
-            and abs(float(data.get("t0", -1)) - span["t0"]) < 1e-9
-            and abs(float(data.get("duration", -1)) - span["duration"]) < 1e-3
-            and sorted(sources) == sorted(registered_audio_sources())
-        )
-    except (TypeError, ValueError):
-        return None
-    if not valid:
-        return None
-    return {"bank_fingerprint": fingerprint, "sources": sources, "score_sha256": data["sha256"]}
+    if data.get("schema") == "danse.score.receipt.v2":
+        try:
+            provenance = competition_audio_provenance(span)
+            valid = (
+                data.get("sha256") == digest(score) == provenance["master_sha256"]
+                and abs(float(data.get("t0", -1)) - span["t0"]) < 1e-9
+                and abs(float(data.get("duration", -1)) - span["duration"]) < 1e-6
+                and all(data.get(key) == value for key, value in provenance.items())
+            )
+        except (OSError, SystemExit, KeyError, TypeError, ValueError):
+            return None
+        return provenance if valid else None
+    # Historical apartment-grain receipts are not eligible to enter the fixed
+    # classical competition package, even when their old local bank still exists.
+    return None
 
 
 def write_score_receipt(score: Path, span: dict, provenance: dict) -> None:
     payload = {
-        "schema": "danse.score.receipt.v1",
+        "schema": "danse.score.receipt.v2",
         "sha256": digest(score),
         "t0": span["t0"],
         "t1": span["t1"],
@@ -406,8 +844,10 @@ def _prior_production_matches(package: Path, manifest: dict, previous: dict) -> 
         return None
     if (
         production.get("schema") != "danse.delivery.production.v1"
+        or production.get("repository_head") != manifest.get("repository_head")
         or production.get("source_tree_sha256") != manifest.get("source_tree_sha256")
         or production.get("passage") != _passage_identity(manifest)
+        or production.get("sound") != manifest.get("sound")
     ):
         return None
     outputs = {
@@ -450,6 +890,11 @@ def write_production_receipt(
     if not targets:
         return None
     passage = _passage_identity(manifest)
+    repository_head = manifest.get("repository_head")
+    if not isinstance(repository_head, str) or not re.fullmatch(
+        r"(?:[0-9a-f]{40}|[0-9a-f]{64})", repository_head
+    ):
+        raise SystemExit("rendered package has no exact repository-head identity")
     source_tree = manifest.get("source_tree_sha256")
     if not isinstance(source_tree, str) or not re.fullmatch(r"[0-9a-f]{64}", source_tree):
         raise SystemExit("rendered package has no complete source-tree identity")
@@ -479,7 +924,7 @@ def write_production_receipt(
         schema = {
             "render-segment": "danse.render.segment.v1",
             "render-concat": "danse.render.concat.v1",
-            "score": "danse.score.receipt.v1",
+            "score": "danse.score.receipt.v2",
         }[kind]
         value, receipt_sha = _read_producer_receipt(path, schema)
         if kind == "render-segment":
@@ -569,8 +1014,10 @@ def write_production_receipt(
 
     production = {
         "schema": "danse.delivery.production.v1",
+        "repository_head": repository_head,
         "source_tree_sha256": source_tree,
         "passage": passage,
+        "sound": manifest.get("sound"),
         "producers": [producers[key] for key in sorted(producers)],
         "outputs": outputs,
     }
@@ -591,7 +1038,10 @@ def is_forced(force: set[str], name: str, group: str | None = None) -> bool:
 
 def recognized_package_media(package: Path) -> list[Path]:
     """Known delivery media that cannot be adopted without a manifest."""
-    paths = [package / name for name in sorted(AUDIO_ITEMS | {SCORE_SOURCE_ITEM})]
+    paths = [
+        package / name
+        for name in sorted(AUDIO_ITEMS | {SCORE_SOURCE_ITEM, AUDIO_RENDER_SOURCE_ITEM})
+    ]
     stills = package / "stills"
     if stills.is_dir():
         paths.extend(stills.glob("seed-0x*.*"))
@@ -609,6 +1059,7 @@ def package_provenance_matches(
     span: dict,
     start: float | None = None,
     source_tree_sha256: str | None = None,
+    repository_head: str | None = None,
 ) -> bool:
     manifest = package / "manifest.json"
     if not manifest.is_file():
@@ -645,7 +1096,8 @@ def package_provenance_matches(
             start is not None and abs(float(data.get("start", -1)) - start) < 1e-9
         )
         source_matches = source_tree_sha256 is None or data.get("source_tree_sha256") == source_tree_sha256
-        return passage_matches and start_matches and source_matches
+        repository_matches = repository_head is None or data.get("repository_head") == repository_head
+        return passage_matches and start_matches and source_matches and repository_matches
     except (TypeError, ValueError):
         return False
 
@@ -725,7 +1177,35 @@ def preflight(
 
     package_root_ok = regular_directory_slot(package)
     add(package_root_ok, "package root", str(package))
+    try:
+        repository = repository_state()
+    except SystemExit as exc:
+        repository = None
+        repository_detail = str(exc)
+    else:
+        repository_detail = (
+            repository["head"]
+            if repository["clean"]
+            else f"{repository['head']} · {len(repository['changes'])} repository change(s)"
+        )
+    add(
+        repository is not None and repository["clean"],
+        "exact repository head",
+        repository_detail,
+    )
     add(program.get("schema") == "danse.program.v2", "program", str(program.get("schema")))
+    add(
+        not passage_requested or program.get("seed") == 20170620,
+        "competition river seed",
+        str(program.get("seed")),
+    )
+    add(
+        not passage_requested or abs(start) <= 1e-9,
+        "competition passage",
+        "river seed 20170620 · passage 0 · score time 0"
+        if abs(start) <= 1e-9
+        else f"production capture rejects --start {start}",
+    )
     add(
         not passage_requested or (span is not None and span["duration"] > 0),
         "capture span",
@@ -740,7 +1220,13 @@ def preflight(
         or (
             package_root_ok
             and span is not None
-            and package_provenance_matches(package, span, start, delivery_source_sha256(tier))
+            and package_provenance_matches(
+                package,
+                span,
+                start,
+                delivery_source_sha256(tier),
+                repository["head"] if repository and repository["clean"] else None,
+            )
         ),
         "package passage provenance",
         "preserved" if not passage_requested else str(package / "manifest.json"),
@@ -785,6 +1271,10 @@ def preflight(
                 "--codec",
                 "prores",
                 "--quiet",
+                "--score",
+                MUSIC_SCORE.relative_to(DANSE).as_posix(),
+                "--choreography",
+                CHOREOGRAPHY.relative_to(DANSE).as_posix(),
                 "--out",
                 str(render_root),
                 "--check-concat",
@@ -805,7 +1295,7 @@ def preflight(
         and score_provenance(score, span)
         and not is_forced(force, "master")
     )
-    need_bank = need_score and not score_ready
+    need_audio_render = need_score and not score_ready
 
     if need_picture or need_score or work["reel"] or work["stills"]:
         for command in ("ffmpeg", "ffprobe"):
@@ -823,21 +1313,20 @@ def preflight(
     if work["stills"]:
         add(importlib.util.find_spec("PIL") is not None, "Python module Pillow", "package still dependency")
 
-    if need_bank:
-        for module in ("numpy", "scipy"):
-            add(importlib.util.find_spec(module) is not None, f"Python module {module}", "score dependency")
-        declared = registered_audio_source_digests()
-        audit = audit_bank(BANK, declared)
-        add(BANK.is_file(), "grain bank", str(BANK))
-        add(
-            not audit.provenance_errors,
-            "confirmed apartment recordings",
-            f"{len(audit.sources)}/{len(declared)} exact sources declared in {REGISTER.name}"
-            if not audit.provenance_errors
-            else "; ".join(audit.provenance_errors),
-        )
-        add(not audit.index_errors, "grain bank contract", "; ".join(audit.index_errors) or audit.summary())
-        add(not audit.payload_errors, "grain payloads", "; ".join(audit.payload_errors[:4]) or "every indexed WAV exists")
+    if need_audio_render:
+        try:
+            provenance = competition_audio_provenance(span) if span else None
+        except (SystemExit, OSError, KeyError, TypeError, ValueError) as exc:
+            provenance = None
+            audio_detail = str(exc)
+        else:
+            audio_detail = (
+                f"{provenance['profile']} · master {provenance['master_sha256'][:16]}… · "
+                f"{len(provenance['stems'])} deterministic stems"
+                if provenance
+                else "capture span unavailable"
+            )
+        add(provenance is not None, "competition audio receipt", audio_detail)
 
     if "origin" in only:
         origin_dest = package / "stills" / "origin-2017.jpg"
@@ -918,6 +1407,10 @@ def passage_picture(program: dict, tier: str, force: bool, start: float = 0.0) -
         "--codec",
         "prores",
         "--quiet",
+        "--score",
+        MUSIC_SCORE.relative_to(DANSE).as_posix(),
+        "--choreography",
+        CHOREOGRAPHY.relative_to(DANSE).as_posix(),
         "--out",
         str(OUT),
     ]
@@ -942,31 +1435,22 @@ def passage_sound(force: bool, start: float = 0.0) -> tuple[Path, dict, bool]:
     """One score for the passage recording. Every derived capture is cut from it."""
     dest = OUT / "passage-score.wav"
     span = query_capture_span("passage", start=start)
+    provenance = competition_audio_provenance(span)
     if not force:
         got = probe_required(dest) if dest.is_file() else None
-        provenance = score_provenance(dest, span) if got else None
-        current_bank = bank_provenance() if provenance else None
-        bank_matches = bool(
-            provenance
-            and current_bank
-            and provenance.get("bank_fingerprint") == current_bank.get("bank_fingerprint")
-            and provenance.get("sources") == current_bank.get("sources")
-        )
-        if got and provenance and bank_matches and abs(got["seconds"] - span["duration"]) < 0.1:
+        cached = score_provenance(dest, span) if got else None
+        if got and cached == provenance and abs(got["seconds"] - span["duration"]) < 0.01:
             print(f"  passage score · kept · {got['seconds']:.1f}s")
             return dest, provenance, False
-    provenance = bank_provenance()
-    if provenance is None:
-        raise SystemExit(f"{BANK} must contain only the recordings declared by {REGISTER.name}")
-    print("  passage score · rendering")
-    done = subprocess.run(
-        [sys.executable, str(SCORE), "--window", "passage", "--from", str(span["t0"]), "--out", str(dest)],
-        check=False,
-    )
-    if done.returncode != 0 or not dest.is_file():
-        raise SystemExit("the score would not render")
+    print("  passage score · accepting verified deterministic competition master")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+        raise SystemExit("passage score cache is not a regular file")
+    shutil.copy2(AUDIO_MASTER, dest)
+    if not dest.is_file() or digest(dest) != provenance["master_sha256"]:
+        raise SystemExit("verified competition master changed while copying into delivery cache")
     write_score_receipt(dest, span, provenance)
-    return dest, {**provenance, "score_sha256": digest(dest)}, True
+    return dest, provenance, True
 
 
 def mux(video: Path, audio: Path, dest: Path, acodec: str, vcopy: bool = True, vfilter: str | None = None) -> None:
@@ -1076,6 +1560,10 @@ def deliver_reel(program: dict, sound: Path, tier: str, force: bool, start: floa
             "--codec",
             "h264",
             "--quiet",
+            "--score",
+            MUSIC_SCORE.relative_to(DANSE).as_posix(),
+            "--choreography",
+            CHOREOGRAPHY.relative_to(DANSE).as_posix(),
             "--out",
             str(render_out),
         ]
@@ -1165,6 +1653,10 @@ def deliver_stills(program: dict, tier: str, force: bool, start: float = 0.0) ->
                 "--segment-frames",
                 "1",
                 "--quiet",
+                "--score",
+                MUSIC_SCORE.relative_to(DANSE).as_posix(),
+                "--choreography",
+                CHOREOGRAPHY.relative_to(DANSE).as_posix(),
                 "--out",
                 str(OUT),
             ],
@@ -1314,7 +1806,12 @@ def main() -> int:
     global OUT, PACKAGE
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", default="film", help="corpus tier for rendered items")
-    ap.add_argument("--start", type=float, default=0.0, help="where in the river to begin recording (in seconds)")
+    ap.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="diagnostic/preflight offset; production competition delivery requires 0",
+    )
     ap.add_argument("--only", action="append", choices=SELECTORS, help="build one output group (repeatable)")
     ap.add_argument("--force", action="append", choices=FORCE_ITEMS, default=[], help="re-make an existing item")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="root for restartable render intermediates")
@@ -1330,6 +1827,10 @@ def main() -> int:
     package = args.package or (args.out / "package")
     origin = registered_origin() if "origin" in only else None
     passage_requested = bool(only & PASSAGE_SELECTORS)
+    if passage_requested and program.get("seed") != 20170620 and not args.preflight:
+        raise SystemExit("production delivery requires canonical river seed 20170620")
+    if passage_requested and abs(args.start) > 1e-9 and not args.preflight:
+        raise SystemExit("production delivery is locked to river seed 20170620, passage 0, score time 0")
     span_error = None
     span = None
     if passage_requested:
@@ -1354,10 +1855,17 @@ def main() -> int:
             span_error,
             passage_requested,
         )
+    repository = require_clean_repository()
     if not regular_directory_slot(package):
         raise SystemExit(f"package root must be an absent or regular non-symlink directory: {package}")
     source_tree = delivery_source_sha256(args.tier) if passage_requested else None
-    if passage_requested and not package_provenance_matches(package, span, args.start, source_tree):
+    if passage_requested and not package_provenance_matches(
+        package,
+        span,
+        args.start,
+        source_tree,
+        repository["head"],
+    ):
         raise SystemExit(f"{package}/manifest.json belongs to a different passage; choose a fresh --package root")
 
     work = pending(program, only, force, package)
@@ -1406,6 +1914,17 @@ def main() -> int:
         if not score_source.is_file() or score_source.is_symlink() or digest(score_source) != digest(sound):
             raise SystemExit("package score provenance copy does not match the rendered score")
         made.append(score_source)
+        audio_receipt_source = PACKAGE / AUDIO_RENDER_SOURCE_ITEM
+        if not regular_directory_slot(audio_receipt_source.parent) or audio_receipt_source.is_symlink():
+            raise SystemExit("package audio-render receipt must use a regular non-symlink destination")
+        shutil.copy2(AUDIO_RENDER_RECEIPT, audio_receipt_source)
+        if (
+            not audio_receipt_source.is_file()
+            or audio_receipt_source.is_symlink()
+            or digest(audio_receipt_source) != sound_provenance["audio_render_receipt_sha256"]
+        ):
+            raise SystemExit("package audio-render receipt copy does not match the verified receipt")
+        made.append(audio_receipt_source)
 
     if "master" in only and work["master"]:
         made.append(deliver_passage(picture, sound, score_forced))
@@ -1449,15 +1968,11 @@ def main() -> int:
         if isinstance(item, dict) and item.get("name") and (PACKAGE / item["name"]).is_file()
     }
     previous_sound = previous.get("sound") if isinstance(previous.get("sound"), dict) else None
-    rebuilt_audio = {
-        *({"master.mov"} if work["master"] else set()),
-        *(f"{name}{DERIVED[name]['suffix']}" for name in work["derived"]),
-        *({REEL_ITEM} if work["reel"] else set()),
-    }
     manifest = {
         "schema": "danse.delivery.manifest.v1",
         "title": program["title"],
         "seed": hexseed(program["seed"]),
+        "repository_head": repository["head"],
         "items": [],
     }
     passage_fields = ("passage_seed", "passage", "start", "t0", "t1", "duration")
@@ -1490,12 +2005,10 @@ def main() -> int:
         prior = previous_items.get(name) or {}
         item = {"name": name, "bytes": size, "sha256": digest(path), **info}
         if name in AUDIO_ITEMS:
-            item_sound = (
-                sound_provenance if name in rebuilt_audio else None
-            ) or prior.get("sound") or previous_sound
+            item_sound = sound_provenance or prior.get("sound") or previous_sound
             if item_sound:
                 item["sound"] = item_sound
-        elif name == SCORE_SOURCE_ITEM and sound_provenance:
+        elif name in {SCORE_SOURCE_ITEM, AUDIO_RENDER_SOURCE_ITEM} and sound_provenance:
             item["sound"] = sound_provenance
         if name == "stills/origin-2017.jpg":
             assert origin is not None
@@ -1510,9 +2023,14 @@ def main() -> int:
         secs = f"{info['seconds']:.1f}s " if "seconds" in info else ""
         media = f"{secs}{shape} {rate}" if info else ""
         print(f"  {name:<28} {size / 1e6:>8.1f} MB  {media}")
+    if sound_provenance:
+        for name, item in previous_items.items():
+            if name in AUDIO_ITEMS:
+                item["sound"] = sound_provenance
     manifest["items"] = [previous_items[name] for name in sorted(previous_items)]
-    master_sound = (previous_items.get("master.mov") or {}).get("sound")
-    if master_sound:
+    if sound_provenance:
+        manifest["sound"] = sound_provenance
+    elif (master_sound := (previous_items.get("master.mov") or {}).get("sound")):
         manifest["sound"] = master_sound
     elif previous_sound:
         manifest["sound"] = previous_sound

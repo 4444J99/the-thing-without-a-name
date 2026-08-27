@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(APP / "pipeline"))
 sys.path.insert(0, str(APP / "sound"))
 from browser import browser, serve  # noqa: E402
+from choreography import validate as validate_choreography  # noqa: E402
 from corpus_contract import authorize_render_tier  # noqa: E402
 from music_score import validate as validate_music_score  # noqa: E402
 
@@ -101,6 +102,7 @@ def music_score_identity(args) -> dict | None:
         score = validate_music_score(score)
     except (TypeError, ValueError) as exc:
         raise SystemExit(f"invalid --score contract {raw}: {exc}") from exc
+    args._music_score_contract = score
     identity = score.get("identity") or {}
     got = {
         "path": str(relative),
@@ -118,6 +120,50 @@ def music_score_identity(args) -> dict | None:
         ],
     }
     args._music_score_identity = got
+    return got
+
+
+def choreography_identity(args) -> dict | None:
+    """Validate and identify the choreography bound to picture and score."""
+    raw = getattr(args, "choreography", None)
+    if not raw:
+        return None
+    cached = getattr(args, "_choreography_identity", None)
+    if cached:
+        return cached
+    score_identity = music_score_identity(args)
+    if not score_identity:
+        raise SystemExit("--choreography requires --score")
+    candidate = Path(raw)
+    candidate = candidate if candidate.is_absolute() else APP / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+        relative = resolved.relative_to(APP.resolve())
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--choreography must name a contract inside the repository: {raw} ({exc})") from exc
+    if candidate.is_symlink() or not resolved.is_file():
+        raise SystemExit(f"--choreography must name a regular contract file: {raw}")
+    try:
+        contract = json.loads(resolved.read_text())
+        manifest_path = APP / "corpus/manifest.json"
+        corpus_score_path = APP / "corpus/score-2017.json"
+        manifest = json.loads(manifest_path.read_text())
+        contract = validate_choreography(
+            contract,
+            score=args._music_score_contract,
+            score_file_sha256=score_identity["file_sha256"],
+            corpus_manifest=manifest,
+            corpus_manifest_sha256=file_sha256(manifest_path),
+            corpus_score_sha256=file_sha256(corpus_score_path),
+        )
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise SystemExit(f"invalid --choreography contract {raw}: {exc}") from exc
+    got = {
+        "path": str(relative),
+        "file_sha256": file_sha256(resolved),
+        "contract_sha256": contract["identity"]["contract_sha256"],
+    }
+    args._choreography_identity = got
     return got
 
 
@@ -144,6 +190,9 @@ def source_tree_sha256(args) -> str:
     score_identity = music_score_identity(args)
     if score_identity:
         roots.append(APP / score_identity["path"])
+    choreography = choreography_identity(args)
+    if choreography:
+        roots.append(APP / choreography["path"])
     for kind in ("plates", "mattes"):
         roots.extend(sorted((APP / "corpus" / kind / args.tier).glob("*.webp")))
     h = hashlib.sha256()
@@ -160,6 +209,7 @@ def film_url(base: str, args) -> str:
     """The one URL used by planning and rendering, including seed zero."""
     params = {"capture": args.window, "from": args.start, "tier": args.tier}
     score = music_score_identity(args)
+    choreography = choreography_identity(args)
     for key, value in (
         ("s", args.seed),
         ("u", args.stream),
@@ -167,6 +217,7 @@ def film_url(base: str, args) -> str:
         ("height", args.height),
         ("fps", args.fps),
         ("score", score["path"] if score else None),
+        ("choreography", choreography["path"] if choreography else None),
     ):
         if value is not None:
             params[key] = value
@@ -195,6 +246,9 @@ def segment_identity(args, segment: int, frames: int) -> dict:
     score = music_score_identity(args)
     if score:
         payload["inputs"]["music_score"] = score
+    choreography = choreography_identity(args)
+    if choreography:
+        payload["inputs"]["choreography"] = choreography
     return payload
 
 
@@ -473,6 +527,10 @@ def main() -> int:
         "--score",
         help="opt into a compiled score contract (for example music/score.json); omitted keeps the current artwork",
     )
+    ap.add_argument(
+        "--choreography",
+        help="score-led choreography contract (required for a production score)",
+    )
     ap.add_argument("--segment", type=int, help="render one segment (default: all of them)")
     ap.add_argument("--segment-frames", type=int, default=600)
     ap.add_argument("--out", type=Path, default=OUT)
@@ -493,6 +551,11 @@ def main() -> int:
         "any leak of impurity into the engine",
     )
     args = ap.parse_args()
+
+    score = music_score_identity(args)
+    choreography = choreography_identity(args)
+    if score and args._music_score_contract["release_status"] != "fixture-only" and not choreography:
+        ap.error("a production --score requires --choreography")
 
     stem_seed = args.seed if args.seed is not None else "default"
     stream_suffix = f"-stream-{args.stream}" if args.stream else ""

@@ -26,6 +26,7 @@ ARTIFACT_SCHEMA = "danse.pages.v1"
 REPOSITORY = "organvm/the-thing-without-a-name"
 PUBLIC_TIERS = ("browse", "screen")
 ENGINE_MODULES = (
+    "engine/choreography.js",
     "engine/clock.js",
     "engine/corpus.js",
     "engine/engine.js",
