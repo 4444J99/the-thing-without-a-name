@@ -265,7 +265,12 @@ class ProductionArtifactTest(unittest.TestCase):
         self.assertFalse(any(path.startswith("release/") for path in paths))
         self.assertFalse(any(path.startswith("installation/") for path in paths))
         self.assertFalse(any(path.startswith("submission/") for path in paths))
-        self.assertFalse(any(path.startswith("music/") for path in paths))
+        self.assertEqual({path for path in paths if path.startswith("music/")}, {"music/score.json"})
+        self.assertEqual({path for path in paths if path.startswith("sound/")}, {"sound/browser-midi.js"})
+        self.assertEqual(
+            {path for path in paths if path.startswith("render/")},
+            {"render/program.json", "render/choreography.json"},
+        )
         if self.manifest["release"] is None:
             self.assertFalse(any(path.startswith("project/") for path in paths))
         else:

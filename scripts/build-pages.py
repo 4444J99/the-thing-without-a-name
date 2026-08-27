@@ -54,7 +54,10 @@ RUNTIME_FILES = (
     *ENGINE_MODULES,
     *INTERACTION_MODULES,
     VENDOR_MANIFEST,
+    "music/score.json",
     "render/program.json",
+    "render/choreography.json",
+    "sound/browser-midi.js",
 )
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 FRAME_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
