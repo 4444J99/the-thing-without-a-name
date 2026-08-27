@@ -317,7 +317,7 @@ function frame() {
     quantise: RECAST,
     stream: river.stream,
     score: musicalScore,
-    choreography: program ? choreography : null,
+    choreography,
     matteK,
   });
   if (scoreAudio?.playing) scoreAudio.sync(scoreSecondAt(t), heldAt !== null);

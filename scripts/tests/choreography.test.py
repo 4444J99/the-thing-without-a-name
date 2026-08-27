@@ -411,6 +411,23 @@ class ChoreographyContractTest(unittest.TestCase):
         self.assertEqual([row["panel_counterpoint"]["active_group"] for row in samples], [0, 3, 1, 3, 2, 3])
         self.assertTrue(all(row["transition"]["fragment_change_fraction"] == 0.25 for row in samples))
 
+    def test_free_river_uses_the_same_score_led_panel_contract(self) -> None:
+        script = NODE_SETUP + """
+          const at = score.phrases.find((row) => row.id === 'sylvia-09').start_second + 0.12;
+          const free = step(corpus, seed, at, null, {score, choreography});
+          const posed = poseAt(score, choreography, seed, at);
+          console.log(JSON.stringify({
+            pose: free.pose,
+            statePose: free.state.choreography,
+            groups: [...new Set(free.cast.map((cell) => cell.counterpoint_group))].sort(),
+            expected: posed,
+          }));
+        """
+        observed = node_json(script)
+        self.assertEqual(observed["pose"], observed["expected"])
+        self.assertEqual(observed["statePose"], observed["expected"])
+        self.assertEqual(observed["groups"], [0, 1, 2, 3])
+
     def test_exact_assembly_four_second_black_and_all_boundaries_are_continuous(self) -> None:
         critical = sorted(
             {

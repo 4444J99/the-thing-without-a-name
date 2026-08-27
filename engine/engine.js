@@ -26,10 +26,12 @@ export function step(
   { quantise = 0, stream = 0, score = null, choreography = null } = {},
 ) {
   if (choreography && !score) throw new Error("score-led choreography requires a music score");
-  if (choreography && !program) throw new Error("score-led choreography requires a program");
-  const posePassage = choreography ? passageAt(program, seed, t, stream, score) : null;
+  // A bounded film supplies a passage window; the free river deliberately does
+  // not.  Both still query the same score/choreography contract, so changing the
+  // visitor mode cannot silently remove the conducted panel score.
+  const posePassage = choreography && program ? passageAt(program, seed, t, stream, score) : null;
   const pose = choreography
-    ? poseAt(score, choreography, seed, t, { t0: posePassage.t0, seconds: posePassage.seconds })
+    ? poseAt(score, choreography, seed, t, posePassage ? { t0: posePassage.t0, seconds: posePassage.seconds } : null)
     : null;
   const s = state(seed, t, program, stream, score, pose);
   // The state is always sampled at the exact t; only the cast may be held.

@@ -60,7 +60,7 @@ function dwell(phase, rest = 0.16) {
  * render segments out of order, and get bit-identical frames.
  */
 export function state(seed, t, program = null, stream = 0, score = null, pose = null) {
-  return program ? programState(seed, t, program, stream, score, pose) : freeState(seed, t, score);
+  return program ? programState(seed, t, program, stream, score, pose) : freeState(seed, t, score, pose);
 }
 
 /** Under a program, every channel is interpolated across its movement, and the
@@ -188,7 +188,7 @@ function programState(seed, t, program, stream, score, pose) {
 
 /** The free-running piece: no program, no end. Unchanged behaviour — the flat
  *  state at t=0 and at every PERIOD is what `check-danse.py` asserts. */
-function freeState(seed, t, score = null) {
+function freeState(seed, t, score = null, pose = null) {
   const phase = t / PERIOD;
   const reveal = dwell(phase);
 
@@ -219,9 +219,9 @@ function freeState(seed, t, score = null) {
     // The same fields a programmed state carries, so no consumer has to ask which
     // kind of clock it is holding. Free-running, the cut is inferred from `reveal`
     // and the material never reseeds.
-    cut: null,
+    cut: pose?.cut_mode ?? null,
     turnover: 1,
-    movement: null,
+    movement: pose?.movement_id ?? null,
     epoch: 0,
     material: seed,
     // Free-running there are no passages — the piece departs and returns on one
@@ -238,6 +238,7 @@ function freeState(seed, t, score = null) {
       note_field: noteFieldAt(score, t),
     };
   }
+  if (pose) result.choreography = pose;
   return result;
 }
 
