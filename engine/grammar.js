@@ -443,17 +443,22 @@ export function cells(corpus, seed, t, { reveal = 0, cut = null, rate = 1, pose 
   if (pose) return choreographed(corpus, seed, pose);
   const chosen = cut ?? cutAt(seed, t, reveal);
   if (chosen === "black") return [];
+  let result;
   if (chosen === "score") {
     const solved = score(corpus);
     // A corpus shipped without the solved score still has to render something,
     // so fall through to the generated cut rather than showing an empty room.
-    if (solved.length) return solved;
-    return grid(corpus, seed, t, { rate });
+    result = solved.length ? solved : grid(corpus, seed, t, { rate });
+  } else if (chosen === "solo") {
+    result = solo(corpus, seed, t);
+  } else if (chosen === "figure") {
+    result = figure(corpus, seed, t, { rate });
+  } else if (chosen === "bands") {
+    result = bands(corpus, seed, t, { rate });
+  } else {
+    result = grid(corpus, seed, t, { rate });
   }
-  if (chosen === "solo") return solo(corpus, seed, t);
-  if (chosen === "figure") return figure(corpus, seed, t, { rate });
-  if (chosen === "bands") return bands(corpus, seed, t, { rate });
-  return grid(corpus, seed, t, { rate });
+  return result;
 }
 
 /** Which cut `cells()` would serve, without building it — for the UI and the HUD. */

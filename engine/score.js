@@ -306,6 +306,60 @@ export function scoreAt(score, absoluteSecond, window = null) {
   };
 }
 
+/**
+ * The complete note field at score time.  This is deliberately an aggregate,
+ * rather than a one-note trigger: all simultaneous MIDI notes contribute their
+ * onset, sustained energy, pitch, velocity, duration, and orchestral voice to
+ * every photographic slice.  It is a pure exact-time query, so seeking and
+ * offline rendering use the same field as the live canvas.
+ */
+export function noteFieldAt(score, absoluteSecond, window = null) {
+  const mapped = mappedTime(score, absoluteSecond, window);
+  const second = mapped.sourceSecond;
+  let attack = 0;
+  let sustain = 0;
+  let velocity = 0;
+  let pitch = 0;
+  let duration = 0;
+  let active = 0;
+  let hits = 0;
+  const voices = new Map();
+  for (const note of score.notes) {
+    const age = second - note.start_second;
+    const length = note.end_second - note.start_second;
+    const strength = note.velocity / 127;
+    // A short, continuous attack envelope makes an onset legible without
+    // quantising the score clock or introducing a frame-boundary flash.
+    if (age >= 0 && age < 0.18) {
+      const hit = strength * (1 - age / 0.18);
+      attack += hit;
+      hits++;
+    }
+    if (age < 0 || second >= note.end_second) continue;
+    const edge = Math.min(1, age / 0.035, (note.end_second - second) / 0.055);
+    const energy = strength * Math.max(0, edge);
+    sustain += energy;
+    velocity += strength;
+    pitch += note.pitch * energy;
+    duration += length * energy;
+    active++;
+    voices.set(note.stem, (voices.get(note.stem) ?? 0) + energy);
+  }
+  const normalizer = Math.max(1, active);
+  return {
+    source_second: second,
+    attack: clamp01(attack / 3),
+    sustain: clamp01(sustain / 4),
+    velocity: clamp01(velocity / normalizer),
+    pitch: active ? clamp01((pitch / sustain - 24) / 84) : 0.5,
+    duration: active ? clamp01((duration / sustain) / 2.5) : 0,
+    active_count: active,
+    hit_count: hits,
+    voices: Array.from(voices, ([stem, energy]) => ({ stem, energy: clamp01(energy / 2) }))
+      .sort((a, b) => unicodeCompare(a.stem, b.stem)),
+  };
+}
+
 function mapEvent(event, cycleStart, scale) {
   const sourceStart = event.start_second ?? event.second;
   const sourceEnd = event.end_second ?? sourceStart;

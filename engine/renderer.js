@@ -24,6 +24,7 @@
 
 import { context, program, resize, texture, unitQuad, uniforms } from "./gl.js";
 import { compose, multiply, perspective } from "./mat4.js";
+import { rand } from "./rng.js";
 import { camera, homePlacement, projector, rectUV, scatter, viewDepth } from "./room.js";
 
 /** How far past the picture plane the backdrop reaches, as a multiple of it.
@@ -203,7 +204,15 @@ export class Renderer {
     // that a near plane veils the far ones, and alpha blending is order-dependent.
     const drawn = [];
     for (const cell of cells) {
-      const place = scatter(cell.rect, cell.renderId ?? cell.id, seed, state.spread);
+      const home = scatter(cell.rect, cell.renderId ?? cell.id, seed, state.spread);
+      const note = sliceMusic(cell, state, seed, drawn.length);
+      const place = note ? {
+        ...home,
+        position: [home.position[0], home.position[1], home.position[2] + note.attack * 0.035 + note.sustain * 0.012],
+        rotation: [home.rotation[0] + (note.pitch - 0.5) * note.sustain * 0.07, home.rotation[1] + (note.velocity - 0.5) * note.sustain * 0.05, home.rotation[2]],
+        scale: [home.scale[0] * (1 + note.sustain * 0.018), home.scale[1] * (1 + note.sustain * 0.018), home.scale[2]],
+        opacity: Math.min(1, home.opacity + note.attack * 0.12),
+      } : home;
       drawn.push({ cell, place, z: viewDepth(view.view, place.position) });
     }
     drawn.sort((a, b) => a.z - b.z);
@@ -211,7 +220,7 @@ export class Renderer {
     let missing = 0;
     const now = new Map();
     for (const { cell, place, z } of drawn) {
-      if (!this.drawCell(cell, place, state, { tier, treat, matteK, edge: edgeWidth })) {
+      if (!this.drawCell(cell, place, state, { tier, treat, matteK, edge: edgeWidth, seed })) {
         missing++;
       } else {
         // Record what is on screen for recast detection
@@ -322,7 +331,7 @@ export class Renderer {
   /** Returns false if the cell could not be drawn because its plate has not
    *  arrived yet — counted rather than logged, so a slow network shows up as a
    *  number instead of a console flood. */
-  drawCell(cell, place, state, { tier, treat, matteK, edge }) {
+  drawCell(cell, place, state, { tier, treat, matteK, edge, seed = 0 }) {
     const { gl, u, corpus } = this;
     const [a, b] = cell.layers;
     const texA = corpus.plate(gl, a.frame, tier);
@@ -330,7 +339,9 @@ export class Renderer {
     const texB = b ? corpus.plate(gl, b.frame, tier) : null;
 
     const additive = cell.solved ? 1 : 0;
-    const gainA = a.gain ?? cell.gain ?? [1, 1, 1];
+    const music = sliceMusic(cell, state, seed);
+    const brightness = 1 + (music?.sustain ?? 0) * 0.10 + (music?.attack ?? 0) * 0.16 + (music?.voice ?? 0) * 0.04;
+    const gainA = (a.gain ?? cell.gain ?? [1, 1, 1]).map((value) => value * brightness);
     const gainB = b?.gain ?? [0, 0, 0];
 
     gl.uniformMatrix4fv(u.uModel, false, compose(place.position, place.rotation, place.scale));
@@ -362,6 +373,27 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return true;
   }
+}
+
+/** Every drawn slice is a deterministic recipient of the complete MIDI field. */
+function sliceMusic(cell, state, seed, fallback = 0) {
+  const field = state.music?.note_field;
+  if (!field) return null;
+  const id = cell.renderId ?? cell.id ?? fallback;
+  const response = 0.45 + rand(seed, id, 0x4d49) * 0.55;
+  const voice = field.voices.length
+    ? field.voices[Math.floor(rand(seed, id, 0x564f) * field.voices.length)].energy
+    : 0;
+  return {
+    attack: field.attack * response,
+    sustain: field.sustain * response,
+    velocity: field.velocity,
+    pitch: field.pitch,
+    duration: field.duration,
+    voice,
+    active_count: field.active_count,
+    hit_count: field.hit_count,
+  };
 }
 
 /** The viewing frustum, letterboxed to the room's 4:3 so the composite is never
