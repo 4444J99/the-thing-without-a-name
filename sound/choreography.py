@@ -328,6 +328,13 @@ def _panel_counterpoint(
         "groups": choices,
         "active_group": active_group,
         "fragment_change_fraction": float(limits["fragment_counterpoint_fraction"]) if changing else 0.0,
+        "conductor": {
+            "model": "native",
+            "meter": None,
+            "tempo": None,
+            "effective_model": "native",
+            "numerator": int(music["meter"]["numerator"]),
+        },
     }
 
 
@@ -463,6 +470,7 @@ def pose_at(
             {
                 "active_group": counterpoint["active_group"],
                 "fragment_change_fraction": rounded(counterpoint["fragment_change_fraction"]),
+                "conductor": counterpoint["conductor"],
                 "groups": [{**group, "blend": rounded(group["blend"])} for group in counterpoint["groups"]],
             }
             if counterpoint

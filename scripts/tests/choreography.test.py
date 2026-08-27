@@ -428,6 +428,24 @@ class ChoreographyContractTest(unittest.TestCase):
         self.assertEqual(observed["statePose"], observed["expected"])
         self.assertEqual(observed["groups"], [0, 1, 2, 3])
 
+    def test_live_conductor_overrides_are_deterministic_and_do_not_mutate_the_score(self) -> None:
+        script = NODE_SETUP + """
+          const at = score.phrases.find((row) => row.id === 'sylvia-09').start_second + 0.4;
+          const conductor = {model: 'common', meter: '4/4', tempo: 100};
+          const native = poseAt(score, choreography, seed, at);
+          const first = poseAt(score, choreography, seed, at, null, conductor);
+          const second = poseAt(score, choreography, seed, at, null, conductor);
+          console.log(JSON.stringify({native, first, second, scoreIdentity: score.identity.contract_sha256}));
+        """
+        observed = node_json(script)
+        self.assertEqual(observed["first"], observed["second"])
+        self.assertEqual(observed["first"]["panel_counterpoint"]["conductor"], {
+            "model": "common", "meter": "4/4", "tempo": 100,
+            "effective_model": "common", "numerator": 4,
+        })
+        self.assertNotEqual(observed["native"]["panel_counterpoint"], observed["first"]["panel_counterpoint"])
+        self.assertEqual(observed["scoreIdentity"], self.score["identity"]["contract_sha256"])
+
     def test_exact_assembly_four_second_black_and_all_boundaries_are_continuous(self) -> None:
         critical = sorted(
             {
