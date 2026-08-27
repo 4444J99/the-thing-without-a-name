@@ -343,18 +343,62 @@ function coherentLayers(current, next, blend) {
   return [{ frame: current, weight: 1 - blend }, { frame: next, weight: blend }];
 }
 
-function coherent(cells, current, next, blend, { opacity = 1, namespace = 0 } = {}) {
+function panelGroups(cells) {
+  // Cohorts are ordered from the floor upward: group 0 is legs, then pelvis,
+  // torso, and upper room.  Packing by area keeps every scheduled handoff at
+  // or below the contract's quarter-frame change budget.
+  const total = cells.reduce((sum, cell) => sum + (cell.rect[2] - cell.rect[0]) * (cell.rect[3] - cell.rect[1]), 0);
+  const target = total / 4;
+  const ordered = [...cells].sort((a, b) => {
+    const ay = (a.rect[1] + a.rect[3]) * 0.5;
+    const by = (b.rect[1] + b.rect[3]) * 0.5;
+    return by - ay || a.id - b.id;
+  });
+  const groups = new Map();
+  let group = 0;
+  let carried = 0;
+  for (const cell of ordered) {
+    const area = (cell.rect[2] - cell.rect[0]) * (cell.rect[3] - cell.rect[1]);
+    if (group < 3 && carried > 0 && carried + area > target) {
+      group++;
+      carried = 0;
+    }
+    groups.set(cell.id, group);
+    carried += area;
+  }
+  return groups;
+}
+
+function panelGrade(group) {
+  const grades = [
+    { tint: [1.03, 0.98, 0.96], filter: [1.04, 0.86, 0.18], bleed: 0.004 },
+    { tint: [0.98, 1.01, 1.03], filter: [1.02, 0.90, 0.14], bleed: 0.003 },
+    { tint: [1.02, 1.00, 0.97], filter: [1.03, 0.88, 0.16], bleed: 0.003 },
+    { tint: [0.97, 0.99, 1.03], filter: [1.01, 0.84, 0.12], bleed: 0.002 },
+  ];
+  return grades[group] ?? grades[0];
+}
+
+function coherent(cells, current, next, blend, { opacity = 1, namespace = 0, panelCounterpoint = null } = {}) {
+  const cohortByCell = panelCounterpoint ? panelGroups(cells) : null;
   const layers = coherentLayers(current, next, blend);
   if (!layers.length) return [];
   return cells.map((cell, index) => ({
     ...cell,
     renderId: namespace + index,
-    layers,
+    layers: panelCounterpoint
+      ? coherentLayers(
+        panelCounterpoint.groups[cohortByCell.get(cell.id)].current_source_frame_id,
+        panelCounterpoint.groups[cohortByCell.get(cell.id)].next_source_frame_id,
+        panelCounterpoint.groups[cohortByCell.get(cell.id)].blend,
+      )
+      : coherentLayers(current, next, blend),
     gain: [1, 1, 1],
     lift: [0, 0, 0],
     solved: false,
     untreated: true,
     opacity,
+    ...(panelCounterpoint ? { counterpoint_group: cohortByCell.get(cell.id), ...panelGrade(cohortByCell.get(cell.id)) } : {}),
   }));
 }
 
@@ -386,10 +430,11 @@ function authoredCut(corpus, seed, cut, movement, current, next, blend, geometry
   return coherent(grid(corpus, topologySeed, 0, { rate: 0 }), current, next, blend, options);
 }
 
-/** One coherent photographic pair across every fragment.
+/** A coherent photographic entrance, followed only by declared body counterpoint.
  *
  * A topology change is represented by two stable casts whose opacities cross
- * continuously for the declared bar. No fragment is recast at the boundary.
+ * continuously for the declared bar. Within an ordinary phrase, at most one
+ * anatomical cohort receives its own authored pair during a full-bar dissolve.
  */
 function choreographed(corpus, seed, pose) {
   const progress = pose.blend;
@@ -428,6 +473,7 @@ function choreographed(corpus, seed, pose) {
     pose.next_source_frame_id,
     progress,
     pose.current_geometry_frame_id,
+    { panelCounterpoint: pose.panel_counterpoint },
   );
 }
 

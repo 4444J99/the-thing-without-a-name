@@ -93,6 +93,7 @@ def compact_pose(pose: dict) -> list:
         pose["transition"]["kind"],
         pose["transition"]["progress"],
         pose["transition"]["fragment_change_fraction"],
+        pose["panel_counterpoint"],
     ]
 
 
@@ -258,6 +259,7 @@ class ChoreographyContractTest(unittest.TestCase):
             pose.current_geometry_frame_id, pose.next_geometry_frame_id,
             pose.phrase.index, pose.phrase.bars_elapsed, pose.beat.index, pose.beat.phase,
             pose.transition.kind, pose.transition.progress, pose.transition.fragment_change_fraction,
+            pose.panel_counterpoint,
           ];
           const out = [];
           for (let index = 0; index / 30 < score.time.duration_seconds; index++) {
@@ -271,7 +273,6 @@ class ChoreographyContractTest(unittest.TestCase):
     def test_full_frame_scan_proves_dwell_dissolve_budget_and_no_hard_recast(self) -> None:
         intervals: list[list[int]] = []
         for index, pose in enumerate(self.frame_poses):
-            self.assertEqual(pose["transition"]["fragment_change_fraction"], 0)
             self.assertLessEqual(
                 pose["transition"]["fragment_change_fraction"],
                 self.choreography["legibility"]["maximum_fragment_change_area_per_bar"],
@@ -337,7 +338,15 @@ class ChoreographyContractTest(unittest.TestCase):
             elif active:
                 topology_midpoints.append(self.frame_times[active[len(active) // 2]])
                 active = []
-        sample_times = pair + topology_midpoints
+        counterpoint_midpoints = []
+        active = []
+        for index, pose in enumerate(self.frame_poses):
+            if pose["panel_counterpoint"] and pose["panel_counterpoint"]["active_group"] is not None:
+                active.append(index)
+            elif active:
+                counterpoint_midpoints.append(self.frame_times[active[len(active) // 2]])
+                active = []
+        sample_times = pair + topology_midpoints + counterpoint_midpoints
         script = NODE_SETUP + f"""
           const samples = {json.dumps(sample_times)};
           const failures = [];
@@ -354,12 +363,25 @@ class ChoreographyContractTest(unittest.TestCase):
                 || exact.pose.next_movement_id === 'ASSEMBLY'
                 || exact.pose.movement_id === 'SIGNATURE') continue;
             const allowed = new Set([exact.pose.current_source_frame_id, exact.pose.next_source_frame_id]);
+            for (const panel of exact.pose.panel_counterpoint?.groups ?? []) {{
+              allowed.add(panel.current_source_frame_id);
+              allowed.add(panel.next_source_frame_id);
+            }}
             for (const cell of exact.cast) {{
               for (const layer of cell.layers ?? []) {{
                 if (!allowed.has(layer.frame)) failures.push(['undeclared-frame', at, layer.frame]);
               }}
             }}
-            if (exact.pose.transition.kind !== 'topology') {{
+            const counterpointCells = exact.cast.filter((cell) => cell.counterpoint_group !== undefined);
+            if (exact.pose.panel_counterpoint?.active_group !== null && counterpointCells.length) {{
+              const changing = counterpointCells.filter((cell) => (cell.layers ?? []).length > 1);
+              const area = changing.reduce((sum, cell) => sum + (cell.rect[2] - cell.rect[0]) * (cell.rect[3] - cell.rect[1]), 0);
+              if (!changing.every((cell) => cell.counterpoint_group === exact.pose.panel_counterpoint.active_group)) {{
+                failures.push(['counterpoint-outside-active-cohort', at]);
+              }}
+              if (area > 0.250001) failures.push(['counterpoint-area-over-budget', at, area]);
+            }}
+            if (exact.pose.transition.kind !== 'topology' && !exact.pose.panel_counterpoint) {{
               const pairs = new Set(exact.cast.map((cell) => JSON.stringify((cell.layers ?? []).map((layer) => [layer.frame, layer.weight]))));
               if (pairs.size > 1) failures.push(['independent-cell-pairs', at, pairs.size]);
             }}

@@ -101,8 +101,15 @@ def validate(
     maximum = limits.get("maximum_fragment_change_area_per_bar", -1)
     if not 0 <= maximum <= 0.25:
         bad("maximum_fragment_change_area_per_bar must be in [0, 0.25]")
-    if limits.get("fragment_counterpoint_fraction") != 0:
-        bad("production choreography requires zero fragment counterpoint")
+    fraction = limits.get("fragment_counterpoint_fraction", 0)
+    if not 0 < fraction <= 0.25:
+        bad("fragment_counterpoint_fraction must be in (0, 0.25]")
+    if limits.get("counterpoint_groups") != 4:
+        bad("counterpoint_groups must be four anatomical cohorts")
+    if limits.get("counterpoint_pose_dwell_bars", 0) < 2:
+        bad("counterpoint_pose_dwell_bars must be at least two")
+    if limits.get("counterpoint_transition_bars", 0) < 1:
+        bad("counterpoint_transition_bars must be at least one")
     if limits.get("hard_global_recast_before_signature") is not False:
         bad("hard global recasts before SIGNATURE are forbidden")
     if limits.get("frame_order_semantics") != "authored-motif-not-chronology":
@@ -266,6 +273,53 @@ def _motif_pose(
     return {"index": cycle, "current": current, "next": following, "blend": blend}
 
 
+def _panel_counterpoint(
+    motif: dict[str, Any] | None,
+    assignment: dict[str, Any],
+    bars: float,
+    limits: dict[str, Any],
+) -> dict[str, Any] | None:
+    if (
+        motif is None
+        or assignment["hold_complete_phrase"]
+        or len(motif["source_frame_ids"]) < 2
+        or assignment["movement_id"] not in {"PHRASE", "RESEED"}
+    ):
+        return None
+    frames = motif["source_frame_ids"]
+    groups = int(limits["counterpoint_groups"])
+    dwell = float(limits["counterpoint_pose_dwell_bars"])
+    transition = float(limits["counterpoint_transition_bars"])
+    elapsed = max(0.0, bars - dwell)
+    slot_length = dwell + transition
+    slot = math.floor(elapsed / slot_length)
+    slot_phase = elapsed - slot * slot_length
+    active_group = None if bars < dwell or slot_phase >= transition else slot % groups
+    choices = []
+    for group in range(groups):
+        updates = 0 if slot < group else math.floor((slot - group) / groups) + 1
+        completed = max(0, updates - 1) if active_group == group else updates
+        def frame_index(count: int) -> int:
+            return 0 if count == 0 else group + 1 + groups * (count - 1)
+
+        current_index = frame_index(completed)
+        next_index = frame_index(completed + 1)
+        changing = active_group == group and slot_phase < transition
+        choices.append(
+            {
+                "group": group,
+                "current_source_frame_id": frames[current_index % len(frames)],
+                "next_source_frame_id": frames[next_index % len(frames)] if changing else frames[current_index % len(frames)],
+                "blend": _smooth(slot_phase / transition) if changing else 0.0,
+            }
+        )
+    return {
+        "groups": choices,
+        "active_group": active_group,
+        "fragment_change_fraction": float(limits["fragment_counterpoint_fraction"]) if active_group is not None else 0.0,
+    }
+
+
 def pose_at(
     score: dict[str, Any],
     choreography: dict[str, Any],
@@ -323,6 +377,7 @@ def pose_at(
     next_movement_id = assignment["movement_id"]
     current_geometry = motif.get("geometry_frame_id") if motif else None
     next_geometry = current_geometry
+    counterpoint = _panel_counterpoint(motif, assignment, bars, choreography["legibility"])
 
     if next_assignment is not None and assignment["movement_id"] != "SIGNATURE" and not assignment["hold_complete_phrase"]:
         boundary_bars = outgoing_transition_bars
@@ -391,6 +446,15 @@ def pose_at(
             "kind": transition_kind if transition_kind is not None else ("pose" if pose["blend"] > 0 else None),
             "bars": rounded(transition_bars),
             "progress": rounded(transition_progress),
-            "fragment_change_fraction": 0,
+            "fragment_change_fraction": rounded(counterpoint["fragment_change_fraction"]) if counterpoint else 0,
         },
+        "panel_counterpoint": (
+            {
+                "active_group": counterpoint["active_group"],
+                "fragment_change_fraction": rounded(counterpoint["fragment_change_fraction"]),
+                "groups": [{**group, "blend": rounded(group["blend"])} for group in counterpoint["groups"]],
+            }
+            if counterpoint
+            else None
+        ),
     }

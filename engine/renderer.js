@@ -24,7 +24,6 @@
 
 import { context, program, resize, texture, unitQuad, uniforms } from "./gl.js";
 import { compose, multiply, perspective } from "./mat4.js";
-import { rand } from "./rng.js";
 import { camera, homePlacement, projector, rectUV, scatter, viewDepth } from "./room.js";
 
 /** How far past the picture plane the backdrop reaches, as a multiple of it.
@@ -36,7 +35,6 @@ import { camera, homePlacement, projector, rectUV, scatter, viewDepth } from "./
  *  nothing: the flat state measures 31.60 dB with the room behind it and 31.60 dB
  *  with the room switched off. */
 const ROOM_REACH = 4;
-const clamp01 = (value) => Math.max(0, Math.min(1, value));
 
 const VERT = `#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -212,19 +210,7 @@ export class Renderer {
     const drawn = [];
     for (const cell of cells) {
       const home = scatter(cell.rect, cell.renderId ?? cell.id, seed, state.spread);
-      const note = sliceMusic(cell, state, seed, drawn.length);
-      const place = note ? {
-        ...home,
-        position: [
-          home.position[0] + note.x * (note.attack * 0.032 + note.sustain * 0.010),
-          home.position[1] + note.y * (note.attack * (0.018 + note.leg * 0.020) + note.sustain * 0.008),
-          home.position[2] + note.attack * (0.020 + note.leg * 0.028) + note.sustain * 0.012,
-        ],
-        rotation: [home.rotation[0] + (note.pitch - 0.5) * note.sustain * 0.07, home.rotation[1] + (note.velocity - 0.5) * note.sustain * 0.05, home.rotation[2] + note.x * note.attack * 0.045],
-        scale: [home.scale[0] * (1 + note.sustain * (0.010 + note.leg * 0.016)), home.scale[1] * (1 + note.sustain * (0.010 + note.leg * 0.024)), home.scale[2]],
-        opacity: Math.min(1, home.opacity + note.attack * 0.12),
-      } : home;
-      drawn.push({ cell, place, z: viewDepth(view.view, place.position) });
+      drawn.push({ cell, place: home, z: viewDepth(view.view, home.position) });
     }
     drawn.sort((a, b) => a.z - b.z);
 
@@ -354,9 +340,7 @@ export class Renderer {
     const texB = b ? corpus.plate(gl, b.frame, tier) : null;
 
     const additive = cell.solved ? 1 : 0;
-    const music = sliceMusic(cell, state, seed);
-    const brightness = 1 + (music?.sustain ?? 0) * 0.10 + (music?.attack ?? 0) * 0.16 + (music?.voice ?? 0) * 0.04;
-    const gainA = (a.gain ?? cell.gain ?? [1, 1, 1]).map((value) => value * brightness);
+    const gainA = a.gain ?? cell.gain ?? [1, 1, 1];
     const gainB = b?.gain ?? [0, 0, 0];
 
     gl.uniformMatrix4fv(u.uModel, false, compose(place.position, place.rotation, place.scale));
@@ -364,16 +348,16 @@ export class Renderer {
     gl.uniform3fv(u.uGainA, gainA);
     gl.uniform3fv(u.uGainB, gainB);
     gl.uniform3fv(u.uLift, cell.lift ?? [0, 0, 0]);
-    gl.uniform1f(u.uMix, b ? (music ? staggeredMix(b.weight, music) : b.weight) : 0);
+    gl.uniform1f(u.uMix, b ? b.weight : 0);
     gl.uniform1f(u.uAdditive, additive);
     gl.uniform1f(u.uProjK, state.projK);
     gl.uniform1f(u.uTreat, treat);
     gl.uniform1f(u.uOpacity, (place.opacity ?? 1) * (cell.opacity ?? 1) * (state.sceneOpacity ?? 1));
     gl.uniform1f(u.uHasB, texB ? 1 : 0);
-    gl.uniform1f(u.uEdge, music ? edge + music.bleed * 0.014 : edge);
+    gl.uniform1f(u.uEdge, edge + (cell.bleed ?? 0));
     gl.uniform1f(u.uClamp, 0);
-    gl.uniform3fv(u.uTint, music?.tint ?? [1, 1, 1]);
-    gl.uniform3fv(u.uFilter, music?.filter ?? [1, 1, 0]);
+    gl.uniform3fv(u.uTint, cell.tint ?? [1, 1, 1]);
+    gl.uniform3fv(u.uFilter, cell.filter ?? [1, 1, 0]);
 
     let matte = null;
     if (matteK > 0) matte = corpus.matte(gl, a.frame, tier);
@@ -392,51 +376,6 @@ export class Renderer {
   }
 }
 
-/** Every drawn slice is a deterministic recipient of the complete MIDI field. */
-function sliceMusic(cell, state, seed, fallback = 0) {
-  const field = state.music?.note_field;
-  if (!field || (field.active_count === 0 && field.hit_count === 0)) return null;
-  const id = cell.renderId ?? cell.id ?? fallback;
-  const response = 0.45 + rand(seed, id, 0x4d49) * 0.55;
-  const voice = field.voices.length
-    ? field.voices[Math.floor(rand(seed, id, 0x564f) * field.voices.length)].energy
-    : 0;
-  const cy = (cell.rect[1] + cell.rect[3]) * 0.5;
-  // The lower half is the dancer's line.  It receives shorter, earlier musical
-  // impulses so legs read as articulated time rather than a single wallpaper.
-  const leg = clamp01((cy - 0.46) / 0.48);
-  const group = Math.floor(rand(seed, id, 0x4752) * 4);
-  const direction = rand(seed, id, 0x4449) * Math.PI * 2;
-  const pitch = field.pitch;
-  const hue = (pitch - 0.5) * 0.13 + (rand(seed, id, 0x4855) - 0.5) * 0.06;
-  return {
-    attack: field.attack * response,
-    sustain: field.sustain * response,
-    velocity: field.velocity,
-    pitch,
-    duration: field.duration,
-    voice,
-    active_count: field.active_count,
-    hit_count: field.hit_count,
-    leg,
-    group,
-    x: Math.cos(direction),
-    y: Math.sin(direction),
-    bleed: clamp01(field.sustain * (0.35 + leg * 0.35) + field.attack * 0.55),
-    tint: [1 + hue, 1 - Math.abs(hue) * 0.45, 1 - hue],
-    filter: [1 + field.attack * (0.10 + leg * 0.12), 0.72 + voice * 0.20 + leg * 0.08, 0.12 + field.sustain * 0.24],
-  };
-}
-
-/**
- * A phrase still owns one full-bar dissolve, but its panels do not hand off in
- * lockstep.  Four deterministic body groups enter within that bar; the lower
- * body answers an attack first, while torso planes retain the previous pose.
- */
-function staggeredMix(globalMix, note) {
-  const onset = clamp01(note.group * 0.15 + (1 - note.leg) * 0.07 - note.attack * note.leg * 0.10);
-  return clamp01((globalMix - onset) / Math.max(0.001, 1 - onset));
-}
 
 /** The viewing frustum, letterboxed to the room's 4:3 so the composite is never
  *  cropped by the shape of someone's window. */
