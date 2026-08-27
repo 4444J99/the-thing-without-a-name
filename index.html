@@ -290,7 +290,12 @@ const RECAST = 1 / 8;
 const at = () => heldAt ?? Arrival.now(river);
 
 function scoreSecondAt(t) {
-  if (!musicalScore || !program) return 0;
+  if (!musicalScore) return 0;
+  // The free river is still score-led sonically.  It has no bounded visual
+  // passage to supply a window, so use the score's native repeating cycle.
+  // Returning 0 here used to seek audio back to its head every animation
+  // frame whenever the visitor chose free mode.
+  if (!program) return scoreAt(musicalScore, t).source_second;
   const passage = Program.passageAt(program, river.seed, t, river.stream, musicalScore);
   return scoreAt(musicalScore, t, { t0: passage.t0, seconds: passage.seconds }).source_second;
 }
