@@ -37,8 +37,8 @@
         "maximum_fragment_change_area_per_bar",
         "fragment_counterpoint_fraction",
         "counterpoint_groups",
-        "counterpoint_pose_dwell_bars",
-        "counterpoint_transition_bars",
+        "counterpoint_grid_subdivisions_per_beat",
+        "counterpoint_transition_fraction",
         "hard_global_recast_before_signature",
         "frame_order_semantics"
       ],
@@ -49,8 +49,8 @@
         "maximum_fragment_change_area_per_bar": {"type": "number", "minimum": 0, "maximum": 0.25},
         "fragment_counterpoint_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.25},
         "counterpoint_groups": {"const": 4},
-        "counterpoint_pose_dwell_bars": {"type": "number", "minimum": 2},
-        "counterpoint_transition_bars": {"type": "number", "minimum": 1},
+        "counterpoint_grid_subdivisions_per_beat": {"const": 2},
+        "counterpoint_transition_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
         "hard_global_recast_before_signature": {"const": false},
         "frame_order_semantics": {"const": "authored-motif-not-chronology"}
       }

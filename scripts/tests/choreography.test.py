@@ -394,6 +394,23 @@ class ChoreographyContractTest(unittest.TestCase):
         self.assertEqual(observed["blends"][0][0], observed["blends"][0][1])
         self.assertEqual(observed["blends"][1][0], observed["blends"][1][1])
 
+    def test_panel_selection_follows_the_conducted_waltz_grid(self) -> None:
+        # The panel score is not an arbitrary refresh timer.  It is the written
+        # 3/4 pulse, 1-&-2-&-3-&: lower body on 1, pelvis on 2, torso on 3,
+        # and the upper-string/light cohort answering the intervening eighths.
+        phrase = next(row for row in self.score["phrases"] if row["id"] == "sylvia-09")
+        first = score_at(self.score, float(phrase["start_second"]))
+        beat_index = int(first["beat"]["index"])
+        samples = []
+        for beat_offset in range(3):
+            beat = self.score["beats"][beat_index + beat_offset]
+            following = self.score["beats"][beat_index + beat_offset + 1]
+            for phase in (0.10, 0.60):
+                at = float(beat["second"]) + (float(following["second"]) - float(beat["second"])) * phase
+                samples.append(pose_at(self.score, self.choreography, SEED, at))
+        self.assertEqual([row["panel_counterpoint"]["active_group"] for row in samples], [0, 3, 1, 3, 2, 3])
+        self.assertTrue(all(row["transition"]["fragment_change_fraction"] == 0.25 for row in samples))
+
     def test_exact_assembly_four_second_black_and_all_boundaries_are_continuous(self) -> None:
         critical = sorted(
             {

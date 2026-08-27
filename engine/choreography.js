@@ -84,8 +84,10 @@ export function validate(choreography, { score = null, corpus = null } = {}) {
     bad("fragment_counterpoint_fraction must be in (0, 0.25]");
   }
   if (limits.counterpoint_groups !== 4) bad("counterpoint_groups must be four anatomical cohorts");
-  if (!(limits.counterpoint_pose_dwell_bars >= 2)) bad("counterpoint_pose_dwell_bars must be at least two");
-  if (!(limits.counterpoint_transition_bars >= 1)) bad("counterpoint_transition_bars must be at least one");
+  if (limits.counterpoint_grid_subdivisions_per_beat !== 2) bad("counterpoint grid must use score eighth-notes");
+  if (!(limits.counterpoint_transition_fraction > 0 && limits.counterpoint_transition_fraction <= 0.5)) {
+    bad("counterpoint_transition_fraction must be in (0, 0.5]");
+  }
   if (limits.hard_global_recast_before_signature !== false) bad("hard global recasts before SIGNATURE are forbidden");
   if (limits.frame_order_semantics !== "authored-motif-not-chronology") bad("frame order semantics are not explicit");
 
@@ -232,39 +234,49 @@ function motifPose(motif, assignment, barsIntoPhrase, usableBars = Infinity) {
  * They begin as four held source moments; thereafter only one cohort dissolves
  * during a full bar, then it holds for two bars before the next cohort moves.
  */
-function panelCounterpoint(motif, assignment, bars, limits) {
+function panelCounterpoint(score, motif, assignment, music, limits) {
   if (!motif || assignment.hold_complete_phrase || motif.source_frame_ids.length < 2
       || !["PHRASE", "RESEED"].includes(assignment.movement_id)) return null;
   const frames = motif.source_frame_ids;
   const groups = limits.counterpoint_groups;
-  const dwell = limits.counterpoint_pose_dwell_bars;
-  const transition = limits.counterpoint_transition_bars;
-  const start = dwell;
-  const elapsed = Math.max(0, bars - start);
-  const slotLength = dwell + transition;
-  const slot = Math.floor(elapsed / slotLength);
-  const slotPhase = elapsed - slot * slotLength;
-  const activeGroup = bars < start || slotPhase >= transition ? null : slot % groups;
+  const subdivisions = limits.counterpoint_grid_subdivisions_per_beat;
+  // The conductor's 3/4 grid: 1-&-2-&-3-&.  Bass/cello carry the legs on
+  // the downbeat; viola/cello take 2; lower violin takes 3; the upper-string
+  // answer occupies the intervening eighths.  It is score time, not a timer.
+  const rhythm = [0, 3, 1, 3, 2, 3];
+  const phraseStart = scoreAt(score, music.phrase.start_second);
+  const slotAt = (state) => state.beat.index * subdivisions + Math.floor(state.beat.phase * subdivisions + 1e-9);
+  const localSlot = Math.max(0, slotAt(music) - slotAt(phraseStart));
+  const slotPhase = (music.beat.phase * subdivisions) % 1;
+  const activeGroup = rhythm[localSlot % rhythm.length];
+  const changing = slotPhase < limits.counterpoint_transition_fraction;
+  const occurrences = (group, inclusiveSlot) => {
+    const slots = inclusiveSlot + 1;
+    const whole = Math.floor(slots / rhythm.length);
+    const remainder = slots % rhythm.length;
+    return whole * rhythm.filter((item) => item === group).length
+      + rhythm.slice(0, remainder).filter((item) => item === group).length;
+  };
   return {
     groups: Array.from({ length: groups }, (_, group) => {
-      const updates = slot < group ? 0 : Math.floor((slot - group) / groups) + 1;
-      const completed = activeGroup === group ? Math.max(0, updates - 1) : updates;
+      const updates = occurrences(group, localSlot);
+      const completed = activeGroup === group && changing ? Math.max(0, updates - 1) : updates;
       // Every phrase enters on its single coherent first frame.  Counterpoint
       // is then introduced one anatomical cohort at a time; it never appears as
       // an all-panel recast at a phrase boundary.
       const frameIndex = (count) => count === 0 ? 0 : group + 1 + groups * (count - 1);
       const currentIndex = frameIndex(completed);
       const nextIndex = frameIndex(completed + 1);
-      const changing = activeGroup === group && slotPhase < transition;
+      const groupChanging = activeGroup === group && changing;
       return {
         group,
         current_source_frame_id: frames[currentIndex % frames.length],
-        next_source_frame_id: changing ? frames[nextIndex % frames.length] : frames[currentIndex % frames.length],
-        blend: changing ? smooth(slotPhase / transition) : 0,
+        next_source_frame_id: groupChanging ? frames[nextIndex % frames.length] : frames[currentIndex % frames.length],
+        blend: groupChanging ? smooth(slotPhase / limits.counterpoint_transition_fraction) : 0,
       };
     }),
     active_group: activeGroup,
-    fragment_change_fraction: activeGroup === null ? 0 : limits.fragment_counterpoint_fraction,
+    fragment_change_fraction: changing ? limits.fragment_counterpoint_fraction : 0,
   };
 }
 
@@ -314,7 +326,7 @@ export function poseAt(score, choreography, seed, t, window = null) {
   let nextMovementId = assignment.movement_id;
   let currentGeometry = motif?.geometry_frame_id ?? null;
   let nextGeometry = currentGeometry;
-  const counterpoint = panelCounterpoint(motif, assignment, barsIntoPhrase, choreography.legibility);
+  const counterpoint = panelCounterpoint(score, motif, assignment, music, choreography.legibility);
 
   if (nextAssignment && assignment.movement_id !== "SIGNATURE" && !assignment.hold_complete_phrase) {
     const boundaryBars = outgoingTransitionBars;
